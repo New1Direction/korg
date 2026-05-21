@@ -56,6 +56,16 @@ pub struct ToolDefinition {
     pub parameters: serde_json::Value, // JSON schema object
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum MultiModalContent {
+    Image {
+        bytes: Vec<u8>,
+        mime_type: String,
+        description: Option<String>,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct LlmRequest {
     pub messages: Vec<Message>,
@@ -63,6 +73,7 @@ pub struct LlmRequest {
     pub max_tokens: Option<u32>,
     pub tools: Option<Vec<ToolDefinition>>,
     pub stop_sequences: Option<Vec<String>>,
+    pub multimodal: Option<Vec<MultiModalContent>>,
     
     // Provenance / policy metadata
     pub tx_id: Option<String>,
@@ -1063,6 +1074,7 @@ mod tests {
             max_tokens: None,
             tools: None,
             stop_sequences: None,
+            multimodal: None,
             tx_id: None,
             session_id: None,
             policy_hash: None,
@@ -1109,6 +1121,7 @@ mod tests {
                 }),
             }]),
             stop_sequences: Some(vec!["\n".to_string()]),
+            multimodal: None,
             tx_id: None,
             session_id: None,
             policy_hash: None,
@@ -1161,6 +1174,7 @@ mod tests {
                 }),
             }]),
             stop_sequences: Some(vec!["DONE".to_string()]),
+            multimodal: None,
             tx_id: None,
             session_id: None,
             policy_hash: None,
@@ -1207,6 +1221,7 @@ mod tests {
             max_tokens: None,
             tools: None,
             stop_sequences: None,
+            multimodal: None,
             tx_id: None,
             session_id: None,
             policy_hash: None,

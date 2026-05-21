@@ -8,19 +8,17 @@ It is designed to be studied, extended, and used as a foundation for serious, lo
 
 ---
 
-## 🌀 The Chaotic Layman Explainer (Explain It Like I'm a Mad Scientist)
+# Overview
 
-If you've ever tried to make multiple AI agents work together, you know it usually turns into a chaotic playground fight where they overwrite each other's code, hallucinate imaginary APIs, and enter infinite loops of agreeing with their own bad ideas until your API wallet is dry.
+Korg is a production‑grade, multi‑agent orchestration framework designed for robust, high‑throughput AI workflows. It provides a secure, cryptographically signed messaging layer (ACP v1.17), transactional memory via `.ktrans`, and a real‑time terminal UI built with Ratatui. The system enforces strict contract negotiation, state locking, and adversarial evaluation to ensure deterministic, reproducible outcomes.
 
-**Korg is the digital straitjacket, high-frequency flight recorder, and hyper-adversarial boot camp for your AI swarms.**
+**Key features**:
+- **Modular Swarm Architecture**: Isolated worker agents (Captain, Harper, Benjamin, Lucas) communicate through signed messages.
+- **Transactional Recovery**: Automatic crash recovery using tamper‑evident logs.
+- **Adversarial Evaluation**: Multi‑rubric scoring for semantic integrity and resource utilization.
+- **Scalable Execution**: Dynamically adjusts the number of agents up to sixteen based on workload.
+- **Extensible CLI & TUI**: Seamless headless operation or interactive dashboard.
 
-Instead of letting agents whisper sweet lies to each other, Korg forces them to operate like a high-security cryptographic bank:
-* **The Swarm (Lucas, Harper, Benjamin, Sophia)**: A group of specialized AI agents locked in isolated directories. They can't touch each other's files. Benjamin is your builder, Harper is your cynical researcher who believes nothing, Lucas is your synthesist, and Captain is the stressed planner trying to keep them in line.
-* **The Swarm Agreement (Brutal Pre-Work Negotiation)**: Before they write a single line of code, Captain has to pitch a contract of work criteria. The Evaluator (a digital lie detector) continuously slams the door in Captain's face screaming *"TOO GENERIC! REVISE!"* using real semantic scoring until the contract is mathematically precise. Only then do they sign the contract in digital blood (Ed25519 signatures) and start working.
-* **Simulated Heart Attacks & Recovery (`.ktrans` + Blackboard)**: Suppose Benjamin has a catastrophic crash (which we simulate for testing!) and exits the process with a fatal code `101`. Korg doesn't cry. It immediately scans the flight recorder (`.ktrans` journal), recovers Benjamin's partial changes, safely updates the shared state (Blackboard), spawns a clone of Benjamin, hands him the restored state, and commands him to keep building. Zero state is lost.
-* **Post-Campaign Factual Purge (Yvaeh Mode)**: Once the campaign finishes, Korg launches a self-compounding brain sweep. It scans your vault, finds notes that contradict each other (e.g. Note A says "deploy to AWS", Note B says "deploy to GCP"), screams *"CONTRADICTION DETECTED!"*, resolves the conflict using semantic similarities, and creates beautiful, interconnected conceptual notes with backlinks.
-
----
 
 ## 🎯 Real-World Use Cases (Technical vs. Chaotic)
 
