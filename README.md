@@ -138,6 +138,7 @@ Distributed under the MIT License. See [LICENSE](LICENSE) for details.
 
 *For detailed architectural explanations, deep-dive installation requirements, or usage guidelines, review our system manuals:*
 * *[System Architecture Deep-Dive](ARCHITECTURE.md)*
+* *[High-Assurance Git Isolation Specification](docs/GIT_ISOLATION.md)*
 * *[Complete Product Overview](PRODUCT_OVERVIEW.md)*
 * *[System Installation Guide](INSTALLATION_GUIDE.md)*
 * *[Interactive User Manual](USER_GUIDE.md)*
