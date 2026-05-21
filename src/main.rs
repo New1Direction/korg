@@ -31,6 +31,7 @@ mod personas;
 mod skills;
 mod tools;
 mod tui;
+pub mod llm;
 
 use acp::AcpClient;
 use harness::SingleWorkerHarness;
@@ -180,6 +181,8 @@ fn print_welcome_banner() {
 
     println!("{}⚙️  {}SYSTEM ECOSYSTEM STATUS:{}", bold, cyan, reset);
     println!("  {}• Swarm Engine:{}   4 Adversarial Personas (Lucas, Harper, Benjamin, Sophia)", slate, reset);
+    let llm_config = crate::llm::KorgConfig::from_env();
+    println!("  {}• Cognitive Core:{} Swappable Provider [Active: {}]", slate, reset, llm_config.default_llm.to_uppercase());
     println!("  {}• Guardrails:{}     5 semantic evaluation rubrics (Trajectory, Epistemic, etc.)", slate, reset);
     println!("  {}• Knowledge:{}     Factual Reconciliation & Semantic Synthesis (Yvaeh mode)", slate, reset);
     println!("  {}• Persistence:{}   Signed .ktrans transactions & secure state recovery", slate, reset);
