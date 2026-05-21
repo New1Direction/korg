@@ -52,88 +52,97 @@ pub async fn generate_attestation(
     signing_key: &SigningKey,
     campaign_dir: &Path,
 ) -> Result<CampaignAttestation> {
-    // 1. Scan campaign directory for .ktrans.json records
-    let mut ktrans_envelopes = Vec::new();
+    let root_task = root_task.to_string();
+    let signing_key_bytes = signing_key.to_bytes();
+    let campaign_dir = campaign_dir.to_path_buf();
 
-    if campaign_dir.exists() {
-        for entry in fs::read_dir(campaign_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if name.ends_with(".ktrans.json") && !name.contains("provenance") {
-                    let content = fs::read_to_string(&path)?;
-                    if let Ok(envelope) = serde_json::from_str::<crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>>(&content) {
-                        ktrans_envelopes.push(envelope);
+    tokio::task::spawn_blocking(move || -> Result<CampaignAttestation> {
+        let signing_key = SigningKey::from_bytes(&signing_key_bytes);
+        // 1. Scan campaign directory for .ktrans.json records
+        let mut ktrans_envelopes = Vec::new();
+
+        if campaign_dir.exists() {
+            for entry in fs::read_dir(&campaign_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file() {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    if name.ends_with(".ktrans.json") && !name.contains("provenance") {
+                        let content = fs::read_to_string(&path)?;
+                        if let Ok(envelope) = serde_json::from_str::<crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>>(&content) {
+                            ktrans_envelopes.push(envelope);
+                        }
                     }
                 }
             }
         }
-    }
 
-    if ktrans_envelopes.is_empty() {
-        return Err(anyhow!("No transaction logs found in campaign directory to attest"));
-    }
+        if ktrans_envelopes.is_empty() {
+            return Err(anyhow!("No transaction logs found in campaign directory to attest"));
+        }
 
-    // Sort transactions by round to ensure deterministic hash chain
-    ktrans_envelopes.sort_by_key(|env| env.payload.round);
+        // Sort transactions by round to ensure deterministic hash chain
+        ktrans_envelopes.sort_by_key(|env| env.payload.round);
 
-    // 2. Build AttestationTransaction entries and accumulate hash chain
-    let mut transactions = Vec::new();
-    let mut accumulated_hash = hex::encode([0u8; 32]); // Genesis base
+        // 2. Build AttestationTransaction entries and accumulate hash chain
+        let mut transactions = Vec::new();
+        let mut accumulated_hash = hex::encode([0u8; 32]); // Genesis base
 
-    for env in &ktrans_envelopes {
-        let env_hash = compute_sha256(env)?;
+        for env in &ktrans_envelopes {
+            let env_hash = compute_sha256(env)?;
+            
+            // Chain step: H_i = SHA256(H_i-1 || env_hash)
+            let mut hasher = Sha256::new();
+            hasher.update(hex::decode(&accumulated_hash)?);
+            hasher.update(hex::decode(&env_hash)?);
+            accumulated_hash = hex::encode(hasher.finalize());
+
+            transactions.push(AttestationTransaction {
+                round: env.payload.round,
+                tx_id: env.payload.tx_id,
+                timestamp: env.payload.timestamp.clone(),
+                arena_winner: env.payload.arena_winner.clone(),
+                arena_confidence: env.payload.arena_confidence,
+                mutations: env.payload.mutations_this_round,
+                leader_action: env.payload.leader_action.clone(),
+                transaction_envelope_hash: env_hash,
+                envelope_signature: env.signature.clone(),
+            });
+        }
+
+        // 3. Assemble top-level certificate metadata
+        let leader_pub_key = hex::encode(signing_key.verifying_key().to_bytes());
+        let timestamp = chrono::Utc::now().to_rfc3339();
+
+        let mut attestation = CampaignAttestation {
+            session_id,
+            root_task,
+            timestamp,
+            leader_public_key: leader_pub_key,
+            total_rounds: transactions.len(),
+            trace_hash_chain_root: accumulated_hash,
+            transactions,
+            signature: None,
+        };
+
+        // 4. Sign the attestation envelope
+        let canonical = crate::acp::canonicalize(&attestation)?;
+        let signature = signing_key.sign(&canonical);
         
-        // Chain step: H_i = SHA256(H_i-1 || env_hash)
-        let mut hasher = Sha256::new();
-        hasher.update(hex::decode(&accumulated_hash)?);
-        hasher.update(hex::decode(&env_hash)?);
-        accumulated_hash = hex::encode(hasher.finalize());
-
-        transactions.push(AttestationTransaction {
-            round: env.payload.round,
-            tx_id: env.payload.tx_id,
-            timestamp: env.payload.timestamp.clone(),
-            arena_winner: env.payload.arena_winner.clone(),
-            arena_confidence: env.payload.arena_confidence,
-            mutations: env.payload.mutations_this_round,
-            leader_action: env.payload.leader_action.clone(),
-            transaction_envelope_hash: env_hash,
-            envelope_signature: env.signature.clone(),
+        attestation.signature = Some(crate::acp::SignatureObject {
+            public_key: hex::encode(signing_key.verifying_key().to_bytes()),
+            signature_bytes: hex::encode(signature.to_bytes()),
         });
-    }
 
-    // 3. Assemble top-level certificate metadata
-    let leader_pub_key = hex::encode(signing_key.verifying_key().to_bytes());
-    let timestamp = chrono::Utc::now().to_rfc3339();
+        // 5. Write attestation to disk
+        let attestation_path = campaign_dir.join("provenance-attestation.json");
+        let pretty = serde_json::to_string_pretty(&attestation)?;
+        fs::write(&attestation_path, pretty)?;
 
-    let mut attestation = CampaignAttestation {
-        session_id,
-        root_task: root_task.to_string(),
-        timestamp,
-        leader_public_key: leader_pub_key,
-        total_rounds: transactions.len(),
-        trace_hash_chain_root: accumulated_hash,
-        transactions,
-        signature: None,
-    };
-
-    // 4. Sign the attestation envelope
-    let canonical = crate::acp::canonicalize(&attestation)?;
-    let signature = signing_key.sign(&canonical);
-    
-    attestation.signature = Some(crate::acp::SignatureObject {
-        public_key: hex::encode(signing_key.verifying_key().to_bytes()),
-        signature_bytes: hex::encode(signature.to_bytes()),
-    });
-
-    // 5. Write attestation to disk
-    let attestation_path = campaign_dir.join("provenance-attestation.json");
-    let pretty = serde_json::to_string_pretty(&attestation)?;
-    fs::write(&attestation_path, pretty)?;
-
-    Ok(attestation)
+        Ok(attestation)
+    })
+    .await
+    .map_err(|e| anyhow!("Blocking attestation task panicked: {}", e))?
 }
 
 /// Cryptographically validates the signatures and hash chain of a CampaignAttestation

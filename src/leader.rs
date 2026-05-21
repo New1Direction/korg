@@ -475,156 +475,162 @@ impl LeaderOrchestrator {
         mutations_this_round: usize,
         verdict: &EvaluationVerdict,
     ) {
-        let tx_id = Uuid::now_v7();
-        let timestamp = chrono::Utc::now().to_rfc3339();
-
+        let session_id = self.session_id;
         let verdict_json = serde_json::to_value(verdict).unwrap_or_default();
+        let leader_action = verdict.recommended_action.clone();
+        let swarm_size = self.swarm_size;
+        let campaign_tips = self.campaign_tips.clone();
+        let current_round_vision_attachments = self.current_round_vision_attachments.clone();
+        let campaign_signing_key_bytes = self.campaign_signing_key.to_bytes();
+        let tui_tx = self.tui_tx.clone();
 
-        // 1. Capture logical state root (hash of the blackboard)
-        let mut blackboard_content = None;
-        let state_merkle_root = if let Ok(content) = std::fs::read_to_string("/tmp/korg/blackboard/blackboard.json") {
-            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
-                blackboard_content = Some(content);
-                crate::provenance::compute_sha256(&json_val).unwrap_or_else(|_| hex::encode([0u8; 32]))
+        let res = tokio::task::spawn_blocking(move || -> anyhow::Result<(String, crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>)> {
+            // 1. Capture logical state root (hash of the blackboard)
+            let mut blackboard_content = None;
+            let state_merkle_root = if let Ok(content) = std::fs::read_to_string("/tmp/korg/blackboard/blackboard.json") {
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    blackboard_content = Some(content);
+                    crate::provenance::compute_sha256(&json_val).unwrap_or_else(|_| hex::encode([0u8; 32]))
+                } else {
+                    hex::encode([0u8; 32])
+                }
             } else {
                 hex::encode([0u8; 32])
+            };
+
+            if let Some(ref content) = blackboard_content {
+                let blob_dir = format!("/tmp/korg/campaigns/{}/state-blobs", session_id);
+                let _ = std::fs::create_dir_all(&blob_dir);
+                let blob_path = format!("{}/{}.json", blob_dir, state_merkle_root);
+                let _ = std::fs::write(&blob_path, content);
             }
-        } else {
-            hex::encode([0u8; 32])
-        };
 
-        if let Some(ref content) = blackboard_content {
-            let blob_dir = format!("/tmp/korg/campaigns/{}/state-blobs", self.session_id);
-            let _ = std::fs::create_dir_all(&blob_dir);
-            let blob_path = format!("{}/{}.json", blob_dir, state_merkle_root);
-            let _ = std::fs::write(&blob_path, content);
-        }
-
-        // 2. Capture physical codebase root (git write-tree)
-        let codebase_merkle_root = if let Ok(output) = std::process::Command::new("git")
-            .arg("write-tree")
-            .output()
-        {
-            if output.status.success() {
-                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            // 2. Capture physical codebase root (git write-tree)
+            let codebase_merkle_root = if let Ok(output) = std::process::Command::new("git")
+                .arg("write-tree")
+                .output()
+            {
+                if output.status.success() {
+                    String::from_utf8_lossy(&output.stdout).trim().to_string()
+                } else {
+                    "sha256:codebase-fallback".to_string()
+                }
             } else {
                 "sha256:codebase-fallback".to_string()
+            };
+
+            // 3. Compute the JCS content-addressed transaction hash (tx_hash)
+            let tx_id = uuid::Uuid::now_v7();
+            let timestamp = chrono::Utc::now().to_rfc3339();
+
+            let mut ktrans_payload = crate::acp::CampaignKtransPayload {
+                tx_id,
+                session_id,
+                round,
+                timestamp: timestamp.clone(),
+                arena_winner: arena_winner.clone(),
+                arena_confidence,
+                mutations_this_round,
+                verdict: verdict_json.clone(),
+                leader_action: leader_action.clone(),
+                new_swarm_size: swarm_size,
+                total_mutations_so_far: (round + 1) * 5,
+                tx_hash: "".to_string(), // Set to empty string for deterministic hashing
+                parent_hashes: campaign_tips.clone(),
+                state_merkle_root: state_merkle_root.clone(),
+                codebase_merkle_root: codebase_merkle_root.clone(),
+                vision_attachments: Some(current_round_vision_attachments.clone()),
+            };
+
+            let tx_hash = crate::provenance::compute_sha256(&ktrans_payload)
+                .unwrap_or_else(|_| format!("sha256:{}", hex::encode([0u8; 32])));
+
+            let mut ktrans = crate::acp::CampaignKtrans {
+                tx_id,
+                session_id,
+                round,
+                timestamp: timestamp.clone(),
+                arena_winner,
+                arena_confidence,
+                mutations_this_round,
+                verdict: verdict_json,
+                leader_action,
+                new_swarm_size: swarm_size,
+                total_mutations_so_far: (round + 1) * 5,
+                tx_hash: tx_hash.clone(),
+                parent_hashes: campaign_tips,
+                state_merkle_root,
+                codebase_merkle_root,
+                signature: None,
+                vision_attachments: Some(current_round_vision_attachments),
+            };
+
+            // Sign envelope
+            let signing_key = ed25519_dalek::SigningKey::from_bytes(&campaign_signing_key_bytes);
+            let signature = crate::acp::sign_payload(&signing_key, &ktrans)
+                .map_err(|e| anyhow::anyhow!("failed to sign CampaignKtrans payload: {}", e))?;
+
+            // Attach signature inside payload for convenience
+            ktrans.signature = Some(signature.clone());
+
+            let envelope = crate::acp::MessageEnvelope {
+                message_id: uuid::Uuid::now_v7(),
+                timestamp: ktrans.timestamp.clone(),
+                sender: format!("leader-{}", session_id),
+                payload: ktrans,
+                signature,
+            };
+
+            let dir = format!("/tmp/korg/campaigns/{}", session_id);
+            let _ = std::fs::create_dir_all(&dir);
+
+            let path = if round == 999 {
+                format!("{}/final-summary.ktrans.json", dir)
+            } else {
+                format!("{}/round-{:03}.ktrans.json", dir, round)
+            };
+
+            if let Ok(pretty) = serde_json::to_string_pretty(&envelope) {
+                let _ = std::fs::write(&path, pretty);
+                println!(
+                    "[Ktrans] Persisted ACP-framed (enveloped + signed) {}",
+                    path
+                );
             }
-        } else {
-            "sha256:codebase-fallback".to_string()
-        };
 
-        // 3. Compute the JCS content-addressed transaction hash (tx_hash)
-        let mut ktrans_payload = crate::acp::CampaignKtransPayload {
-            tx_id,
-            session_id: self.session_id,
-            round,
-            timestamp: timestamp.clone(),
-            arena_winner: arena_winner.clone(),
-            arena_confidence,
-            mutations_this_round,
-            verdict: verdict_json.clone(),
-            leader_action: verdict.recommended_action.clone(),
-            new_swarm_size: self.swarm_size,
-            total_mutations_so_far: (round + 1) * 5,
-            tx_hash: "".to_string(), // Set to empty string for deterministic hashing
-            parent_hashes: self.campaign_tips.clone(),
-            state_merkle_root: state_merkle_root.clone(),
-            codebase_merkle_root: codebase_merkle_root.clone(),
-            vision_attachments: Some(self.current_round_vision_attachments.clone()),
-        };
+            if let Some(tx) = &tui_tx {
+                if let Ok(pretty) = serde_json::to_string(&envelope.payload) {
+                    let _ = tx.try_send(crate::tui::TuiUpdate::Ktrans(pretty));
+                }
+            }
 
-        let tx_hash = crate::provenance::compute_sha256(&ktrans_payload)
-            .unwrap_or_else(|_| format!("sha256:{}", hex::encode([0u8; 32])));
+            Ok((tx_hash, envelope))
+        }).await;
 
-        let ktrans = crate::acp::CampaignKtrans {
-            tx_id,
-            session_id: self.session_id,
-            round,
-            timestamp: timestamp.clone(),
-            arena_winner,
-            arena_confidence,
-            mutations_this_round,
-            verdict: verdict_json.clone(),
-            leader_action: verdict.recommended_action.clone(),
-            new_swarm_size: self.swarm_size,
-            total_mutations_so_far: (round + 1) * 5,
-            tx_hash: tx_hash.clone(),
-            parent_hashes: self.campaign_tips.clone(),
-            state_merkle_root,
-            codebase_merkle_root,
-            signature: None,
-            vision_attachments: Some(self.current_round_vision_attachments.clone()),
-        };
+        match res {
+            Ok(Ok((tx_hash, envelope))) => {
+                // Update the active tip hashes
+                self.campaign_tips = vec![tx_hash];
 
-        // Update the active tip hashes
-        self.campaign_tips = vec![tx_hash];
-
-        // Wrap in proper ACP MessageEnvelope (now with real Ed25519 signature)
-        let envelope: crate::acp::MessageEnvelope<crate::acp::CampaignKtrans> =
-            self.create_ktrans_envelope(ktrans.clone());
-
-        // Live-stream the now-signed CampaignKtrans (the envelope function also
-        // attached the signature to the inner payload for convenience).
-        let acp_msg = crate::acp::AcpMessage::CampaignKtrans {
-            ktrans: envelope.payload.clone(),
-        };
-
-        let dir = format!("/tmp/korg/campaigns/{}", self.session_id);
-        let _ = tokio::fs::create_dir_all(&dir).await;
-
-        let path = if round == 999 {
-            format!("{}/final-summary.ktrans.json", dir)
-        } else {
-            format!("{}/round-{:03}.ktrans.json", dir, round)
-        };
-
-        if let Ok(pretty) = serde_json::to_string_pretty(&envelope) {
-            let _ = tokio::fs::write(&path, pretty).await;
-            println!(
-                "[Ktrans] Persisted ACP-framed (enveloped + signed) {}",
-                path
-            );
-        }
-
-        if let Some(tx) = &self.tui_tx {
-            if let Ok(pretty) = serde_json::to_string(&envelope.payload) {
-                let _ = tx.try_send(crate::tui::TuiUpdate::Ktrans(pretty));
+                // Live-stream the now-signed CampaignKtrans
+                let acp_msg = crate::acp::AcpMessage::CampaignKtrans {
+                    ktrans: envelope.payload.clone(),
+                };
+                self.emit_live_ktrans(acp_msg);
+            }
+            Ok(Err(e)) => {
+                eprintln!("[Leader] Error in background Ktrans serialization: {:?}", e);
+            }
+            Err(e) => {
+                eprintln!("[Leader] Join error in background Ktrans serialization: {:?}", e);
             }
         }
-
-        // === Live stream the ktrans over the ACP channel (stdout for the demo) ===
-        self.emit_live_ktrans(acp_msg);
 
         // Clear vision attachments for the next round
         self.current_round_vision_attachments.clear();
     }
 
-    /// Helper to create a MessageEnvelope<CampaignKtrans> for ACP framing.
-    /// This now performs real Ed25519 signing over the CampaignKtrans payload using
-    /// the per-campaign signing key. The resulting artifacts are fully verifiable
-    /// with `crate::acp::verify_envelope`.
-    fn create_ktrans_envelope(
-        &self,
-        mut ktrans: crate::acp::CampaignKtrans,
-    ) -> crate::acp::MessageEnvelope<crate::acp::CampaignKtrans> {
-        // IMPORTANT: We sign the ktrans while its inner .signature is None.
-        // This guarantees that the bytes we sign are exactly the bytes
-        // `verify_envelope` will canonicalize later (the payload stored in the envelope).
-        // The cryptographic proof lives in the outer MessageEnvelope.signature.
-        ktrans.signature = None;
 
-        let signature = crate::acp::sign_payload(&self.campaign_signing_key, &ktrans)
-            .expect("failed to sign CampaignKtrans payload");
-
-        crate::acp::MessageEnvelope {
-            message_id: Uuid::now_v7(),
-            timestamp: ktrans.timestamp.clone(),
-            sender: format!("leader-{}", self.session_id),
-            payload: ktrans,
-            signature,
-        }
-    }
 
     /// Emits a live `AcpMessage::CampaignKtrans` over the ACP channel.
     /// In the current harness this prints a JSON line on stdout (same transport workers use).
@@ -2387,7 +2393,10 @@ async fn spawn_worker_process(
         // Try to read a signed ACP envelope first (new Phase A path)
         match crate::acp::read_acp_envelope(&mut reader).await {
             Ok(envelope) => {
-                let verified = crate::acp::verify_envelope(&envelope).unwrap_or(false);
+                let env_clone = envelope.clone();
+                let verified = tokio::task::spawn_blocking(move || {
+                    crate::acp::verify_envelope(&env_clone).unwrap_or(false)
+                }).await.unwrap_or(false);
 
                 let m = envelope.payload;
 
