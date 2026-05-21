@@ -202,7 +202,7 @@ fn print_welcome_banner() {
 
     println!("{}⚙️  {}SYSTEM ECOSYSTEM STATUS:{}", bold, cyan, reset);
     println!("  {}• Swarm Engine:{}   5 Adversarial Personas (Captain, Harper, Benjamin, Lucas, Evaluator)", slate, reset);
-    let llm_config = crate::llm::KorgConfig::from_env();
+    let llm_config = crate::llm::KorgConfig::load();
     let model_str = llm_config.default_model.clone().unwrap_or_else(|| "default".to_string());
     println!("  {}• Cognitive Core:{} Swappable Provider [Active: {} | Model: {}]", slate, reset, llm_config.default_llm.to_uppercase(), model_str);
     println!("  {}• Guardrails:{}     5 semantic evaluation rubrics (Trajectory, Epistemic, etc.)", slate, reset);

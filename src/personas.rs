@@ -419,7 +419,7 @@ pub async fn fallback_evaluator(payload: &str, routing_id: &str) -> PersonaResul
 }
 
 pub async fn run_persona(persona: Persona, payload: &str, routing_id: &str) -> PersonaResult {
-    let cfg = crate::llm::KorgConfig::from_env();
+    let cfg = crate::llm::KorgConfig::load();
     let provider = crate::llm::build_provider(&cfg);
     run_persona_with_provider(persona, payload, routing_id, provider).await
 }
