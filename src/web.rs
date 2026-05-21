@@ -266,18 +266,21 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
     <title>korg — autonomous engineering runtime</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg-base: #000000;
-            --pane-bg: #050505;
-            --border-color: #1a1a1a;
+            --pane-bg: #09090b;
+            --border-color: #27272a;
             --border-active: #ffffff;
             --text-primary: #ffffff;
-            --text-secondary: #8e8e93;
-            --text-muted: #555555;
+            --text-secondary: #a1a1aa;
+            --text-muted: #52525b;
             --font-sans: 'Inter', sans-serif;
+            --font-heading: 'Outfit', sans-serif;
             --font-mono: 'JetBrains Mono', monospace;
+            --accent-glow: rgba(255, 255, 255, 0.08);
+            --accent-color: #ffffff;
         }
 
         * {
@@ -294,15 +297,43 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
             overflow-x: hidden;
             display: flex;
             flex-direction: column;
+            position: relative;
+        }
+
+        body::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 600px;
+            background: radial-gradient(circle at 50% -100px, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 40%, rgba(255, 255, 255, 0) 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        body::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+            background-size: 24px 24px;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.7;
         }
 
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 20px 40px;
+            padding: 24px 40px;
             border-bottom: 1px solid var(--border-color);
-            background-color: #000000;
+            background-color: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
 
         .logo-container {
@@ -312,9 +343,10 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
         }
 
         .logo {
-            font-size: 20px;
-            font-weight: 700;
-            letter-spacing: 0.05em;
+            font-family: var(--font-heading);
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: -0.04em;
             color: #ffffff;
             text-transform: lowercase;
         }
@@ -323,6 +355,9 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
             font-size: 11px;
             color: var(--text-muted);
             font-family: var(--font-mono);
+            border-left: 1px solid var(--border-color);
+            padding-left: 12px;
+            letter-spacing: 0.05em;
         }
 
         .header-status {
@@ -332,20 +367,25 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
             font-size: 11px;
             font-family: var(--font-mono);
             color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+            padding: 6px 12px;
+            border-radius: 4px;
+            background: rgba(9, 9, 11, 0.5);
         }
 
         .status-dot {
             width: 6px;
             height: 6px;
             border-radius: 50%;
-            background-color: #ffffff;
+            background-color: #10b981;
+            box-shadow: 0 0 8px #10b981;
             animation: pulse 2s infinite;
         }
 
         @keyframes pulse {
-            0% { opacity: 0.3; }
+            0% { opacity: 0.4; }
             50% { opacity: 1; }
-            100% { opacity: 0.3; }
+            100% { opacity: 0.4; }
         }
 
         main {
@@ -353,36 +393,217 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 60px 20px;
+            padding: 80px 20px;
             max-width: 1200px;
             margin: 0 auto;
             width: 100%;
+            position: relative;
+            z-index: 1;
         }
 
         .hero-section {
             text-align: center;
-            max-width: 800px;
+            max-width: 850px;
             margin-bottom: 60px;
-            animation: fadeIn 1s ease;
+            animation: fadeIn 1s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 6px 16px;
+            border-radius: 100px;
+            margin-bottom: 24px;
+            color: #ffffff;
+            transition: all 0.3s ease;
+        }
+
+        .hero-badge:hover {
+            border-color: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .hero-badge-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background-color: #ffffff;
+            box-shadow: 0 0 6px #ffffff;
         }
 
         .hero-title {
-            font-size: 48px;
-            font-weight: 700;
-            letter-spacing: -0.02em;
-            line-height: 1.1;
-            margin-bottom: 20px;
-            text-transform: lowercase;
+            font-family: var(--font-heading);
+            font-size: 56px;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1.05;
+            margin-bottom: 24px;
             background: linear-gradient(180deg, #ffffff 0%, #a1a1aa 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
         .hero-subtitle {
-            font-size: 15px;
+            font-size: 17px;
             color: var(--text-secondary);
             line-height: 1.6;
             font-weight: 300;
+            margin-bottom: 36px;
+            max-width: 700px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .hero-ctas {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+        }
+
+        .btn-primary {
+            font-family: var(--font-sans);
+            font-size: 13px;
+            font-weight: 600;
+            padding: 12px 28px;
+            background-color: #ffffff;
+            color: #000000;
+            border: 1px solid #ffffff;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            box-shadow: 0 4px 12px rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-primary:hover {
+            background-color: #e4e4e7;
+            border-color: #e4e4e7;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(255, 255, 255, 0.15);
+        }
+
+        .btn-secondary {
+            font-family: var(--font-sans);
+            font-size: 13px;
+            font-weight: 600;
+            padding: 12px 28px;
+            background-color: rgba(9, 9, 11, 0.5);
+            color: #ffffff;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .btn-secondary:hover {
+            border-color: rgba(255, 255, 255, 0.3);
+            background-color: rgba(255, 255, 255, 0.05);
+            transform: translateY(-1px);
+        }
+
+        /* Interactive Simulator */
+        .simulator-section {
+            width: 100%;
+            max-width: 900px;
+            margin-bottom: 100px;
+            animation: fadeInUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.15s;
+            animation-fill-mode: both;
+        }
+
+        .terminal-window {
+            border: 1px solid var(--border-color);
+            background-color: rgba(9, 9, 11, 0.7);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(12px);
+            display: flex;
+            flex-direction: column;
+            height: 380px;
+        }
+
+        .terminal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+            background-color: rgba(0, 0, 0, 0.4);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .terminal-dots {
+            display: flex;
+            gap: 6px;
+        }
+
+        .terminal-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .terminal-dot.red { background-color: #ef4444; }
+        .terminal-dot.yellow { background-color: #f59e0b; }
+        .terminal-dot.green { background-color: #10b981; }
+
+        .terminal-title {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+            letter-spacing: 0.05em;
+        }
+
+        .terminal-body {
+            padding: 24px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            overflow-y: auto;
+            flex-grow: 1;
+        }
+
+        .terminal-controls {
+            display: flex;
+            gap: 12px;
+            padding: 12px 20px;
+            background-color: rgba(0, 0, 0, 0.3);
+            border-top: 1px solid var(--border-color);
+        }
+
+        .sim-btn {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            padding: 6px 14px;
+            background-color: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .sim-btn:hover {
+            border-color: #ffffff;
+            color: #ffffff;
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+
+        .sim-btn.active {
+            border-color: #ffffff;
+            color: #000000;
+            background-color: #ffffff;
         }
 
         /* Portals Grid */
@@ -391,29 +612,45 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
             grid-template-columns: repeat(3, 1fr);
             gap: 24px;
             width: 100%;
-            margin-bottom: 80px;
-            animation: fadeInUp 1s ease 0.2s;
+            margin-bottom: 100px;
+            animation: fadeInUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.3s;
             animation-fill-mode: both;
         }
 
         .portal-card {
             border: 1px solid var(--border-color);
-            background-color: var(--pane-bg);
+            background-color: rgba(9, 9, 11, 0.4);
+            border-radius: 8px;
             padding: 32px;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 20px;
             cursor: pointer;
             transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
             position: relative;
             text-decoration: none;
             color: inherit;
+            backdrop-filter: blur(8px);
+        }
+
+        .portal-card::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: 8px;
+            padding: 1px;
+            background: linear-gradient(to bottom, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0));
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
         }
 
         .portal-card:hover {
-            border-color: var(--border-active);
+            border-color: rgba(255, 255, 255, 0.25);
             transform: translateY(-4px);
-            box-shadow: 0 12px 30px rgba(255, 255, 255, 0.03);
+            background-color: rgba(12, 12, 16, 0.6);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5), 0 0 30px rgba(255, 255, 255, 0.02);
         }
 
         .portal-header {
@@ -423,7 +660,12 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
         }
 
         .portal-icon {
-            font-size: 20px;
+            font-size: 24px;
+            transition: transform 0.3s ease;
+        }
+
+        .portal-card:hover .portal-icon {
+            transform: scale(1.1) rotate(5deg);
         }
 
         .portal-tag {
@@ -431,58 +673,77 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
             font-size: 10px;
             color: var(--text-muted);
             border: 1px solid var(--border-color);
-            padding: 2px 6px;
-            text-transform: lowercase;
+            padding: 4px 10px;
+            border-radius: 100px;
+            background: rgba(0, 0, 0, 0.3);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         .portal-card:hover .portal-tag {
-            border-color: var(--text-secondary);
+            border-color: rgba(255, 255, 255, 0.2);
             color: var(--text-secondary);
         }
 
         .portal-title {
-            font-size: 18px;
-            font-weight: 600;
+            font-family: var(--font-heading);
+            font-size: 20px;
+            font-weight: 700;
             color: #ffffff;
-            text-transform: lowercase;
+            letter-spacing: -0.01em;
         }
 
         .portal-desc {
-            font-size: 12px;
+            font-size: 13px;
             color: var(--text-secondary);
             line-height: 1.6;
             flex-grow: 1;
+            font-weight: 300;
         }
 
         .portal-action {
             font-family: var(--font-mono);
             font-size: 11px;
             color: var(--text-muted);
-            text-transform: lowercase;
+            text-transform: uppercase;
             transition: color 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .portal-card:hover .portal-action {
             color: #ffffff;
         }
 
-        /* Matrix Grid */
+        /* Matrix Specification Grid */
         .matrix-section {
             width: 100%;
             border-top: 1px solid var(--border-color);
-            padding-top: 60px;
-            animation: fadeInUp 1s ease 0.4s;
+            padding-top: 80px;
+            animation: fadeInUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.4s;
             animation-fill-mode: both;
         }
 
         .matrix-title {
-            font-size: 14px;
-            font-family: var(--font-mono);
-            color: var(--text-secondary);
-            text-transform: lowercase;
-            margin-bottom: 32px;
+            font-family: var(--font-heading);
+            font-size: 28px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 12px;
             text-align: center;
-            letter-spacing: 0.05em;
+            letter-spacing: -0.02em;
+        }
+
+        .matrix-subtitle {
+            font-size: 14px;
+            color: var(--text-secondary);
+            text-align: center;
+            margin-bottom: 48px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            font-weight: 300;
         }
 
         .matrix-grid {
@@ -494,58 +755,74 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
         .matrix-card {
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 12px;
+            border: 1px solid var(--border-color);
+            background: rgba(9, 9, 11, 0.2);
+            padding: 24px;
+            border-radius: 8px;
+            transition: border-color 0.3s;
+        }
+
+        .matrix-card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
         }
 
         .matrix-card-title {
             font-family: var(--font-mono);
-            font-size: 12px;
-            font-weight: 600;
+            font-size: 13px;
+            font-weight: bold;
             color: #ffffff;
-            text-transform: lowercase;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
             display: flex;
             align-items: center;
             gap: 8px;
         }
 
         .matrix-card-title::before {
-            content: "▪";
-            color: #ffffff;
+            content: "";
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background-color: #ffffff;
+            border-radius: 50%;
         }
 
         .matrix-card-text {
-            font-size: 12px;
+            font-size: 13px;
             color: var(--text-secondary);
             line-height: 1.6;
-            padding-left: 14px;
+            font-weight: 300;
         }
 
         /* Footer */
         footer {
             border-top: 1px solid var(--border-color);
-            padding: 30px 40px;
+            padding: 40px;
             text-align: center;
             font-family: var(--font-mono);
-            font-size: 10px;
+            font-size: 11px;
             color: var(--text-muted);
             background-color: #000000;
+            letter-spacing: 0.05em;
         }
 
-        /* Modals */
+        /* Modals style */
         .modal-overlay {
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background-color: rgba(0, 0, 0, 0.95);
+            background-color: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(8px);
             z-index: 1000;
             display: flex;
             justify-content: center;
             align-items: center;
             opacity: 0;
             pointer-events: none;
-            transition: opacity 0.25s ease;
+            transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
         .modal-overlay.active {
@@ -554,37 +831,40 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
         }
 
         .modal-card {
-            background-color: #050505;
-            border: 1px solid #222222;
-            width: 540px;
+            background-color: #09090b;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            width: 600px;
             max-width: 90vw;
-            padding: 32px;
+            padding: 36px;
             display: flex;
             flex-direction: column;
-            gap: 20px;
-            animation: modalScaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            gap: 24px;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
+            transform: scale(0.95) translateY(10px);
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        @keyframes modalScaleIn {
-            from { transform: scale(0.95); opacity: 0; }
-            to { transform: scale(1); opacity: 1; }
+        .modal-overlay.active .modal-card {
+            transform: scale(1) translateY(0);
         }
 
         .modal-title {
-            font-family: var(--font-mono);
-            font-size: 13px;
-            font-weight: bold;
+            font-family: var(--font-heading);
+            font-size: 22px;
+            font-weight: 700;
             color: #ffffff;
-            text-transform: lowercase;
-            letter-spacing: 0.05em;
-            border-bottom: 1px solid #222222;
-            padding-bottom: 10px;
+            letter-spacing: -0.01em;
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
         .modal-desc {
-            font-size: 12px;
+            font-size: 13px;
             color: var(--text-secondary);
             line-height: 1.6;
+            font-weight: 300;
         }
 
         .terminal-box {
@@ -592,48 +872,53 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
             align-items: center;
             justify-content: space-between;
             background-color: #000000;
-            border: 1px solid #333333;
-            padding: 12px 16px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 14px 18px;
             font-family: var(--font-mono);
             font-size: 12px;
             color: #ffffff;
         }
 
         .terminal-prompt {
-            color: var(--text-secondary);
+            color: var(--text-muted);
             user-select: none;
             margin-right: 8px;
         }
 
         .terminal-command {
             flex-grow: 1;
+            color: #ffffff;
         }
 
         .copy-btn {
             background: none;
-            border: 1px solid #333333;
+            border: 1px solid var(--border-color);
             color: var(--text-secondary);
             font-family: var(--font-mono);
             font-size: 10px;
-            padding: 2px 8px;
+            padding: 4px 10px;
+            border-radius: 4px;
             cursor: pointer;
-            text-transform: lowercase;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
             transition: all 0.2s;
         }
 
         .copy-btn:hover {
             border-color: #ffffff;
             color: #ffffff;
+            background-color: rgba(255, 255, 255, 0.05);
         }
 
         .cli-details {
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 10px;
             font-family: var(--font-mono);
             font-size: 11px;
-            border-top: 1px solid #222222;
-            padding-top: 14px;
+            border-top: 1px solid var(--border-color);
+            padding-top: 18px;
         }
 
         .cli-detail-row {
@@ -650,24 +935,28 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
             color: var(--text-secondary);
         }
 
-        .btn {
-            font-family: var(--font-sans);
-            font-size: 11px;
-            font-weight: 600;
-            padding: 8px 16px;
-            border: 1px solid #333333;
-            background: none;
-            color: #ffffff;
-            cursor: pointer;
-            text-transform: lowercase;
-            transition: all 0.2s;
-            align-self: flex-end;
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 8px;
         }
 
-        .btn:hover {
-            border-color: #ffffff;
+        .btn-modal-close {
+            font-family: var(--font-sans);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 10px 20px;
             background-color: #ffffff;
             color: #000000;
+            border: 1px solid #ffffff;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-modal-close:hover {
+            background-color: #e4e4e7;
+            border-color: #e4e4e7;
         }
 
         /* Provenance Explorer Modal Layout */
@@ -679,20 +968,23 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
 
         .modal-dag-visual {
             border: 1px solid var(--border-color);
-            background-color: #010101;
-            padding: 16px;
+            background-color: #020203;
+            border-radius: 6px;
+            padding: 24px;
             display: flex;
             justify-content: center;
+            align-items: center;
         }
 
         .mini-dag-svg {
             width: 100%;
-            height: 160px;
+            height: 80px;
         }
 
         .mini-edge {
-            stroke: #222222;
-            stroke-width: 1.5;
+            stroke: #27272a;
+            stroke-width: 2;
+            stroke-dasharray: 4 4;
         }
 
         .mini-node {
@@ -700,27 +992,30 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
         }
 
         .mini-node circle {
-            fill: #000000;
-            stroke: #333333;
+            fill: #09090b;
+            stroke: #27272a;
             stroke-width: 2;
             transition: all 0.2s;
         }
 
         .mini-node:hover circle {
             stroke: #ffffff;
+            filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.3));
         }
 
         .mini-node.active circle {
             fill: #ffffff;
             stroke: #ffffff;
+            filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.5));
         }
 
         .mini-node text {
             font-family: var(--font-mono);
             font-size: 10px;
-            fill: var(--text-secondary);
+            fill: var(--text-muted);
             text-anchor: middle;
             user-select: none;
+            font-weight: 500;
         }
 
         .mini-node.active text {
@@ -730,50 +1025,54 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
 
         .modal-dag-properties {
             border: 1px solid var(--border-color);
-            background-color: #030303;
-            padding: 16px;
+            background-color: #040405;
+            border-radius: 6px;
+            padding: 20px;
             font-family: var(--font-mono);
         }
 
         .properties-header {
             font-size: 11px;
-            color: var(--text-secondary);
-            text-transform: lowercase;
-            margin-bottom: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 14px;
             border-bottom: 1px solid var(--border-color);
-            padding-bottom: 6px;
+            padding-bottom: 8px;
         }
 
         .prop-table {
             display: flex;
             flex-direction: column;
-            gap: 8px;
-            font-size: 10px;
+            gap: 10px;
+            font-size: 11px;
         }
 
         .prop-row {
             display: flex;
+            align-items: flex-start;
         }
 
         .prop-key {
-            width: 120px;
-            color: var(--text-muted);
-            text-transform: lowercase;
+            width: 140px;
+            color: var(--text-secondary);
+            font-weight: bold;
         }
 
         .prop-val {
             flex-grow: 1;
-            color: var(--text-primary);
+            color: #ffffff;
             word-break: break-all;
         }
 
+        /* Animations */
         @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(10px); }
+            from { opacity: 0; transform: translateY(20px); }
             to { opacity: 1; transform: translateY(0); }
         }
     </style>
@@ -786,37 +1085,79 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
         </div>
         <div class="header-status">
             <span class="status-dot"></span>
-            <span class="status-text">provenance active</span>
+            <span class="status-text">provenance node active</span>
         </div>
     </header>
 
     <main>
         <div class="hero-section">
+            <div class="hero-badge">
+                <span class="hero-badge-dot"></span>
+                <span>korg v0.1.0 is now officially public</span>
+            </div>
             <h1 class="hero-title">the autonomous software engineering runtime.</h1>
             <p class="hero-subtitle">
                 A zero-trust multi-persona swarm environment speaking ACP, powered by content-addressed Merkle-DAG ledgers, adversarial sandbox verification, and enterprise-grade multi-modal vision policy firewalls.
             </p>
+            <div class="hero-ctas">
+                <a href="/cockpit" class="btn-primary">
+                    <span>launch dashboard</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                </a>
+                <a href="#matrix" class="btn-secondary" onclick="document.getElementById('matrix').scrollIntoView({behavior: 'smooth'}); return false;">
+                    <span>view specification</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Interactive Simulator -->
+        <div class="simulator-section">
+            <div class="terminal-window">
+                <div class="terminal-header">
+                    <div class="terminal-dots">
+                        <span class="terminal-dot red"></span>
+                        <span class="terminal-dot yellow"></span>
+                        <span class="terminal-dot green"></span>
+                    </div>
+                    <span class="terminal-title">korg_interactive_simulation.sh</span>
+                    <span style="width: 40px;"></span>
+                </div>
+                <div class="terminal-body" id="term-output">
+                    <!-- Typing simulation content goes here -->
+                </div>
+                <div class="terminal-controls">
+                    <button class="sim-btn active" id="btn-sim-run" onclick="startCampaignSim()">Run Swarm Sandbox</button>
+                    <button class="sim-btn" id="btn-sim-policy" onclick="startPolicySim()">Verify OCR Redaction</button>
+                    <button class="sim-btn" id="btn-sim-dag" onclick="startDagSim()">Inspect Merkle replay</button>
+                </div>
+            </div>
         </div>
 
         <div class="portals-grid">
             <a href="/cockpit" class="portal-card">
                 <div class="portal-header">
                     <span class="portal-icon">⚡</span>
-                    <span class="portal-tag">cockpit</span>
+                    <span class="portal-tag">live dashboard</span>
                 </div>
-                <h3 class="portal-title">enter swarm cockpit</h3>
-                <p class="portal-desc">Monitor live execution timeline, observe multi-persona transactions, review visual security intercepts, and negotiate task contracts.</p>
-                <span class="portal-action">[ launch session ]</span>
+                <h3 class="portal-title">enter swarm dashboard</h3>
+                <p class="portal-desc">Observe live multi-persona agent execution streams, check real-time OCR visual intercepts, and authorize manual plan overrides.</p>
+                <span class="portal-action">
+                    <span>launch stream</span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                </span>
             </a>
             
             <div class="portal-card" onclick="openCliModal()">
                 <div class="portal-header">
                     <span class="portal-icon">🖥️</span>
-                    <span class="portal-tag">cli guide</span>
+                    <span class="portal-tag">cli engine</span>
                 </div>
                 <h3 class="portal-title">run campaign via cli</h3>
-                <p class="portal-desc">Execute autonomous engineering tasks from your local terminal with full worktree isolation, headless tracking, and persistent ledger attestations.</p>
-                <span class="portal-action">[ reveal schema ]</span>
+                <p class="portal-desc">Initiate highly isolated autonomous campaigns directly from your terminal. Full local workspace isolation and rollback support.</p>
+                <span class="portal-action">
+                    <span>reveal schema</span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                </span>
             </div>
             
             <div class="portal-card" onclick="openDagModal()">
@@ -825,13 +1166,17 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
                     <span class="portal-tag">provenance</span>
                 </div>
                 <h3 class="portal-title">verify provenance trace</h3>
-                <p class="portal-desc">Audit the cryptographic attestation chain. Verify ed25519 signatures, content-address hashes, and visual compliance proofs.</p>
-                <span class="portal-action">[ execute verification ]</span>
+                <p class="portal-desc">Audit the cryptographic attestation chain. Verify content-addressed Merkle hashes and ed25519 system signature paths.</p>
+                <span class="portal-action">
+                    <span>execute verification</span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                </span>
             </div>
         </div>
 
-        <div class="matrix-section">
+        <div class="matrix-section" id="matrix">
             <h2 class="matrix-title">runtime specification matrix</h2>
+            <p class="matrix-subtitle">Every building block of Korg is engineered for deterministic, high-assurance software synthesis.</p>
             <div class="matrix-grid">
                 <div class="matrix-card">
                     <div class="matrix-card-title">merkle-dag ledger</div>
@@ -858,93 +1203,80 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
     </footer>
 
     <!-- CLI Guide Modal -->
-    <div class="modal-overlay" id="cli-modal">
+    <div class="modal-overlay" id="cli-modal" onclick="if(event.target === this) closeCliModal()">
         <div class="modal-card">
-            <div class="modal-title">🖥️ run campaign via cli</div>
+            <div class="modal-title">
+                <span>🖥️ run campaign via cli</span>
+            </div>
             <p class="modal-desc">Execute Korg campaigns directly from your system shell. Copy the command below to start an interactive visual campaign:</p>
             <div class="terminal-box">
-                <span class="terminal-prompt">$</span> <span class="terminal-command" id="cmd-text">korg campaign --web</span>
+                <span class="terminal-prompt">$</span> 
+                <span class="terminal-command" id="cmd-text">korg campaign --web --prompt "Refactor authentication layer"</span>
                 <button class="copy-btn" onclick="copyCliCommand()">copy</button>
             </div>
             <div class="cli-details">
                 <div class="cli-detail-row">
                     <span class="cli-detail-key">--web</span>
-                    <span class="cli-detail-val">Launches this web cockpit for real-time visualization</span>
+                    <span class="cli-detail-val">Launches real-time event visualization in the browser</span>
                 </div>
                 <div class="cli-detail-row">
                     <span class="cli-detail-key">--headless</span>
-                    <span class="cli-detail-val">Runs campaign purely inside stdout without GUI</span>
+                    <span class="cli-detail-val">Runs campaign purely inside stdout without GUI hooks</span>
                 </div>
                 <div class="cli-detail-row">
                     <span class="cli-detail-key">--tui</span>
-                    <span class="cli-detail-val">Launches Ratatui-based console dashboard</span>
+                    <span class="cli-detail-val">Launches Ratatui-based interactive terminal dashboard</span>
                 </div>
             </div>
             <div class="modal-actions">
-                <button class="btn btn-primary" onclick="closeCliModal()">close</button>
+                <button class="btn-modal-close" onclick="closeCliModal()">close</button>
             </div>
         </div>
     </div>
 
     <!-- Provenance Modal -->
-    <div class="modal-overlay" id="dag-modal">
-        <div class="modal-card" style="width: 720px; max-width: 95vw;">
-            <div class="modal-title">⛓️ interactive provenance chain explorer</div>
-            <p class="modal-desc">Select any node in the Merkle-DAG trace to verify its cryptographic attestation certificate and state consistency.</p>
+    <div class="modal-overlay" id="dag-modal" onclick="if(event.target === this) closeDagModal()">
+        <div class="modal-card">
+            <div class="modal-title">
+                <span>⛓️ provenance trace audit verifier</span>
+            </div>
+            <p class="modal-desc">Cryptographically verify the content-addressed chain of custody from genesis state through compilation release.</p>
             
             <div class="modal-dag-layout">
                 <div class="modal-dag-visual">
-                    <svg viewBox="0 0 450 160" class="mini-dag-svg">
-                        <line x1="50" y1="80" x2="130" y2="80" class="mini-edge"></line>
-                        <line x1="130" y1="80" x2="210" y2="80" class="mini-edge"></line>
-                        <line x1="210" y1="80" x2="290" y2="80" class="mini-edge"></line>
-                        <line x1="290" y1="80" x2="370" y2="80" class="mini-edge"></line>
-                        
-                        <g class="mini-node active" id="mn-0" onclick="selectMiniNode(0)">
-                            <circle cx="50" cy="80" r="12"></circle>
-                            <text x="50" y="110">tx_00</text>
-                        </g>
-                        <g class="mini-node" id="mn-1" onclick="selectMiniNode(1)">
-                            <circle cx="130" cy="80" r="12"></circle>
-                            <text x="130" y="110">tx_01</text>
-                        </g>
-                        <g class="mini-node" id="mn-2" onclick="selectMiniNode(2)">
-                            <circle cx="210" cy="80" r="12"></circle>
-                            <text x="210" y="110">tx_02</text>
-                        </g>
-                        <g class="mini-node" id="mn-3" onclick="selectMiniNode(3)">
-                            <circle cx="290" cy="80" r="12" style="stroke: #ffaa00;"></circle>
-                            <text x="290" y="110" style="fill: #ffaa00;">tx_03</text>
-                        </g>
-                        <g class="mini-node" id="mn-4" onclick="selectMiniNode(4)">
-                            <circle cx="370" cy="80" r="12"></circle>
-                            <text x="370" y="110">tx_04</text>
-                        </g>
+                    <svg width="420" height="80" id="mini-dag-svg">
+                        <line x1="50" y1="40" x2="130" y2="40" class="mini-edge"></line>
+                        <line x1="130" y1="40" x2="210" y2="40" class="mini-edge"></line>
+                        <line x1="210" y1="40" x2="290" y2="40" class="mini-edge"></line>
+                        <line x1="290" y1="40" x2="370" y2="40" class="mini-edge"></line>
+                        <g class="mini-node active" id="mn-0" onclick="selectMiniNode(0)"><circle cx="50" cy="40" r="14"></circle><text x="50" y="44">tx_0</text></g>
+                        <g class="mini-node" id="mn-1" onclick="selectMiniNode(1)"><circle cx="130" cy="40" r="14"></circle><text x="130" y="44">tx_1</text></g>
+                        <g class="mini-node" id="mn-2" onclick="selectMiniNode(2)"><circle cx="210" cy="40" r="14"></circle><text x="210" y="44">tx_2</text></g>
+                        <g class="mini-node" id="mn-3" onclick="selectMiniNode(3)"><circle cx="290" cy="40" r="14"></circle><text x="290" y="44">tx_3</text></g>
+                        <g class="mini-node" id="mn-4" onclick="selectMiniNode(4)"><circle cx="370" cy="40" r="14"></circle><text x="370" y="44">tx_4</text></g>
                     </svg>
                 </div>
-                
                 <div class="modal-dag-properties">
                     <h4 class="properties-header">node attributes</h4>
                     <div class="prop-table" id="prop-table-body">
-                        <!-- Filled by JS -->
+                        <!-- Filled dynamically -->
                     </div>
                 </div>
             </div>
-            
-            <div class="modal-actions" style="margin-top: 15px;">
-                <button class="btn btn-primary" onclick="closeDagModal()">close</button>
+
+            <div class="modal-actions">
+                <button class="btn-modal-close" onclick="closeDagModal()">close</button>
             </div>
         </div>
     </div>
 
     <script>
         // Modal functions
-        function openCliModal() {
-            document.getElementById("cli-modal").classList.add("active");
-        }
-        function closeCliModal() {
-            document.getElementById("cli-modal").classList.remove("active");
-        }
+        function openCliModal() { document.getElementById("cli-modal").classList.add("active"); }
+        function closeCliModal() { document.getElementById("cli-modal").classList.remove("active"); }
+        function openDagModal() { document.getElementById("dag-modal").classList.add("active"); selectMiniNode(0); }
+        function closeDagModal() { document.getElementById("dag-modal").classList.remove("active"); }
+        
         function copyCliCommand() {
             const text = document.getElementById("cmd-text").innerText;
             navigator.clipboard.writeText(text).then(() => {
@@ -954,102 +1286,208 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
             });
         }
 
-        function openDagModal() {
-            document.getElementById("dag-modal").classList.add("active");
-            selectMiniNode(0);
-        }
-        function closeDagModal() {
-            document.getElementById("dag-modal").classList.remove("active");
-        }
-
         // Mini DAG mock database
         const miniDagDb = [
             {
-                tx: "tx_00",
-                type: "genesis",
+                tx: "tx_00 (genesis)",
+                type: "SYSTEM_GENESIS",
                 hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                signature: "ed25519::8f3c29a2b7e5c4d3a2b1... [verified ✓]",
+                signature: "ed25519::verified [8f3c29a2b7e5c4...]",
                 state_root: "a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2 [verified ✓]",
-                attestation: "SYSTEM_INITIALIZED",
-                status: "active (genesis)"
+                status: "attested & finalized"
             },
             {
-                tx: "tx_01",
-                type: "plan_formulated",
+                tx: "tx_01 (plan)",
+                type: "PLAN_FORMULATION",
                 hash: "6d2d46e3ea406fb2b18ea24bfbd54f97155e8c1cf9e1d8820cf67ef8fc8a385f",
-                signature: "ed25519::4a7d3b2e5f1c9a8b7d6e... [verified ✓]",
+                signature: "ed25519::verified [4a7d3b2e5f1c9a...]",
                 state_root: "f8e7d6c5b4a39281706f5e4d3c2b1a0f [verified ✓]",
-                attestation: "worker-01: formulate implementation_plan.md",
-                status: "approved & verified"
+                status: "approved by operator"
             },
             {
-                tx: "tx_02",
-                type: "code_change",
+                tx: "tx_02 (code)",
+                type: "WORKSPACE_SYNTHESIS",
                 hash: "5f82c4f1e312a02b1f8d4239824bfbd54f97155e8c1cf9e1d8820cf67ef8fc8a3",
-                signature: "ed25519::3c2b9a8d7e5f4a3b2c1d... [verified ✓]",
+                signature: "ed25519::verified [3c2b9a8d7e5f4a...]",
                 state_root: "b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9 [verified ✓]",
-                attestation: "worker-02: modify src/leader.rs for validation",
-                status: "approved & verified"
+                status: "adversarial suite green"
             },
             {
-                tx: "tx_03",
-                type: "policy_intercept",
+                tx: "tx_03 (policy)",
+                type: "POLICY_REDISTRIBUTION",
                 hash: "4e91a7c3b2e5f1c9a8b7d6e5c4b3a2b1e3f4a5b6c7d8e9a0b1c2d3e4f5a6b7c8",
-                signature: "ed25519::9a8c7b6d5e4f3a2b1c0d... [contested ⚠]",
+                signature: "ed25519::contested [9a8c7b6d5e4f3a...]",
                 state_root: "d8e7c6b5a4938271605f4e3d2c1b0a9f [redacted ✓]",
-                attestation: "policy-engine: screenshot containing 'prod-database-url' redacted",
-                status: "overridden & redacted by operator"
+                status: "intercepted & redacted"
             },
             {
-                tx: "tx_04",
-                type: "release_finalized",
+                tx: "tx_04 (release)",
+                type: "RELEASE_COMMIT",
                 hash: "9f3c2b8a7d5e4f3c2b1a0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a",
-                signature: "ed25519::3c2b7a9f8e7d6c5b4a39... [verified ✓]",
+                signature: "ed25519::verified [3c2b7a9f8e7d6c...]",
                 state_root: "e3f2d1c0b9a876543210fedcba987654 [verified ✓]",
-                attestation: "leader: clean compile and release build green",
-                status: "finalized"
+                status: "production build active"
             }
         ];
 
         function selectMiniNode(idx) {
-            for(let i=0; i<5; i++) {
-                document.getElementById(`mn-${i}`).classList.remove("active");
-            }
+            document.querySelectorAll(".mini-node").forEach(n => n.classList.remove("active"));
             document.getElementById(`mn-${idx}`).classList.add("active");
             
             const data = miniDagDb[idx];
             const body = document.getElementById("prop-table-body");
             body.innerHTML = `
-                <div class="prop-row">
-                    <div class="prop-key">transaction</div>
-                    <div class="prop-val">${data.tx}</div>
-                </div>
-                <div class="prop-row">
-                    <div class="prop-key">event type</div>
-                    <div class="prop-val">${data.type}</div>
-                </div>
-                <div class="prop-row">
-                    <div class="prop-key">merkle hash</div>
-                    <div class="prop-val">${data.hash}</div>
-                </div>
-                <div class="prop-row">
-                    <div class="prop-key">signature</div>
-                    <div class="prop-val">${data.signature}</div>
-                </div>
-                <div class="prop-row">
-                    <div class="prop-key">state root</div>
-                    <div class="prop-val">${data.state_root}</div>
-                </div>
-                <div class="prop-row">
-                    <div class="prop-key">attestation</div>
-                    <div class="prop-val">${data.attestation}</div>
-                </div>
-                <div class="prop-row">
-                    <div class="prop-key">status</div>
-                    <div class="prop-val" style="color: ${data.tx === 'tx_03' ? '#ffaa00' : '#ffffff'}">${data.status}</div>
+                <div class="prop-table">
+                    <div class="prop-row">
+                        <div class="prop-key">Transaction ID</div>
+                        <div class="prop-val">${data.tx}</div>
+                    </div>
+                    <div class="prop-row">
+                        <div class="prop-key">Event Type</div>
+                        <div class="prop-val" style="color: #ffffff; font-weight: bold;">${data.type}</div>
+                    </div>
+                    <div class="prop-row">
+                        <div class="prop-key">Merkle Hash</div>
+                        <div class="prop-val" style="color: var(--text-secondary); font-family: var(--font-mono);">${data.hash}</div>
+                    </div>
+                    <div class="prop-row">
+                        <div class="prop-key">Attestation</div>
+                        <div class="prop-val" style="color: #10b981;">${data.signature}</div>
+                    </div>
+                    <div class="prop-row">
+                        <div class="prop-key">State Root</div>
+                        <div class="prop-val">${data.state_root}</div>
+                    </div>
+                    <div class="prop-row">
+                        <div class="prop-key">Status</div>
+                        <div class="prop-val" style="color: ${data.tx.includes('tx_03') ? '#f59e0b' : '#ffffff'}; font-weight: 500;">${data.status}</div>
+                    </div>
                 </div>
             `;
         }
+
+        // Terminal Interactive Simulator Logic
+        let simInterval = null;
+        const termElement = document.getElementById("term-output");
+
+        const simulatorScripts = {
+            run: [
+                { type: "input", text: "korg campaign --web --prompt \"Refactor authentication database connection pool\"" },
+                { type: "output", text: "[korg] Initializing campaign environment...", color: "#a1a1aa" },
+                { type: "output", text: "[korg] Creating transient isolation sandbox (git worktree)...", color: "#a1a1aa" },
+                { type: "output", text: "[korg] Sandbox created at: /tmp/korg-worktree-a8f3", color: "#52525b" },
+                { type: "output", text: "[korg] Spawning autonomous swarm (3 personas active):", color: "#ffffff" },
+                { type: "output", text: "   ▸ [architect] Designing execution layout...", color: "#a1a1aa" },
+                { type: "output", text: "   ▸ [coder] Generating patch for src/db.rs...", color: "#a1a1aa" },
+                { type: "output", text: "   ▸ [tester] Synthesizing adversarial verification suite...", color: "#a1a1aa" },
+                { type: "output", text: "[korg] Patch formulated. Running adversarial test suite...", color: "#ffffff" },
+                { type: "output", text: "   ✔ Compile check: GREEN (took 1.2s)", color: "#10b981" },
+                { type: "output", text: "   ✔ Unit tests (8/8): GREEN", color: "#10b981" },
+                { type: "output", text: "   ✔ Adversarial Security Scan: CLEAN", color: "#10b981" },
+                { type: "output", text: "[korg] Swarm verification complete. Generating Merkle-DAG attestation...", color: "#ffffff" },
+                { type: "output", text: "[korg] Attestation tx_02 written to cryptographic ledger.", color: "#10b981" },
+                { type: "output", text: "[korg] Campaign successfully finalized! Ready for deployment.", color: "#ffffff" }
+            ],
+            policy: [
+                { type: "input", text: "korg campaign --verify-vision-policy" },
+                { type: "output", text: "[policy-engine] Booting zero-trust visual intercept interceptor...", color: "#a1a1aa" },
+                { type: "output", text: "[policy-engine] Monitoring active workspace GUI state...", color: "#a1a1aa" },
+                { type: "output", text: "[policy-engine] Screenshot triggered by tester persona.", color: "#ffffff" },
+                { type: "output", text: "[policy-engine] Processing screenshot_382.png through vision firewall...", color: "#ffffff" },
+                { type: "output", text: "   ▸ Scanning metadata and OCR layers...", color: "#52525b" },
+                { type: "output", text: "   ⚠ VIOLATION DETECTED: Found string pattern 'DATABASE_PASSWORD=********' in visual OCR buffer!", color: "#ef4444" },
+                { type: "output", text: "   ⚠ FAIL-SECURE POLICY ACTIVATED: Triggering zero-trust filter.", color: "#ef4444" },
+                { type: "output", text: "[policy-engine] Redacting raw screenshot in memory...", color: "#ffffff" },
+                { type: "output", text: "   ▸ Method: Grayscale Overlay + Total Blur redaction", color: "#a1a1aa" },
+                { type: "output", text: "   ✔ Screenshot redacted. Safe base64 broadcast emitted.", color: "#10b981" },
+                { type: "output", text: "[policy-engine] Attestation tx_03 recorded: OCR_VIOLATION_AUTO_REDACTED", color: "#10b981" },
+                { type: "output", text: "[policy-engine] No raw sensitive credentials escaped the sandbox.", color: "#ffffff" }
+            ],
+            dag: [
+                { type: "input", text: "korg dag log --tx tx_04" },
+                { type: "output", text: "[korg-dag] Content-Addressed Merkle ledger audit trace:", color: "#ffffff" },
+                { type: "output", text: "--------------------------------------------------------", color: "#52525b" },
+                { type: "output", text: "Transaction: tx_04", color: "#ffffff" },
+                { type: "output", text: "Parent Hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4...", color: "#a1a1aa" },
+                { type: "output", text: "State Root:  9f3c2b8a7d5e4f3c2b1a0d9e8f7a6b5c4d3e2f1a...", color: "#a1a1aa" },
+                { type: "output", text: "Signature:   ed25519::verified [attester: leader_primary]", color: "#10b981" },
+                { type: "output", text: "Payload Type: RELEASE_COMMIT", color: "#ffffff" },
+                { type: "output", text: "Diff Attestation:", color: "#a1a1aa" },
+                { type: "output", text: "   + modified: src/web.rs (monochrome layout upgrade)", color: "#10b981" },
+                { type: "output", text: "   + verified: adversarial-arena compiler passes", color: "#10b981" },
+                { type: "output", text: "Cryptographic Attestation Chain: VALID", color: "#10b981" },
+                { type: "output", text: "   Genesis (tx_00) ➔ Plan (tx_01) ➔ Synthesis (tx_02) ➔ Intercept (tx_03) ➔ Release (tx_04)", color: "#ffffff" }
+            ]
+        };
+
+        function setSimButtonActive(simId) {
+            document.querySelectorAll(".sim-btn").forEach(btn => btn.classList.remove("active"));
+            if (simId === "run") document.getElementById("btn-sim-run").classList.add("active");
+            if (simId === "policy") document.getElementById("btn-sim-policy").classList.add("active");
+            if (simId === "dag") document.getElementById("btn-sim-dag").classList.add("active");
+        }
+
+        function runSimScript(script) {
+            if (simInterval) clearInterval(simInterval);
+            termElement.innerHTML = "";
+            let lineIndex = 0;
+            
+            function printNextLine() {
+                if (lineIndex >= script.length) return;
+                
+                const line = script[lineIndex];
+                const div = document.createElement("div");
+                
+                if (line.type === "input") {
+                    div.innerHTML = `<span style="color: var(--text-muted); user-select: none;">$</span> <span style="color: #ffffff;"></span>`;
+                    termElement.appendChild(div);
+                    
+                    // Typewriter effect for input line
+                    let charIndex = 0;
+                    const textSpan = div.querySelector("span:nth-child(2)");
+                    
+                    const typeInterval = setInterval(() => {
+                        if (charIndex < line.text.length) {
+                            textSpan.textContent += line.text[charIndex];
+                            charIndex++;
+                        } else {
+                            clearInterval(typeInterval);
+                            lineIndex++;
+                            setTimeout(printNextLine, 500);
+                        }
+                    }, 20);
+                } else {
+                    div.style.color = line.color || "var(--text-secondary)";
+                    div.textContent = line.text;
+                    termElement.appendChild(div);
+                    termElement.scrollTop = termElement.scrollHeight;
+                    lineIndex++;
+                    setTimeout(printNextLine, 400);
+                }
+            }
+            
+            printNextLine();
+        }
+
+        function startCampaignSim() {
+            setSimButtonActive("run");
+            runSimScript(simulatorScripts.run);
+        }
+
+        function startPolicySim() {
+            setSimButtonActive("policy");
+            runSimScript(simulatorScripts.policy);
+        }
+
+        function startDagSim() {
+            setSimButtonActive("dag");
+            runSimScript(simulatorScripts.dag);
+        }
+
+        // Run default simulation on page load
+        window.addEventListener("DOMContentLoaded", () => {
+            startCampaignSim();
+        });
     </script>
 </body>
 </html>
