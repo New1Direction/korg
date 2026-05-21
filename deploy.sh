@@ -4,7 +4,7 @@
 set -euo pipefail
 
 APP_DIR="/home/clubpenguin/korg-deploy"
-REPO_DIR="/Users/clubpenguin/Documents/Korg"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "=== ⚡ STARTING KORG PRODUCTION DEPLOYMENT ⚡ ==="
 
