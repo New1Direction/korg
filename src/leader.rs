@@ -1044,6 +1044,20 @@ impl LeaderOrchestrator {
         // Persist final summary .ktrans
         self.persist_final_summary_ktrans().await;
 
+        // Generate cryptographic campaign attestation certificate
+        let campaign_path = format!("/tmp/korg/campaigns/{}", self.session_id);
+        let _ = tokio::fs::create_dir_all(&campaign_path).await;
+        if let Ok(att) = crate::provenance::generate_attestation(
+            self.session_id,
+            &self.root_task,
+            &self.campaign_signing_key,
+            std::path::Path::new(&campaign_path),
+        ).await {
+            println!("\n[Security] Cryptographic Campaign Attestation generated successfully!");
+            println!("[Security] Provenance Certificate: {}/provenance-attestation.json", campaign_path);
+            println!("[Security] Trace Hash Root:        {}", att.trace_hash_chain_root);
+        }
+
         // Print the campaign's public key so operators can verify signatures offline
         let pubkey = hex::encode(self.campaign_signing_key.verifying_key().to_bytes());
         println!(

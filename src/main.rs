@@ -32,6 +32,8 @@ mod skills;
 mod tools;
 mod tui;
 pub mod llm;
+mod web;
+pub mod provenance;
 
 use acp::AcpClient;
 use harness::SingleWorkerHarness;
@@ -68,6 +70,10 @@ struct Cli {
     /// Disable automatic post-campaign concept synthesis
     #[arg(long)]
     no_synthesize: bool,
+
+    /// Launch the interactive web-based korg dashboard
+    #[arg(long)]
+    web: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -117,6 +123,10 @@ enum Commands {
         /// Launch inside the Ratatui TUI dashboard
         #[arg(long)]
         tui: bool,
+
+        /// Launch inside the web-based korg dashboard
+        #[arg(long)]
+        web: bool,
     },
 
     /// Fully observable end-to-end Heavy-Tier campaign (recommended for demos).
@@ -129,6 +139,10 @@ enum Commands {
         /// Launch inside the Ratatui TUI dashboard instead of plain CLI output
         #[arg(long)]
         tui: bool,
+
+        /// Launch inside the web-based korg dashboard
+        #[arg(long)]
+        web: bool,
     },
 
     /// Launch the interactive Ratatui TUI dashboard (live ticker, approvals, .ktrans stream, etc.)
@@ -147,6 +161,13 @@ enum Commands {
 
     /// Scan the vault for unnamed patterns and generate synthesis connection pages (Yvaeh mode)
     Synthesize,
+
+    /// Cryptographically verify a campaign's provenance attestation certificate
+    VerifyProvenance {
+        /// Path to the provenance-attestation.json file
+        #[arg(short, long)]
+        path: std::path::PathBuf,
+    },
 }
 
 fn print_welcome_banner() {
@@ -197,7 +218,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     if let Some(prompt) = cli.prompt {
-        if cli.headless {
+        if cli.web {
+            println!("Launching web dashboard with live campaign for prompt: {}", prompt);
+            crate::web::run_web_with_campaign(prompt, None).await?;
+        } else if cli.headless {
             let cyan = "\x1b[38;2;0;240;255m";
             let pink = "\x1b[38;2;255;0;180m";
             let slate = "\x1b[38;2;120;125;140m";
@@ -259,7 +283,7 @@ async fn main() -> Result<()> {
             replay,
             live_stream,
             tui,
-            ..
+            web,
         } => {
             let sid = if resume {
                 None
@@ -286,6 +310,9 @@ async fn main() -> Result<()> {
                 } else {
                     leader.replay_campaign(replay_sid)?;
                 }
+            } else if web {
+                println!("Launching web-based korg dashboard for leader mode...");
+                crate::web::run_web_with_leader(leader).await?;
             } else if tui || !cli.headless {
                 println!("Launching Ratatui dashboard for Leader mode...");
                 crate::tui::run_tui_with_leader(leader).await?;
@@ -304,10 +331,16 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Campaign { session, tui } => {
+        Commands::Campaign { session, tui, web } => {
             let sid = session.and_then(|s| uuid::Uuid::parse_str(&s).ok());
 
-            if tui || !cli.headless {
+            if web {
+                println!("Launching web-based korg dashboard with live campaign...");
+                crate::web::run_web_with_campaign(
+                    "Implement production-grade semantic evaluation guardrail with 5 adversarial rubrics".to_string(),
+                    sid,
+                ).await?;
+            } else if tui || !cli.headless {
                 println!("Launching Ratatui dashboard with live campaign...");
                 crate::tui::run_tui_with_campaign(
                     "Implement production-grade semantic evaluation guardrail with 5 adversarial rubrics".to_string(),
@@ -346,6 +379,10 @@ async fn main() -> Result<()> {
 
         Commands::Synthesize => {
             crate::skills::run_synthesize().await?;
+        }
+
+        Commands::VerifyProvenance { path } => {
+            crate::provenance::verify_cli_command(&path)?;
         }
     }
 

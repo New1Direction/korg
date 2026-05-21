@@ -20,7 +20,7 @@ use ratatui::{
 use std::io;
 
 /// Events sent from the LeaderOrchestrator to the live Ratatui TUI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ContractResponse {
     Approve,
     Reject,
@@ -29,7 +29,7 @@ pub enum ContractResponse {
 }
 
 /// Events sent from the LeaderOrchestrator to the live Ratatui TUI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum TuiUpdate {
     Verdict {
         text: String,
@@ -534,20 +534,21 @@ async fn run_tui_event_loop(
 
 fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // 24-bit TrueColor Palette Definitions
-    let fg_cyan = Color::Rgb(0, 240, 255);      // Electric Neon Cyan
-    let fg_pink = Color::Rgb(255, 0, 180);      // Cyber Pink / Deep Neon Magenta
-    let fg_green = Color::Rgb(0, 255, 128);     // Spring Neon Green
-    let fg_gold = Color::Rgb(255, 215, 0);      // Amber Gold / Bright Yellow
-    let fg_crimson = Color::Rgb(255, 50, 80);    // Neon Crimson
-    let fg_slate = Color::Rgb(120, 125, 140);    // Muted Slate Gray
-    let fg_white = Color::Rgb(240, 240, 245);    // Sleek High-Contrast White
+    // 24-bit TrueColor Palette Definitions
+    let fg_cyan = Color::Rgb(240, 240, 240);    // High-Contrast Pure White/Gray
+    let fg_pink = Color::Rgb(160, 160, 160);    // Clean Medium Zinc
+    let fg_green = Color::Rgb(220, 220, 220);   // Off-White
+    let fg_gold = Color::Rgb(180, 180, 180);    // Muted Gray
+    let fg_crimson = Color::Rgb(140, 140, 140); // Darker Slate
+    let fg_slate = Color::Rgb(64, 64, 64);      // Deep Zinc Gray (Grok Border)
+    let fg_white = Color::Rgb(255, 255, 255);    // Pure White
 
-    // Cockpit Workspace Layout splitting (6-Pane layout)
+    // korg workspace layout splitting (6-pane layout)
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),  // Top Bar
-            Constraint::Min(10),    // 6-Pane Cockpit Grid Workspace
+            Constraint::Min(10),    // 6-pane korg grid workspace
             Constraint::Length(3),  // Bottom Scrubber Track & Status Bar
         ])
         .split(f.size());
@@ -610,16 +611,16 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // 0. Top Bar Dashboard Header
     // ==========================================
     let top = Paragraph::new(format!(
-        " 🛡️  K O R G   A C P   C O M M A N D   D A S H B O A R D   │   Swarm: {}   │   Entropy: {:.3}   │   [{}] ",
+        " 🛡️  k o r g   │   swarm: {}   │   entropy: {:.3}   │   [{}] ",
         app.swarm_size,
         app.h_sem,
-        if app.paused { "PAUSED 🛑" } else { "ACTIVE 🟢 (Multi-Threaded)" }
+        if app.paused { "paused 🛑" } else { "active" }
     ))
-    .style(Style::default().fg(fg_cyan).bold())
+    .style(Style::default().fg(fg_white).bold())
     .block(Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(fg_cyan))
-        .title(" [ Korg Core Telemetry Cockpit v0.1.0 ] "));
+        .border_style(Style::default().fg(fg_slate))
+        .title(" [ korg telemetry ] "));
     f.render_widget(top, top_bar_area);
 
     // ==========================================
@@ -627,20 +628,20 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // ==========================================
     let code_lines = match app.playhead {
         0 => vec![
-            Line::from(Span::styled("1: // Korg Heavy-Tier Swarm Init", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("1: // korg heavy-tier swarm initialization", Style::default().fg(fg_slate))),
             Line::from(Span::styled("2: fn main() -> Result<()> {", Style::default().fg(fg_white))),
             Line::from(Span::styled("3:     let mut swarm = Swarm::new(4);", Style::default().fg(fg_white))),
-            Line::from(Span::styled("4:     swarm.negotiate_contract()?;", Style::default().fg(fg_cyan))),
-            Line::from(Span::styled("5:     swarm.start_execution()?;", Style::default().fg(fg_cyan))),
+            Line::from(Span::styled("4:     swarm.negotiate_contract()?;", Style::default().fg(fg_white))),
+            Line::from(Span::styled("5:     swarm.start_execution()?;", Style::default().fg(fg_white))),
             Line::from(Span::styled("6:     Ok(())", Style::default().fg(fg_white))),
             Line::from(Span::styled("7: }", Style::default().fg(fg_white))),
         ],
         1 | 2 => vec![
-            Line::from(Span::styled("10: // Swarm Contract Negotiator Layer", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("10: // swarm contract negotiator layer", Style::default().fg(fg_slate))),
             Line::from(Span::styled("11: pub async fn negotiate(target: &str) -> Result<Contract> {", Style::default().fg(fg_white))),
             Line::from(vec![
                 Span::styled("12:     ", Style::default().fg(fg_slate)),
-                Span::styled("[LOCKED BY CAPTAIN: READ-LOCK ACTIVE 👁️]", Style::default().fg(fg_cyan).bold().reversed())
+                Span::styled("[locked by captain: read-lock active 👁️]", Style::default().fg(fg_white).bold().reversed())
             ]),
             Line::from(Span::styled("13:     let criteria = self.generate_proposal(target).await?;", Style::default().fg(fg_white))),
             Line::from(Span::styled("14:     let contract = self.reconcile(criteria).await?;", Style::default().fg(fg_white))),
@@ -648,30 +649,30 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             Line::from(Span::styled("16: }", Style::default().fg(fg_white))),
         ],
         3 | 4 => vec![
-            Line::from(Span::styled("20: // Model-Agnostic LlmProvider complete method", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("20: // model-agnostic LlmProvider complete method", Style::default().fg(fg_slate))),
             Line::from(Span::styled("21: pub fn complete(&self, req: LlmRequest) -> Result<LlmResponse> {", Style::default().fg(fg_white))),
             Line::from(Span::styled("22:     let client = req.provider.get_client();", Style::default().fg(fg_white))),
             Line::from(vec![
                 Span::styled("23:     ", Style::default().fg(fg_slate)),
-                Span::styled("[LOCKED BY BENJAMIN: WRITE-LOCK ACTIVE 🔒]", Style::default().fg(fg_pink).bold().reversed())
+                Span::styled("[locked by benjamin: write-lock active 🔒]", Style::default().fg(fg_white).bold().reversed())
             ]),
-            Line::from(Span::styled("24: +   let request_payload = req.build_payload()?;", Style::default().fg(fg_green))),
-            Line::from(Span::styled("25: +   let res = self.retry_decorator.execute(|| {", Style::default().fg(fg_green))),
-            Line::from(Span::styled("26: +       client.post(&req.url, &request_payload)", Style::default().fg(fg_green))),
-            Line::from(Span::styled("27: +   })?;", Style::default().fg(fg_green))),
-            Line::from(Span::styled("28: -   let res = client.post(&req.url)?;", Style::default().fg(fg_pink))),
+            Line::from(Span::styled("24: +   let request_payload = req.build_payload()?;", Style::default().fg(fg_white).bold())),
+            Line::from(Span::styled("25: +   let res = self.retry_decorator.execute(|| {", Style::default().fg(fg_white).bold())),
+            Line::from(Span::styled("26: +       client.post(&req.url, &request_payload)", Style::default().fg(fg_white).bold())),
+            Line::from(Span::styled("27: +   })?;", Style::default().fg(fg_white).bold())),
+            Line::from(Span::styled("28: -   let res = client.post(&req.url)?;", Style::default().fg(fg_slate).italic())),
             Line::from(Span::styled("29:     Ok(res)", Style::default().fg(fg_white))),
             Line::from(Span::styled("30: }", Style::default().fg(fg_white))),
         ],
         _ => vec![
-            Line::from(Span::styled("40: // Zero-Trust Security Policy Engine checks", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("40: // zero-trust security policy engine checks", Style::default().fg(fg_slate))),
             Line::from(Span::styled("41: pub fn check_policy(command: &str) -> Result<(), String> {", Style::default().fg(fg_white))),
             Line::from(vec![
                 Span::styled("42:     ", Style::default().fg(fg_slate)),
-                Span::styled("[LOCKED BY EVALUATOR: CRITIC-INTERCEPT ACTIVE 🛡️]", Style::default().fg(fg_gold).bold().reversed())
+                Span::styled("[locked by evaluator: critic-intercept active 🛡️]", Style::default().fg(fg_white).bold().reversed())
             ]),
             Line::from(Span::styled("43:     if is_blacklisted(command) {", Style::default().fg(fg_white))),
-            Line::from(Span::styled("44:         return Err(\"CONTESTED: Policy Violation\".into());", Style::default().fg(fg_crimson).bold())),
+            Line::from(Span::styled("44:         return Err(\"CONTESTED: Policy Violation\".into());", Style::default().fg(fg_pink).bold())),
             Line::from(Span::styled("45:     }", Style::default().fg(fg_white))),
             Line::from(Span::styled("46:     Ok(())", Style::default().fg(fg_white))),
             Line::from(Span::styled("47: }", Style::default().fg(fg_white))),
@@ -681,8 +682,8 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     let editor_block = Paragraph::new(code_lines)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_cyan))
-            .title(" [ 📝 Monaco Editor (src/llm.rs) ] "));
+            .border_style(Style::default().fg(fg_slate))
+            .title(" [ workspace ] "));
     f.render_widget(editor_block, editor_pane_area);
 
     // ==========================================
@@ -723,7 +724,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         .block(Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(fg_slate))
-            .title(" [ 💻 Terminal Subprocess Piped Output ] "));
+            .title(" [ console ] "));
     f.render_widget(terminal_block, terminal_pane_area);
 
     // ==========================================
@@ -739,15 +740,15 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
 
     let metrics_lines = vec![
         Line::from(vec![
-            Span::styled(" ⚡ Velocity: ", Style::default().fg(fg_cyan).bold()),
+            Span::styled(" ⚡ velocity: ", Style::default().fg(fg_white).bold()),
             Span::styled(format!("{:.1} t/s", app.velocity), Style::default().fg(fg_white).bold()),
         ]),
         Line::from(vec![
-            Span::styled(" ⚠️  Risk:     ", Style::default().fg(fg_pink).bold()),
-            Span::styled(format!("{:.2}", app.risk), Style::default().fg(if app.risk > 0.6 { fg_crimson } else { fg_gold }).bold()),
+            Span::styled(" ⚠️  risk:     ", Style::default().fg(fg_pink).bold()),
+            Span::styled(format!("{:.2}", app.risk), Style::default().fg(fg_white).bold()),
         ]),
         Line::from(vec![
-            Span::styled(" 📈 Progress: ", Style::default().fg(fg_green).bold()),
+            Span::styled(" 📈 progress: ", Style::default().fg(fg_green).bold()),
             Span::styled(format!("{:.1}%", app.progress), Style::default().fg(fg_white).bold()),
         ]),
     ];
@@ -755,16 +756,16 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     let metrics_block = Paragraph::new(metrics_lines)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_pink))
-            .title(" [ Telemetry Gauges ] "));
+            .border_style(Style::default().fg(fg_slate))
+            .title(" [ metrics ] "));
     f.render_widget(metrics_block, ht_sub[0]);
 
     // H_sem History Sparkline
     let sparkline = Sparkline::default()
         .data(&app.h_sem_history)
-        .style(Style::default().fg(fg_cyan));
+        .style(Style::default().fg(fg_white));
     let sparkline_block = Paragraph::new(vec![
-        Line::from(Span::styled("Entropy H_sem History:", Style::default().fg(fg_gold).bold())),
+        Line::from(Span::styled("entropy h_sem history:", Style::default().fg(fg_gold).bold())),
     ]);
     let spark_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -781,12 +782,12 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // ==========================================
     let mut timeline_items = vec![];
     let nodes = [
-        ("tx_00: genesis", "Orchestration Blue", fg_cyan),
-        ("tx_01: negotiate_contract", "Orchestration Blue", fg_cyan),
-        ("tx_02: dispatch_concurrent", "Worker Green", fg_green),
-        ("tx_03: generate_patch", "Worker Green", fg_green),
-        ("tx_04: evaluate_verdict", "Evaluator Red", fg_crimson),
-        ("tx_05: operator_steer", "Operator Purple", fg_pink),
+        ("tx_00: genesis", "orchestration", fg_white),
+        ("tx_01: negotiate_contract", "orchestration", fg_white),
+        ("tx_02: dispatch_concurrent", "worker", fg_pink),
+        ("tx_03: generate_patch", "worker", fg_pink),
+        ("tx_04: evaluate_verdict", "evaluator", fg_crimson),
+        ("tx_05: operator_steer", "operator", fg_gold),
     ];
 
     for (i, (title, channel, color)) in nodes.iter().enumerate() {
@@ -815,8 +816,8 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     let timeline_block = List::new(timeline_items)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_green))
-            .title(" [ 🌿 Swarm Timeline DAG (F key to Fork) ] "));
+            .border_style(Style::default().fg(fg_slate))
+            .title(" [ timeline ] "));
     f.render_widget(timeline_block, dag_timeline_area);
 
     // ==========================================
@@ -824,28 +825,28 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // ==========================================
     let prov_lines = vec![
         Line::from(vec![
-            Span::styled(" Ed25519 Key: ", Style::default().fg(fg_cyan)),
-            Span::styled("8f3c29a2b7e5... [VERIFIED ✓]", Style::default().fg(fg_green).bold()),
+            Span::styled(" ed25519 key: ", Style::default().fg(fg_white)),
+            Span::styled("8f3c29a2b7e5... [verified ✓]", Style::default().fg(fg_pink).bold()),
         ]),
         Line::from(vec![
-            Span::styled(" Merkle Root: ", Style::default().fg(fg_gold)),
+            Span::styled(" merkle root: ", Style::default().fg(fg_gold)),
             Span::styled("a7b8c9d0e1f2...", Style::default().fg(fg_white)),
         ]),
         Line::from(vec![
-            Span::styled(" File Impact: ", Style::default().fg(fg_pink)),
+            Span::styled(" file impact: ", Style::default().fg(fg_pink)),
             Span::styled("src/llm.rs (L20-L30)", Style::default().fg(fg_white)),
         ]),
         Line::from(vec![
-            Span::styled(" Authority:   ", Style::default().fg(fg_slate)),
-            Span::styled("SwarmAuthority-v1-signed", Style::default().fg(fg_slate).italic()),
+            Span::styled(" authority:   ", Style::default().fg(fg_slate)),
+            Span::styled("swarmauthority-v1-signed", Style::default().fg(fg_slate).italic()),
         ]),
     ];
 
     let provenance_block = Paragraph::new(prov_lines)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_gold))
-            .title(" [ 🔑 Cryptographic Provenance & Diffs ] "));
+            .border_style(Style::default().fg(fg_slate))
+            .title(" [ provenance ] "));
     f.render_widget(provenance_block, provenance_area);
 
     // ==========================================
@@ -862,28 +863,28 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
 
     let scrubber_text = vec![
         Line::from(vec![
-            Span::styled(" [ REPLAY PLAYHEAD ] ", Style::default().fg(fg_gold).bold()),
-            Span::styled(slider_bar, Style::default().fg(fg_cyan).bold()),
-            Span::styled("  (Use Left/Right arrow keys to scrub) ", Style::default().fg(fg_slate).italic()),
+            Span::styled(" [ replay playhead ] ", Style::default().fg(fg_gold).bold()),
+            Span::styled(slider_bar, Style::default().fg(fg_white).bold()),
+            Span::styled("  (use left/right arrow keys to scrub) ", Style::default().fg(fg_slate).italic()),
         ])
     ];
 
     let scrubber_block = Paragraph::new(scrubber_text)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_cyan))
-            .title(" [ 🎛️ Replay & Playback Scrubber ] "));
+            .border_style(Style::default().fg(fg_slate))
+            .title(" [ replay ] "));
     f.render_widget(scrubber_block, scrubber_track_area);
 
     // ==========================================
     // 7. Bottom Status Bar (Bottom Track Footer)
     // ==========================================
     let status_text = format!(
-        " ⚙️  [ESC] Quit  │  [P] Pause  │  [F] Steer Fork  │  [y/n] Policy Override  │  Playhead: tx_{:02}  │  Zero-Trust Engine OK ✓",
+        " ⚙️  [esc] quit  │  [p] pause  │  [f] steer fork  │  [y/n] policy override  │  playhead: tx_{:02}  │  zero-trust engine ok ✓",
         app.playhead
     );
     let status_paragraph = Paragraph::new(status_text)
-        .style(Style::default().bg(Color::Rgb(25, 25, 35)).fg(fg_cyan).bold());
+        .style(Style::default().bg(Color::Rgb(15, 15, 15)).fg(fg_white).bold());
     f.render_widget(status_paragraph, status_bar_area);
 
     // ==========================================
@@ -894,16 +895,17 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     if let Some(reason) = &app.pending_approval {
         let area = centered_rect(60, 35, f.size());
         let modal = Paragraph::new(format!(
-            " ⚠️  HUMAN IN THE LOOP APPROVAL MANDATE REQUIRED\n\n  {}\n\n  [y] Approve   [n] Reject   [e] Override   [q] Terminate Swarm",
+            "  human in the loop approval mandate required\n\n  {}\n\n  [y] approve   [n] reject   [e] override   [q] terminate swarm",
             reason
         ))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Double)
-                .title(" 🔒 Human Security Approval Gate ")
-                .style(Style::default().fg(fg_gold).bold()),
-        );
+                .border_type(ratatui::widgets::BorderType::Plain)
+                .border_style(Style::default().fg(fg_slate))
+                .title(" [ human security approval gate ] "),
+        )
+        .style(Style::default().fg(fg_white));
         f.render_widget(modal, area);
     }
 
@@ -911,16 +913,17 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     if let Some(reason) = &app.policy_violation_alert {
         let area = centered_rect(60, 30, f.size());
         let modal = Paragraph::new(format!(
-            "🚨 SECURITY INTERRUPT: CONTESTED POLICY VIOLATION 🚨\n\n  {}\n\n  [y] Force Override & Approve   [n] Reject & Stop Swarm   [Esc] Dismiss",
+            "  security interrupt: contested policy violation\n\n  {}\n\n  [y] force override & approve   [n] reject & stop swarm   [esc] dismiss",
             reason
         ))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Double)
-                .title(" 🔒 Zero-Trust Policy Engine Intercept ")
-                .style(Style::default().fg(fg_pink).bold()),
-        );
+                .border_type(ratatui::widgets::BorderType::Plain)
+                .border_style(Style::default().fg(fg_slate))
+                .title(" [ zero-trust policy engine intercept ] "),
+        )
+        .style(Style::default().fg(fg_white));
         f.render_widget(modal, area);
     }
 
@@ -928,16 +931,17 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     if app.fork_modal_open {
         let area = centered_rect(60, 30, f.size());
         let modal = Paragraph::new(format!(
-            "🌿 TIME-TRAVEL PLAYHEAD FORK & STEER TERMINAL 🌿\n\n  Forking workspace at playhead position tx_{:02}.\n  Enter custom steering directive for the branched swarm:\n\n  > {}▍\n\n  [Enter] Deploy Swarm Fork   [Esc] Cancel",
+            "  time-travel playhead fork & steer terminal\n\n  forking workspace at playhead position tx_{:02}.\n  enter custom steering directive for the branched swarm:\n\n  > {}▍\n\n  [enter] deploy swarm fork   [esc] cancel",
             app.playhead, app.steering_buffer
         ))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Double)
-                .title(" 🌿 Branching Playhead & Swarm Steering ")
-                .style(Style::default().fg(fg_cyan).bold()),
-        );
+                .border_type(ratatui::widgets::BorderType::Plain)
+                .border_style(Style::default().fg(fg_slate))
+                .title(" [ branching playhead & swarm steering ] "),
+        )
+        .style(Style::default().fg(fg_white));
         f.render_widget(modal, area);
     }
 
@@ -947,30 +951,30 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         
         let mut lines = vec![
             Line::from(vec![
-                Span::styled("🛡️  PROPOSED SWARM CONTRACT CRITERIA (Round ", Style::default().fg(fg_gold).bold()),
-                Span::styled(round.to_string(), Style::default().fg(fg_green).bold()),
-                Span::styled(")", Style::default().fg(fg_gold).bold()),
+                Span::styled("  proposed swarm contract criteria (round ", Style::default().fg(fg_pink)),
+                Span::styled(round.to_string(), Style::default().fg(fg_white)),
+                Span::styled(")", Style::default().fg(fg_pink)),
             ]),
             Line::from(""),
-            Line::from(Span::styled("Task Prompt Description:", Style::default().fg(fg_cyan).bold())),
-            Line::from(Span::styled(format!("  {}", description), Style::default().fg(fg_white))),
+            Line::from(Span::styled("  task prompt description:", Style::default().fg(fg_pink))),
+            Line::from(Span::styled(format!("    {}", description), Style::default().fg(fg_white))),
             Line::from(""),
-            Line::from(Span::styled("Consensus Acceptance Criteria:", Style::default().fg(fg_cyan).bold())),
+            Line::from(Span::styled("  consensus acceptance criteria:", Style::default().fg(fg_pink))),
         ];
         
         for (i, (desc, sim)) in criteria.iter().enumerate() {
             let sim_color = if *sim >= 0.85 {
-                fg_green
+                fg_white
             } else if *sim >= 0.70 {
-                fg_cyan
+                fg_green
             } else {
                 fg_gold
             };
             lines.push(Line::from(vec![
-                Span::styled(format!("  [{}] ", i + 1), Style::default().fg(fg_gold)),
-                Span::styled(format!("{:<50} ", desc), Style::default().fg(fg_white)),
-                Span::styled("  [ Cons: ", Style::default().fg(fg_slate)),
-                Span::styled(format!("{:.3}", sim), Style::default().fg(sim_color).bold()),
+                Span::styled(format!("    [{}] ", i + 1), Style::default().fg(fg_gold)),
+                Span::styled(format!("{:<50} ", desc.to_lowercase()), Style::default().fg(fg_white)),
+                Span::styled("  [ cons: ", Style::default().fg(fg_slate)),
+                Span::styled(format!("{:.3}", sim), Style::default().fg(sim_color)),
                 Span::styled(" ]", Style::default().fg(fg_slate)),
             ]));
         }
@@ -978,16 +982,16 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         lines.push(Line::from(""));
         
         if app.editing_custom_criterion {
-            lines.push(Line::from(Span::styled(" ▍ Operator Override Terminal active", Style::default().fg(fg_pink).bold())));
-            lines.push(Line::from(Span::styled("  Type custom criteria below and press Enter to inject. Press Esc to escape override.", Style::default().fg(fg_slate))));
+            lines.push(Line::from(Span::styled("  ▍ operator override terminal active", Style::default().fg(fg_pink))));
+            lines.push(Line::from(Span::styled("    type custom criteria below and press enter to inject. press esc to escape override.", Style::default().fg(fg_slate))));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("  Injected Criterion: ", Style::default().fg(fg_cyan).bold()),
-                Span::styled(format!("{}▍", app.input_buffer), Style::default().fg(fg_white).bold()),
+                Span::styled("    injected criterion: ", Style::default().fg(fg_pink)),
+                Span::styled(format!("{}▍", app.input_buffer), Style::default().fg(fg_white)),
             ]));
         } else {
-            lines.push(Line::from(Span::styled("Consensus Actions:", Style::default().fg(fg_cyan).bold())));
-            lines.push(Line::from(Span::styled("  [y] Approve Swarm Contract   [n] Demand Revision   [e] Override and Add Custom   [f] Force Cons   [q] Cancel", Style::default().fg(fg_green).bold())));
+            lines.push(Line::from(Span::styled("  consensus actions:", Style::default().fg(fg_pink))));
+            lines.push(Line::from(Span::styled("    [y] approve swarm contract   [n] demand revision   [e] override and add custom   [f] force cons   [q] cancel", Style::default().fg(fg_white))));
         }
         
         let text = Text::from(lines);
@@ -996,9 +1000,9 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_type(ratatui::widgets::BorderType::Double)
-                    .title(" Swarm Contract Consensus & Negotiation Gate ")
-                    .style(Style::default().fg(fg_gold).bold()),
+                    .border_type(ratatui::widgets::BorderType::Plain)
+                    .border_style(Style::default().fg(fg_slate))
+                    .title(" [ swarm contract consensus & negotiation gate ] "),
             );
         f.render_widget(modal, area);
     }

@@ -15,6 +15,7 @@ uuid = { version = "1", features = ["v4", "v7", "serde"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
+sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 # JCS (RFC 8785) - using a compatible crate. Full canonicalization can be swapped in.
 canonical_json = "0.1"
@@ -35,6 +36,11 @@ hf-hub = { version = "0.3", optional = true, features = ["tokio"] }
 # Ratatui TUI for the live operator dashboard (production feature)
 ratatui = "0.24"
 crossterm = { version = "0.27", features = ["event-stream"] }
+
+# Axum Web Server & SSE (production feature for public cockpit)
+axum = { version = "0.7", features = ["macros"] }
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 [features]
 default = ["candle"]
