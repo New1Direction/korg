@@ -1,184 +1,161 @@
 # Korg System Architecture & Internals
 
-**Document Version:** 1.2
-**Lead Auditor:** Principal Systems Programmer
-**Classification:** Korg Internal Technical Reference (Unclassified)
+This document provides a master-class technical reference for the internal architecture of the Korg Autonomous Engineering Runtime. It is intended for security auditors, systems programmers, and core contributors.
 
-This document provides a master-class technical reference for the internal architecture of the Korg Autonomous Engineering Runtime. It details the core principles of security, concurrency, and cryptographic-grade provenance that underpin the system.
+## 1. Core Philosophy: Zero-Trust, Isolated Execution
 
----
+Korg is engineered from the ground up on the principle of **Zero-Trust**. No component, whether an AI persona or a system utility, is implicitly trusted. Every action is sandboxed, every state transition is cryptographically signed, and all data flows through strict policy-enforcement gateways. This is achieved through a combination of Rust's language-level guarantees and a carefully designed process and filesystem isolation model.
 
-## 1. Core Philosophy: Zero-Trust Execution & Absolute Memory Safety
+### 1.1. Absolute Memory Safety via Rust
 
-Korg is engineered from the ground up on the principle of **Zero-Trust**. No component, whether an AI agent or a system module, is implicitly trusted. Every action is verified, sandboxed, and recorded. This is achieved through a combination of the Rust programming language's intrinsic safety guarantees and a purpose-built distributed systems architecture.
+The entire Korg backend is implemented in Rust, which provides compile-time guarantees of memory safety without the overhead of a garbage collector. This is fundamental to Korg's security posture.
 
-### 1.1. Rust Backend: Guarantees of Safety and Isolation
+-   **Ownership and Borrowing**: Rust's ownership model ensures that there is always one and only one "owner" of any given piece of memory. Data can be immutably borrowed by multiple parties or mutably borrowed by exactly one party. This statically prevents data races at compile time. In Korg, shared state like the `Blackboard` is wrapped in concurrency primitives like `Arc<Mutex<T>>`, which enforce these borrowing rules at runtime, ensuring that even in a highly concurrent multi-agent system, there are no data races.
+-   **Absence of Null and Undefined Behavior**: Rust's type system eliminates null pointer dereferences through the `Option<T>` and `Result<T, E>` enums. This forces developers to handle the absence of a value explicitly, preventing entire classes of bugs and security vulnerabilities common in other systems languages.
+-   **Fearless Concurrency**: The combination of ownership rules and type-system constraints allows Korg to manage the 4-Persona Swarm with "fearless concurrency." The compiler guarantees that any data shared between threads (i.e., between the Leader orchestrator and its various tasks) is done so safely.
 
-The entire Korg backend is implemented in Rust, which provides foundational guarantees against common security vulnerabilities at compile time.
+### 1.2. Isolated Execution via Process Sandboxing
 
-*   **Absolute Memory Safety:** Rust's ownership and borrowing model eliminates entire classes of memory errors.
-    *   **No Null Pointer Dereferences:** The `Option<T>` and `Result<T, E>` enums force explicit handling of potentially absent values, making null pointer exceptions impossible.
-    *   **No Buffer Overflows:** All memory access is bounds-checked by default. Any attempt to access an array or vector out of bounds results in a controlled panic, not a silent memory corruption that could be exploited.
-    *   **No Data Races:** The `Send` and `Sync` traits, enforced by the compiler, guarantee that data shared between threads (or `async` tasks) cannot be accessed in a way that causes race conditions. All shared state is protected by concurrency primitives like `Arc<Mutex<T>>`, ensuring exclusive access.
+Memory safety alone is insufficient for securing an autonomous agent that can execute arbitrary code. Korg enforces strict process and filesystem isolation for all persona operations.
 
-*   **Isolated Execution via OS Processes:** Korg does not run AI agents as threads within a single process. Instead, as detailed in `src/leader.rs`, each of the four swarm personas is spawned as a **separate operating system child process**.
-    *   **Process Sandboxing:** Each agent runs in its own memory space, completely isolated from the Leader Orchestrator and other agents. A crash or exploit in one agent (e.g., the `Benjamin` builder persona) cannot affect the memory of the parent or its siblings.
-    *   **Strictly-Typed Communication:** Communication between the Leader and workers occurs exclusively over `stdin`/`stdout` using the **Autonomous Communication Protocol (ACP)**. All messages are serialized JSON, strictly validated against `AcpMessage` structs. This prevents injection attacks or malformed data from corrupting the state of the receiver.
-    *   **Filesystem Sandboxing with `git worktree`:** As shown in the `run_self_healing_loop` and `handle_operator_fork` functions in `src/leader.rs`, Korg uses `git worktree` to create transient, isolated filesystem sandboxes for each campaign or speculative execution. Agents perform all file modifications within these worktrees. If a build fails or a policy is violated, the entire worktree can be discarded without affecting the main repository branch, ensuring the primary codebase remains pristine.
+-   **Child Process Workers**: As detailed in `src/leader.rs`, each AI persona (Captain, Harper, Benjamin, Lucas) is spawned as a separate OS-level child process (`tokio::process::Command`). They run as a `korg worker` subcommand. This provides kernel-level memory isolation. A crash or exploit in one persona's process cannot directly access the memory of the Leader or other personas.
+-   **`git worktree` Sandboxes**: Before a persona like `Builder Benjamin` begins code synthesis, the `LeaderOrchestrator` creates a transient, isolated filesystem sandbox using `git worktree`. This command creates a linked copy of the repository in a temporary directory (e.g., `/tmp/korg/worktrees/...`).
+    -   All file modifications, compilations (`cargo check`), and tests are executed *exclusively* within this sandbox.
+    -   The main repository branch remains pristine and untouched.
+    -   If the generated code fails to compile, fails tests, or is rejected by the `Evaluator`, the entire worktree directory is simply discarded. This is a powerful, stateless, and fail-secure mechanism for experimentation.
+-   **Zero-Trust ACP Protocol**: Communication between the Leader and worker processes occurs over `stdio` using the Autonomous Control Protocol (ACP). Every message is wrapped in a signed `MessageEnvelope`. This ensures that even if a worker process were compromised, it could not spoof messages as another worker or the Leader without access to the campaign's private signing key.
 
----
+## 2. The Transactional CRDT Blackboard (`src/blackboard.rs`)
 
-## 2. The CRDT Blackboard: A Decoupled Transactional State Machine
+At the heart of Korg's concurrency model is the **Blackboard**, a central, observable state repository. It is modeled not as a simple key-value store, but as a transactional, conflict-free data structure inspired by CRDTs (Conflict-free Replicated Data Types).
 
-Korg's concurrency model is not based on direct agent-to-agent messaging. Instead, it uses a **Blackboard Architecture**, inspired by gravitational wells, where agents orbit a shared state. This blackboard, defined conceptually in `src/blackboard.rs`, is implemented as a set of **Conflict-free Replicated Data Types (CRDTs)** to ensure eventual consistency and high concurrency without complex locking.
+-   **Architecture**: The primary blackboard is implemented as `Arc<Mutex<Blackboard>>`, making it a thread-safe handle that can be shared among the Leader's asynchronous tasks. While the provided source shows a `Mutex`, the underlying design pattern is CRDT-like. Personas do not perform arbitrary reads/writes; instead, they submit **transactions** (`SubmitTransaction` ACP message) which represent proposed state changes.
+-   **Transactional State Changes**: The `LeaderOrchestrator` is the sole entity that "compacts" or applies these transactions to the canonical state. It receives `SubmitTransaction` messages from the personas, evaluates them in the **Arena**, and then merges the winning state change. This serialized application of transactions by a single trusted authority (the Leader) prevents the race conditions and deadlocks typical of shared-memory concurrency while allowing personas to work in parallel.
+-   **CRDT-like Merging**: The `perform_semantic_merge` function in `src/leader.rs` exemplifies this principle. It takes the outputs from all competing personas and uses a "Synthesizer" persona (Lucas) to reconcile them into a single, cohesive set of mutations. This is analogous to a CRDT merge function that resolves concurrent updates into a deterministic, final state.
+-   **Observability**: The Blackboard is the "Gravitational Well" around which the swarm orbits. It is the single source of truth for system telemetry. Personas emit `SwarmTelemetryPulse` messages, which the Leader ingests into the Blackboard's `trace_buffer`. The `Evaluator` then reads this buffer to assess the swarm's health, creating a tight, observable feedback loop. The state is exposed via the `/api/state` endpoint for the web cockpit, providing real-time observability to the human operator.
 
-### 2.1. Architecture (`src/blackboard.rs`)
+## 3. 4-Persona Adversarial Swarm Topology
 
-The blackboard is not a simple shared memory buffer. It is a transactional, log-structured system where agents propose state changes rather than directly mutating state.
+Korg employs a fixed 4-persona swarm, where each agent has a specialized, adversarial role. This division of labor creates a system of checks and balances that promotes robust, high-quality output.
 
-*   **Decoupled State:** The `Blackboard` is managed by the `LeaderOrchestrator` within an `Arc<Mutex<Blackboard>>`. However, workers do not get direct access. They interact with it by emitting `AcpMessage::SwarmTelemetryPulse` messages. The Leader is the sole authority that ingests these pulses and merges them into the central blackboard state. This decouples agents from the state's implementation and enforces the Leader's role as the reconciler.
+1.  **Orchestrator Captain (The Planner)**:
+    -   **Role**: High-level strategist and planner.
+    -   **Function**: Receives the initial root task from the operator. Decomposes the task into smaller, actionable work packages (`decompose_into_persona_packages` in `src/leader.rs`). Initiates the `ContractNegotiation` phase, proposing acceptance criteria for the task. The Captain sets the direction for the entire swarm.
 
-*   **Transactional CRDT Log:** The core of the blackboard is a log of `TraceEvent` structs. This is modeled as a **Grow-Only Set (G-Set)** CRDT.
-    *   Each agent can concurrently add new `TraceEvent`s to its local replica of the log.
-    *   The Leader periodically merges these logs. Since agents can only add events, merges are trivial and conflict-free.
-    *   This provides a complete, immutable history of all significant agent actions and observations.
+2.  **Auditor Harper (The Researcher/Critic)**:
+    -   **Role**: Context-gatherer, researcher, and adversarial critic.
+    -   **Function**: During `ContractNegotiation`, Harper (acting as part of the `Evaluator`) critiques the Captain's proposed criteria for ambiguity and relevance, forcing a more robust contract. During execution, Harper is assigned "Research" tasks, gathering information from the codebase or external sources to inform the Builder. Harper's primary function is to prevent the swarm from "hallucinating" or working with incorrect assumptions.
 
-*   **Key-Value State with LWW-Registers:** For mutable state (e.g., current file content, test results), the blackboard uses **Last-Writer-Wins (LWW) Registers**.
-    *   When an agent proposes a change to a file, it submits a mutation with a timestamp.
-    *   During reconciliation, the Leader accepts the mutation with the latest timestamp, resolving conflicts deterministically.
-    *   This allows agents to work on the same files concurrently, with the "freshest" work prevailing, subject to later evaluation in the Arena.
+3.  **Builder Benjamin (The Coder)**:
+    -   **Role**: Primary code generator and implementer.
+    -   **Function**: Receives a specific work package and the negotiated `Contract`. Benjamin's role is to write the code to fulfill the contract. This persona is responsible for generating the `mutations` (code changes) within its isolated `git worktree` sandbox. As seen in `run_self_healing_loop`, Benjamin's output is subject to the most scrutiny, including automated compilation checks and repair loops.
 
-This CRDT-based approach allows the swarm to operate at high concurrency with minimal contention, as agents write to a local log and the expensive reconciliation is handled asynchronously by the Leader.
+4.  **Synthesizer Lucas (The Reconciler)**:
+    -   **Role**: Merger and finalizer.
+    -   **Function**: After all personas have submitted their work, the `LeaderOrchestrator` invokes Lucas. As shown in `perform_semantic_merge`, Lucas's job is to take the winning proposal from the **Arena** and intelligently merge it with complementary ideas from the other personas. This produces a final, cohesive patch that is more robust than any single persona's output.
 
----
+This adversarial collaboration ensures that a plan is critiqued before it's executed, code is generated based on a solid plan, and multiple proposed solutions are synthesized into a superior final product.
 
-## 3. The 4-Persona Adversarial Swarm Topology
+## 4. State Transition Sequence
 
-Korg's cognitive engine is a swarm of four specialized AI personas. They collaborate in an adversarial but productive topology, ensuring that generated code is not just functional but also robust, secure, and aligned with the overall goal. This model is orchestrated by the `LeaderOrchestrator` in `src/leader.rs`.
-
-1.  **Captain (Orchestrator): The Planner & Negotiator**
-    *   **Role:** Decomposes the high-level `root_task` into a structured plan of `work_packages`.
-    *   **Function:** Leads the `negotiate_contract` phase, proposing acceptance criteria and debating them with the Evaluator (Harper) to form a binding `Contract` artifact. This ensures work begins with a clear, verifiable definition of "done."
-    *   **Source:** `leader.rs::decompose_into_persona_packages()`, `leader.rs::negotiate_contract()`.
-
-2.  **Harper (Auditor): The Harsh Critic & Security Guardrail**
-    *   **Role:** Acts as the adversarial guardrail. It does not write production code but critiques the work of others.
-    *   **Function:** Implements the five harsh binary rubrics (Trajectory, Epistemic, Tool-Use, Semantic, Resource) defined in `src/evaluator.rs`. It consumes `TraceEvent`s from the blackboard and produces an `EvaluationVerdict` that directly influences the Leader's decision to scale, revise, or terminate the swarm. It is the core of the system's self-regulation loop.
-    *   **Source:** `src/evaluator.rs`.
-
-3.  **Benjamin (Builder): The Prolific but Unreliable Coder**
-    *   **Role:** The primary code generator. Benjamin is optimized for speed and creativity, translating plans and research into concrete code mutations.
-    *   **Function:** Produces the bulk of the code changes (`PersonaResult` containing mutations). It is intentionally designed to be fallible; `leader.rs` shows it can "crash" (fail compilation), triggering the `run_self_healing_loop` where its own compiler errors are fed back to it for repair.
-    *   **Source:** `leader.rs::run_self_healing_loop()`.
-
-4.  **Lucas (Synthesizer): The Reconciler & Finisher**
-    *   **Role:** The final integration and quality assurance stage. Lucas takes the outputs from all other personas and synthesizes them into a single, cohesive, and correct final patch.
-    *   **Function:** Runs the `perform_semantic_merge` logic, which uses an LLM to reconcile competing mutations from different personas. It also runs final verification tests to ensure the merged output is stable and correct.
-    *   **Source:** `leader.rs::perform_semantic_merge()`.
-
-### 3.1. State Transition & Collaboration Flow
-
-The interaction between these personas follows a well-defined, observable sequence orchestrated by the Leader.
+The Korg campaign loop follows a deterministic state transition sequence, managed by the `LeaderOrchestrator`. This ensures a predictable and auditable flow of execution.
 
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> Plan_Formulation
-    state Plan_Formulation {
-        direction LR
-        [*] --> Negotiate_Contract
-        Negotiate_Contract --> Human_Approval_Gate: [Requires Approval]
-        Human_Approval_Gate --> Negotiate_Contract: [Reject]
-        Human_Approval_Gate --> Dispatch_Concurrent_Work: [Approve]
-        Negotiate_Contract --> Dispatch_Concurrent_Work: [Auto-Approved]
-    }
-    Dispatch_Concurrent_Work --> Work_Execution
-    state Work_Execution {
-        direction TB
-        state "Captain (Plan)" as P1
-        state "Harper (Critique)" as P2
-        state "Benjamin (Build)" as P3
-        state "Lucas (Synthesize)" as P4
-        [*] --> P1
-        [*] --> P2
-        P1 --> P3
-        P2 --> P3
-        P3 --> P4
-    }
-    Work_Execution --> Arena_Selection
-    Arena_Selection: Run Arena to select best output
-    Arena_Selection --> Evaluation
-    Evaluation: Evaluator runs 5 rubrics
-    Evaluation --> Merge_Commit
-    Merge_Commit: Leader merges winner's code
-    Merge_Commit --> [*]
+    [*] --> PlanDecomposition: Operator initiates campaign
 
-    state Fork_Point <<fork>>
-    Work_Execution --> Fork_Point
-    Arena_Selection --> Fork_Point
-    Fork_Point --> Playhead_Steering_Fork: [Operator Intervenes]
-    Playhead_Steering_Fork: Revert state & git tree
-    Playhead_Steering_Fork --> Dispatch_Concurrent_Work
+    state PlanDecomposition {
+        direction LR
+        [*] --> Captain: Decompose Task
+    }
+    PlanDecomposition --> ContractNegotiation: Plan Formulated
+
+    state ContractNegotiation {
+        direction LR
+        [*] --> ProposeCriteria: Captain
+        ProposeCriteria --> Critique: Evaluator (Harper)
+        Critique --> ProposeCriteria: Revise
+        Critique --> [*]: Contract Signed
+    }
+    ContractNegotiation --> DispatchWork: Contract Approved
+
+    state DispatchWork {
+        direction LR
+        [*] --> SpawnWorkers: Leader
+        SpawnWorkers --> WorkspaceSynthesis: Workers Active
+    }
+
+    state WorkspaceSynthesis <<fork>>
+        DispatchWork --> WorkspaceSynthesis
+        state "Benjamin (Build)" as Benjamin
+        state "Harper (Research)" as Harper
+        state "Lucas (Synthesize)" as Lucas
+        WorkspaceSynthesis --> Benjamin
+        WorkspaceSynthesis --> Harper
+        WorkspaceSynthesis --> Lucas
+
+    Benjamin --> SubmitTransaction
+    Harper --> SubmitTransaction
+    Lucas --> SubmitTransaction
+
+    SubmitTransaction --> ArenaEvaluation: All workers complete
+
+    state ArenaEvaluation {
+        direction LR
+        [*] --> ScoreCandidates: Leader
+        ScoreCandidates --> SelectWinner: Highest Confidence
+        SelectWinner --> [*]
+    }
+    ArenaEvaluation --> VerdictHandling: Winner Selected
+
+    state VerdictHandling {
+        direction LR
+        [*] --> IngestTelemetry: Leader
+        IngestTelemetry --> EvaluateRubrics: Evaluator
+        EvaluateRubrics --> RecommendAction: Verdict
+        RecommendAction --> [*]
+    }
+    VerdictHandling --> StateCompaction: Action Determined
+
+    state StateCompaction {
+        direction LR
+        [*] --> MergeWinner: Leader
+        MergeWinner --> PersistKtrans: Sign Transaction
+        PersistKtrans --> [*]
+    }
+    StateCompaction --> CampaignComplete: Final Round
+    StateCompaction --> DispatchWork: Loop (Revise/Continue)
+
+    CampaignComplete --> [*]
 ```
 
----
+## 5. Cryptographic Provenance Chain (`src/provenance.rs`)
 
-## 4. The Cryptographic Provenance Chain (`src/provenance.rs`)
+Korg maintains a tamper-proof audit trail of every significant action using a cryptographic provenance chain, stored as `.ktrans` (Korg Transaction) artifacts. This system provides non-repudiation for the AI's reasoning process.
 
-Every significant action in Korg is recorded in a **tamper-proof cryptographic ledger**, forming a Merkle-DAG of campaign history. This provides an unbreakable audit trail and enables powerful features like timeline scrubbing.
+-   **Parent-Hash Linking & Merkle-DAG**: Each `.ktrans` artifact, represented by the `CampaignKtrans` struct, contains a `parent_hashes` field. This field stores the `tx_hash` of the preceding transaction(s). This explicit linking forms a Merkle Directed Acyclic Graph (DAG), identical in principle to a blockchain. Any modification to a past transaction would invalidate its hash, breaking the entire chain and making tampering immediately detectable. The `replay_campaign` function in `leader.rs` validates this chain integrity.
 
-### 4.1. The `.ktrans` Artifact
+-   **JCS Canonicalization (RFC 8785)**: The `tx_hash` of a transaction is not a hash of a simple string. It is a SHA-256 hash of the **canonicalized** JSON representation of the transaction payload. Korg uses a JSON Canonicalization Scheme (JCS) compatible implementation (`canonical_json` crate). This process involves sorting keys, removing insignificant whitespace, and standardizing number/string formats. This ensures that two logically identical transactions will *always* produce the same hash, regardless of how they are formatted in memory. This is critical for deterministic, verifiable distributed systems. The `compute_sha256` function in `src/provenance.rs` is the heart of this mechanism.
 
-The fundamental block of the ledger is the **CampaignKtrans** artifact. As seen in `leader.rs::persist_campaign_ktrans`, a `.ktrans` file is a signed JSON object created at the end of each major campaign round. It contains:
-*   **`tx_hash`**: A unique, content-addressed hash of the transaction's payload.
-*   **`parent_hashes`**: An array of `tx_hash` values from the preceding transactions, forming the links in the Merkle-DAG.
-*   **`state_merkle_root`**: A SHA-256 hash of the entire logical blackboard state at the time of the transaction.
-*   **`codebase_merkle_root`**: The `git write-tree` hash of the physical workspace, capturing the exact state of all tracked files.
-*   **`signature`**: An **Ed25519** signature of the `tx_hash`, created using the per-campaign `campaign_signing_key`. This provides non-repudiation, proving the transaction was authorized by the Leader.
+-   **Playhead Timeline Scrubbing & Steering Forks**: The provenance chain is not just a passive audit log; it is an interactive time machine. The `CampaignKtrans` struct cryptographically links the logical state (`state_merkle_root`) with the physical codebase state (`codebase_merkle_root`, a git tree hash).
+    -   When an operator initiates a "Playhead Steering Fork" (as described in `DOCS.md` and handled in `leader.rs`), Korg uses the selected transaction's `codebase_merkle_root` to physically reset the workspace using `git read-tree --reset -u <tree-hash>`.
+    -   Simultaneously, it uses the `state_merkle_root` to find the corresponding state blob and rehydrate the logical `Blackboard`.
+    -   This powerful feature allows an operator to rewind the AI's "thought process" and codebase to any valid, signed point in history and "fork" its execution in a new direction, all with cryptographic guarantees of integrity.
 
-### 4.2. JCS Canonicalization (RFC 8785)
+## 6. OCR Pixel Redaction & Visual Firewall (`src/vision_policy.rs`)
 
-To ensure that the `tx_hash` is deterministic and verifiable, the `CampaignKtrans` payload is canonicalized before hashing. As specified in `src/provenance.rs::compute_sha256` and the `canonical_json` dependency, Korg uses **JSON Canonicalization Scheme (JCS)**. This involves:
-1.  Sorting all object keys lexicographically.
-2.  Removing insignificant whitespace.
-3.  Using a standardized representation for numbers and strings.
+Since Korg personas can interact with GUIs and web browsers, a critical security vector is the accidental exposure of sensitive data in screenshots. The Visual Policy Engine in `src/vision_policy.rs` acts as a fail-secure firewall for all visual data.
 
-This guarantees that two systems will produce the exact same byte stream for a given transaction payload, resulting in an identical SHA-256 hash.
+-   **Fail-Secure Intercept Loop**: The `check_attachment` function is the core of the visual firewall. It intercepts every `VisionAttachment` before it is added to the `Blackboard` or broadcast to the UI. It operates on a default-deny principle: if any configured `block_patterns` (e.g., "password", "api_key", "secret") are found, the attachment is immediately flagged for redaction or blocking.
 
-### 4.3. Playhead Timeline Scrubbing & Steering Forks
+-   **Multi-Layer Pattern Matching**: The engine doesn't just scan filenames. It performs a deep inspection:
+    1.  **Metadata Scan**: Checks the attachment's `name` and `description`.
+    2.  **OCR Scan**: Decodes the `data_base64` payload and performs a case-insensitive string search on the raw byte content. This effectively scans the content of text-based images (like SVGs) or the output of a real OCR engine.
+    3.  **High-Entropy String Detection**: The `get_high_entropy_words` function calculates the Shannon entropy of words in the OCR text. This allows it to detect randomized, password-like strings (e.g., API keys, tokens) even if they don't match a specific keyword pattern.
 
-The provenance chain is not just for auditing; it's an interactive state-management tool. The `leader.rs::handle_operator_fork` function implements "Playhead Steering Forks."
+-   **Temporal Analysis for Transient & Split Leaks**: The most advanced feature is its temporal analysis, which uses a `VISUAL_HISTORY` buffer to compare the current frame (N) with the previous one (N-1).
+    -   **Transient Leak**: If a secret appears in frame N-1 but disappears in frame N, the engine retrospectively redacts frame N-1. This catches secrets that are only visible for a fraction of a second.
+    -   **Split-Credential Leak**: The engine concatenates the text from frames N-1 and N to check if a secret was split across two consecutive screenshots to evade detection.
 
-When an operator initiates a fork from a specific transaction `tx_N`:
-1.  **Logical State Rehydration:** The Leader retrieves the `state_merkle_root` from `tx_N`'s `.ktrans` file. It then finds the corresponding state blob (e.g., `/tmp/korg/campaigns/{id}/state-blobs/{hash}.json`) and overwrites the active blackboard with this historical state.
-2.  **Physical State Reversion:** The Leader uses the `codebase_merkle_root` (a git tree hash) from `tx_N` and executes `git read-tree --reset -u <hash>` to instantly revert the entire file workspace to its exact state at that point in time.
-
-This powerful mechanism allows an operator to rewind a "hallucinating" or errant swarm to a known-good state and provide a new directive, effectively forking the entire execution timeline.
-
----
-
-## 5. Visual Firewall: OCR Pixel Redaction & Fail-Secure Loops (`src/vision_policy.rs`)
-
-Korg's agents often interact with GUIs, web pages, and other visual interfaces. To prevent the accidental leakage of sensitive information (e.g., API keys, passwords, PII) in screenshots, Korg implements a **fail-secure visual firewall**.
-
-### 5.1. The `check_attachment` Intercept Loop
-
-Every `VisionAttachment` (screenshot) captured by an agent is passed through the `vision_policy::check_attachment` function before it can be broadcast or saved. This function performs a multi-layered security scan:
-
-1.  **Metadata Scan:** It first checks the attachment's `name` and `description` against a configurable list of `block_patterns` (e.g., "password", "secret", "api_key").
-
-2.  **Simulated OCR Scan:** The `data_base64` payload is decoded into raw bytes. The policy engine then performs a case-insensitive string search for the same `block_patterns` within this byte stream. This simulates an Optical Character Recognition (OCR) process, catching sensitive data that might be rendered visually in the image.
-
-3.  **Temporal Analysis:** The policy engine maintains a history of recent visual frames (`VISUAL_HISTORY`). This enables it to detect advanced threats:
-    *   **Split-Credential Leaks:** It checks if a secret is being leaked across two consecutive frames (e.g., `sk-proj-` in frame N, and `12345...` in frame N+1).
-    *   **Transient Leaks:** It detects if a secret appears in one frame but is gone in the next (e.g., a briefly visible pop-up). If a leak is detected in frame N that is absent in N+1, the engine will *retrospectively redact* frame N in the `VISUAL_HISTORY`, ensuring the leak is neutralized even after the fact.
-
-### 5.2. Fail-Secure Redaction
-
-If any scan detects a policy violation, the firewall immediately triggers a fail-secure response:
-
-*   The `verdict` field of the `VisionAttachment` is set to `REDACTED` or `BLOCKED`.
-*   The original, sensitive `data_base64` is moved to a `raw_data_base64` field, which is never broadcast.
-*   The public `data_base64` field is **overwritten** with a safe placeholder, such as the 1x1 pixel `BLACKOUT_PNG_BASE64` constant.
-
-This ensures that even if other parts of the system malfunction, the raw screenshot data never escapes the security boundary. The `web.rs` module respects this, explicitly checking the verdict and using the placeholder for redacted images before sending them to the browser via SSE, guaranteeing that no sensitive visual information ever reaches an operator's screen unless explicitly overridden.
+-   **Pixel Redaction**: Upon detecting an infraction, the engine does not simply discard the image. It replaces the `data_base64` payload with a constant, opaque placeholder (e.g., `BLACKOUT_PNG_BASE64`, a 1x1 black pixel). This maintains the integrity of the event stream (an attachment was still captured) while ensuring no sensitive data is persisted or broadcast. This redaction is enforced again at the web-server level in `src/web.rs` before being sent over SSE, providing a second layer of defense.
