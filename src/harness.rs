@@ -5,7 +5,11 @@
 
 use crate::acp::{AcpClient, AcpMessage};
 use crate::personas::{run_persona, Persona};
+#[allow(unused_imports)]
+use crate::tools;
 use anyhow::Result;
+use ed25519_dalek::SigningKey;
+use rand::rngs::OsRng;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::interval;
@@ -24,12 +28,10 @@ impl SingleWorkerHarness {
         }
     }
 
-    /// Main worker loop.
-    /// When spawned as a child process by the Leader, we typically process one RouteWork then exit.
+    /// Main worker loop (legacy stub path).
     pub async fn run(&mut self, client: &mut AcpClient) -> Result<()> {
-        println!("[Harness] Worker {} entering main loop", self.worker_id);
+        println!("[Harness] Worker {} entering main loop (legacy client path)", self.worker_id);
 
-        // For now, process one task then exit (ideal for short-lived persona workers spawned by Leader)
         if let Ok(msg) = client.receive().await {
             match msg {
                 AcpMessage::RouteWork {
@@ -39,10 +41,7 @@ impl SingleWorkerHarness {
                     permissions,
                     ..
                 } => {
-                    println!(
-                        "[Harness] Received RouteWork with base_snapshot: {}",
-                        base_snapshot
-                    );
+                    println!("[Harness] Received RouteWork with base_snapshot: {}", base_snapshot);
                     self.handle_route_work(client, routing_id, payload, base_snapshot, permissions)
                         .await?;
                 }
@@ -56,7 +55,90 @@ impl SingleWorkerHarness {
         Ok(())
     }
 
-    async fn handle_route_work(
+    /// Modern stdio framed path (Phase A).
+    /// The worker process is launched by the leader and receives a signed MessageEnvelope<RouteWork>
+    /// on stdin. We read it using the ACP framed reader, verify, then execute the work package.
+    pub async fn run_as_stdio_worker(worker_id: String) -> Result<()> {
+        use tokio::io::{stdin, BufReader};
+
+        eprintln!("[Harness] Worker {} starting in stdio framed ACP mode (waiting for signed RouteWork)", worker_id);
+
+        let mut reader = BufReader::new(stdin());
+
+        // Read the signed envelope from the leader
+        match crate::acp::read_acp_envelope(&mut reader).await {
+            Ok(envelope) => {
+                let verified = crate::acp::verify_envelope(&envelope).unwrap_or(false);
+
+                eprintln!(
+                    "[Harness] Worker {} received ACP MessageEnvelope (verified={})",
+                    worker_id, verified
+                );
+
+                match envelope.payload {
+                    AcpMessage::RouteWork {
+                        routing_id,
+                        payload,
+                        base_snapshot,
+                        permissions,
+                        ..
+                    } => {
+                        eprintln!("[Harness] Processing RouteWork {} (base_snapshot={})", routing_id, base_snapshot);
+
+                        let mut harness = SingleWorkerHarness::new(worker_id.clone());
+
+                        let worker_signing_key = SigningKey::generate(&mut OsRng);
+                        let mut real_client = AcpClient::new_stdio(&worker_id, worker_signing_key);
+
+                        harness
+                            .handle_route_work(&mut real_client, routing_id, payload, base_snapshot, permissions)
+                            .await?;
+
+                        // === Polished demo: Handle one extra signed tool request after RouteWork ===
+                        // Uses the existing reader so ordering is correct.
+                        if let Ok(extra_env) = crate::acp::read_acp_envelope(&mut reader).await {
+                            let verified = crate::acp::verify_envelope(&extra_env).unwrap_or(false);
+                            eprintln!("[Harness] Received post-work tool request (verified={})", verified);
+
+                            if let Some(result_msg) = crate::tools::dispatch_tool(extra_env.payload).await {
+                                let _ = real_client.send(&result_msg).await;
+                                eprintln!("[Harness] Sent signed tool result back to leader");
+                            }
+                        }
+                    }
+
+                    // === Direct tool request (if worker is sent a tool as first message) ===
+                    tool @ AcpMessage::ShellExecRequest(_)
+                    | tool @ AcpMessage::FileReadRequest(_)
+                    | tool @ AcpMessage::PatchApplyRequest(_)
+                    | tool @ AcpMessage::TestRunRequest(_)
+                    | tool @ AcpMessage::CodeEditProposal(_) => {
+                        eprintln!("[Harness] Received direct coding tool request");
+                        let worker_signing_key = SigningKey::generate(&mut OsRng);
+                        let mut real_client = AcpClient::new_stdio(&worker_id, worker_signing_key);
+
+                        if let Some(result_msg) = crate::tools::dispatch_tool(tool).await {
+                            let _ = real_client.send(&result_msg).await;
+                            eprintln!("[Harness] Sent signed tool result");
+                        }
+                    }
+
+                    other => {
+                        eprintln!("[Harness] First message was not a RouteWork or tool request: {:?}", other);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[Harness] Worker {} failed to read incoming ACP envelope: {}", worker_id, e);
+                // Still try to do useful work if possible, or just exit cleanly
+            }
+        }
+
+        eprintln!("[Harness] Worker {} exiting after stdio task", worker_id);
+        Ok(())
+    }
+
+    pub(crate) async fn handle_route_work(
         &mut self,
         client: &mut AcpClient,
         routing_id: String,
@@ -64,7 +146,7 @@ impl SingleWorkerHarness {
         base_snapshot: String,
         _permissions: Vec<String>,
     ) -> Result<()> {
-        println!("[Harness] Received RouteWork {}: {}", routing_id, payload);
+        eprintln!("[Harness] Received RouteWork {}: {}", routing_id, payload);
 
         // 1. Create isolated worktree (see isolation-routing.md)
         let worktree_path = PathBuf::from(format!(
@@ -72,7 +154,7 @@ impl SingleWorkerHarness {
             self.worker_id, routing_id
         ));
         self.current_worktree = Some(worktree_path.clone());
-        println!("[Harness] Created worktree at {:?}", worktree_path);
+        eprintln!("[Harness] Created worktree at {:?}", worktree_path);
         // TODO: actually call `git worktree add` + mount verified snapshot
 
         // Emit start-of-work telemetry pulse
@@ -115,6 +197,24 @@ impl SingleWorkerHarness {
 
         // Wait for emitter to finish (or abort it)
         let _ = emitter_handle.await;
+
+        if payload.contains("simulate-crash") {
+            eprintln!("[Harness] Worker {} detected simulate-crash directive. Writing partial .ktrans...", self.worker_id);
+            let partial_mutations = vec![serde_json::json!({
+                "target_path": "src/auth.rs",
+                "payload": "partial code before worker panic (resilience test)"
+            })];
+            write_terminal_ktrans(
+                &self.worker_id,
+                &routing_id,
+                &base_snapshot,
+                &partial_mutations,
+                &vec!["partial-provenance-before-crash".to_string()],
+                false,
+            );
+            eprintln!("[Harness] Worker {} SIMULATING WORKER CRASH/PANIC (exiting with 101)!", self.worker_id);
+            std::process::exit(101);
+        }
 
         // Final completion pulse
         let final_pulse = AcpMessage::SwarmTelemetryPulse {
@@ -180,13 +280,13 @@ impl SingleWorkerHarness {
             })
             .await?;
 
-        println!(
+        eprintln!(
             "[Harness] Work package {} completed. Terminal tx: {}",
             routing_id, tx_id
         );
 
         // Clean up worktree (or leave for forensics on failure)
-        println!("[Harness] Cleaning up worktree {:?}", worktree_path);
+        eprintln!("[Harness] Cleaning up worktree {:?}", worktree_path);
         // TODO: git worktree remove
 
         Ok(())
@@ -195,13 +295,13 @@ impl SingleWorkerHarness {
     async fn run_task_in_worktree(&self, payload: &str) -> Result<TaskResult> {
         // Route persona from worker_id when possible (real 4-persona topology)
         let persona = self.infer_persona_from_worker_id();
-        println!(
+        eprintln!(
             "[Harness] Executing task inside worktree as {}: {}",
             persona.name(),
             payload
         );
 
-        let persona_result = run_persona(persona, payload, "worker-task");
+        let persona_result = run_persona(persona, payload, "worker-task").await;
 
         Ok(TaskResult {
             mutations: persona_result.mutations,
@@ -310,7 +410,7 @@ fn write_terminal_ktrans(
 
     if let Ok(content) = serde_json::to_string_pretty(&ktrans) {
         if std::fs::write(&path, content).is_ok() {
-            println!("[Harness] Wrote terminal .ktrans → {}", path.display());
+            eprintln!("[Harness] Wrote terminal .ktrans → {}", path.display());
         }
     }
 }

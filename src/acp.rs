@@ -169,7 +169,6 @@ impl AcpError {
 }
 
 /// ===== Signing / Verification Helpers (JCS + Ed25519 per v1.17) =====
-
 /// Canonicalizes a serializable value.
 /// For the reference harness we use stable JSON (field order from serde + BTreeMap where needed).
 /// A production implementation would use a true RFC 8785 JCS crate.
@@ -214,7 +213,6 @@ pub fn verify_envelope<P: Serialize + for<'de> Deserialize<'de>>(
 }
 
 /// ===== High-level typed messages we use in the skeleton =====
-
 pub type PlanPresentationMessage = MessageEnvelope<PlanPresentationPayload>;
 pub type TaskApproveMessage = MessageEnvelope<TaskApprovePayload>;
 pub type ArenaResultMessage = MessageEnvelope<ArenaResultPayload>;
@@ -242,6 +240,16 @@ impl AcpClient {
             worker_id: worker_id.to_string(),
             signing_key,
             _endpoint: endpoint.to_string(),
+        }
+    }
+
+    /// Construct an AcpClient that writes real signed MessageEnvelope<AcpMessage>
+    /// to stdout (used by workers in the stdio child-process path).
+    pub fn new_stdio(worker_id: &str, signing_key: SigningKey) -> Self {
+        Self {
+            worker_id: worker_id.to_string(),
+            signing_key,
+            _endpoint: "stdio".to_string(),
         }
     }
 
@@ -284,14 +292,20 @@ impl AcpClient {
         })
     }
 
-    /// Stub send (used by harness to emit SubmitTransaction / TerminationReport / telemetry).
-    /// Changed to &self so background telemetry emitters can use it concurrently.
+    /// Send an AcpMessage.
+    /// - In "stdio" mode (worker child processes): writes a real signed MessageEnvelope to stdout.
+    /// - Otherwise: legacy stub (prints).
     pub async fn send(&self, msg: &AcpMessage) -> Result<()> {
-        println!(
-            "[AcpClient] (stub) would send: {:?}",
-            serde_json::to_string(msg).unwrap_or_default()
-        );
-        Ok(())
+        if self._endpoint == "stdio" {
+            let mut stdout = tokio::io::stdout();
+            write_signed_acp_envelope(&mut stdout, &self.signing_key, msg.clone()).await
+        } else {
+            println!(
+                "[AcpClient] (stub) would send: {:?}",
+                serde_json::to_string(msg).unwrap_or_default()
+            );
+            Ok(())
+        }
     }
 }
 
@@ -356,6 +370,22 @@ pub enum AcpMessage {
     /// First-class ACP message for campaign transactional logs (.ktrans).
     /// Allows .ktrans to be routed, framed, and verified exactly like other ACP messages.
     CampaignKtrans { ktrans: CampaignKtrans },
+
+    // === Coding Tool Payloads (foundational for Option C) ===
+    FileReadRequest(FileReadRequestPayload),
+    FileReadResult(FileReadResultPayload),
+
+    ShellExecRequest(ShellExecRequestPayload),
+    ShellExecResult(ShellExecResultPayload),
+
+    CodeEditProposal(CodeEditProposalPayload),
+
+    PatchApplyRequest(PatchApplyRequestPayload),
+    PatchApplyResult(PatchApplyResultPayload),
+
+    // Test execution (real coding validation tool)
+    TestRunRequest(TestRunRequestPayload),
+    TestRunResult(TestRunResultPayload),
 }
 
 // Convenience payload for the Evaluator (can be embedded in EvaluationVerdict)
@@ -420,4 +450,142 @@ pub struct CampaignKtransPayload {
     pub leader_action: String,
     pub new_swarm_size: u32,
     pub total_mutations_so_far: usize,
+}
+
+// === Coding Tool Payload Structs (Option C) ===
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileReadRequestPayload {
+    pub path: String,
+    pub max_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileReadResultPayload {
+    pub path: String,
+    pub content: String,
+    pub bytes_read: u64,
+    pub truncated: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellExecRequestPayload {
+    pub command: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellExecResultPayload {
+    pub command: String,
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub duration_ms: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeEditProposalPayload {
+    pub file_path: String,
+    pub diff: String,
+    pub description: String,
+    pub confidence: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchApplyRequestPayload {
+    pub file_path: String,
+    pub patch: String,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchApplyResultPayload {
+    pub file_path: String,
+    pub success: bool,
+    pub applied_hunks: usize,
+    pub rejected_hunks: usize,
+    pub new_content_preview: Option<String>,
+    pub error: Option<String>,
+}
+
+// === Test Execution Payloads (next coding capability) ===
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestRunRequestPayload {
+    pub command: String,           // "cargo", "uv", etc.
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub timeout_ms: Option<u64>,
+    pub with_coverage: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestRunResultPayload {
+    pub command: String,
+    pub exit_code: i32,
+    pub duration_ms: u64,
+    pub tests_run: u32,
+    pub tests_passed: u32,
+    pub tests_failed: u32,
+    pub tests_ignored: u32,
+    pub coverage_percent: Option<f32>,
+    pub failure_summaries: Vec<String>,   // first few failing test names + messages
+    pub stdout: String,
+    pub stderr: String,
+    pub error: Option<String>,
+}
+
+// =============================================================================
+// ACP Framed Transport Helpers (Phase A — signed MessageEnvelope on the wire)
+// =============================================================================
+
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+/// Writes a payload as a signed `MessageEnvelope<AcpMessage>` using newline-delimited JSON.
+/// This is the canonical ACP v1.17 wire format used by the harness for leader ↔ worker.
+pub async fn write_signed_acp_envelope<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    signing_key: &SigningKey,
+    payload: AcpMessage,
+) -> Result<()> {
+    // Sign the payload first (before moving it into the envelope)
+    let signature = sign_payload(signing_key, &payload)?;
+
+    let envelope: MessageEnvelope<AcpMessage> = MessageEnvelope {
+        message_id: Uuid::new_v4(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        sender: "leader".to_string(),
+        payload,
+        signature,
+    };
+
+    let line = serde_json::to_string(&envelope)? + "\n";
+    writer.write_all(line.as_bytes()).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Reads one newline-terminated line and deserializes it as `MessageEnvelope<AcpMessage>`.
+/// The caller is responsible for calling `verify_envelope` if strict verification is desired.
+pub async fn read_acp_envelope<R: AsyncBufReadExt + Unpin>(
+    reader: &mut R,
+) -> Result<MessageEnvelope<AcpMessage>> {
+    let mut line = String::new();
+    if reader.read_line(&mut line).await? == 0 {
+        anyhow::bail!("EOF while reading ACP envelope");
+    }
+    let envelope: MessageEnvelope<AcpMessage> = serde_json::from_str(line.trim())?;
+    Ok(envelope)
+}
+
+/// Convenience: read an envelope and attempt verification. Returns the inner payload if successful.
+pub async fn read_and_verify_acp_envelope<R: AsyncBufReadExt + Unpin>(
+    reader: &mut R,
+) -> Result<(AcpMessage, bool)> {
+    let envelope = read_acp_envelope(reader).await?;
+    let verified = verify_envelope(&envelope).unwrap_or(false);
+    Ok((envelope.payload, verified))
 }

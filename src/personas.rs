@@ -63,6 +63,8 @@ pub struct PersonaResult {
     pub confidence: f32,
     pub mutations: Vec<serde_json::Value>,
     pub arena_self_score: serde_json::Value,
+    pub crashed: bool,
+    pub error_msg: Option<String>,
 }
 
 impl PersonaResult {
@@ -74,13 +76,15 @@ impl PersonaResult {
             confidence: 0.85,
             mutations: vec![],
             arena_self_score: json!({}),
+            crashed: false,
+            error_msg: None,
         }
     }
 }
 
 /// Captain (Grok) — high-level planning and final synthesis
 pub fn run_captain(payload: &str, routing_id: &str) -> PersonaResult {
-    println!("[Captain] Decomposing and planning: {}", payload);
+    eprintln!("[Captain] Decomposing and planning: {}", payload);
 
     let mut result = PersonaResult::new(Persona::Captain, routing_id.to_string());
     result.output = json!({
@@ -98,7 +102,7 @@ pub fn run_captain(payload: &str, routing_id: &str) -> PersonaResult {
 
 /// Harper — critique, research, evidence, counter-arguments
 pub fn run_harper(payload: &str, routing_id: &str) -> PersonaResult {
-    println!("[Harper] Researching and critiquing: {}", payload);
+    eprintln!("[Harper] Researching and critiquing: {}", payload);
 
     let mut result = PersonaResult::new(Persona::Harper, routing_id.to_string());
     result.output = json!({
@@ -116,7 +120,7 @@ pub fn run_harper(payload: &str, routing_id: &str) -> PersonaResult {
 
 /// Benjamin — tool use, code execution, file changes
 pub fn run_benjamin(payload: &str, routing_id: &str) -> PersonaResult {
-    println!("[Benjamin] Executing implementation work: {}", payload);
+    eprintln!("[Benjamin] Executing implementation work: {}", payload);
 
     let mut result = PersonaResult::new(Persona::Benjamin, routing_id.to_string());
     result.output = json!({
@@ -137,7 +141,7 @@ pub fn run_benjamin(payload: &str, routing_id: &str) -> PersonaResult {
 
 /// Lucas — cross-validation, Arena participation, synthesis
 pub fn run_lucas(payload: &str, routing_id: &str) -> PersonaResult {
-    println!("[Lucas] Synthesizing and preparing Arena: {}", payload);
+    eprintln!("[Lucas] Synthesizing and preparing Arena: {}", payload);
 
     let mut result = PersonaResult::new(Persona::Lucas, routing_id.to_string());
     result.output = json!({
@@ -153,13 +157,13 @@ pub fn run_lucas(payload: &str, routing_id: &str) -> PersonaResult {
     result
 }
 
-pub fn run_persona(persona: Persona, payload: &str, routing_id: &str) -> PersonaResult {
+pub async fn run_persona(persona: Persona, payload: &str, routing_id: &str) -> PersonaResult {
     match persona {
         Persona::Captain => run_captain(payload, routing_id),
         Persona::Harper => run_harper(payload, routing_id),
         Persona::Benjamin => run_benjamin(payload, routing_id),
         Persona::Lucas => run_lucas(payload, routing_id),
-        Persona::Evaluator => run_evaluator(payload, routing_id),
+        Persona::Evaluator => run_evaluator(payload, routing_id).await,
     }
 }
 
@@ -167,8 +171,8 @@ pub fn run_persona(persona: Persona, payload: &str, routing_id: &str) -> Persona
 ///
 /// Now powered by the real 5-rubric Evaluator with live semantic_entropy().
 /// This is the "harsh critic" the user requested — fully data-driven against TraceEvent fields.
-pub fn run_evaluator(payload: &str, routing_id: &str) -> PersonaResult {
-    println!("[Evaluator] Performing harsh adversarial review using real rubrics + semantic_entropy() on: {}", payload);
+pub async fn run_evaluator(payload: &str, routing_id: &str) -> PersonaResult {
+    eprintln!("[Evaluator] Performing harsh adversarial review using real rubrics + semantic_entropy() on: {}", payload);
 
     // Build realistic TraceEvents from the payload + some adversarial noise
     // (In a real flow these would come from blackboard / SwarmTelemetryPulse ingestion)
@@ -176,7 +180,7 @@ pub fn run_evaluator(payload: &str, routing_id: &str) -> PersonaResult {
 
     let base_text = payload.to_string();
     for i in 0..8 {
-        let te = TraceEvent {
+        let mut te = TraceEvent {
             agent_id: format!("worker-{}", i % 4),
             ..TraceEvent::default()
         };
@@ -205,9 +209,9 @@ pub fn run_evaluator(payload: &str, routing_id: &str) -> PersonaResult {
 
     // This is the key: we call the real evaluate() which internally uses the five
     // check_* methods, each of which calls self.semantic_entropy(...) directly.
-    let verdict = ev.evaluate(Uuid::now_v7());
+    let verdict = ev.evaluate(Uuid::now_v7()).await;
 
-    println!(
+    eprintln!(
         "[Evaluator] Live semantic_entropy = {:.3} | passed {}/{} rubrics | action = {}",
         verdict.semantic_entropy,
         verdict.passed_rubrics,

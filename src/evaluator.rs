@@ -101,7 +101,8 @@ pub struct EvaluationVerdict {
 pub struct Evaluator {
     pub config: RubricConfig,
     window: VecDeque<TraceEvent>,
-    embedding_model: Box<dyn EmbeddingModel>,
+    embedding_model: std::sync::Arc<dyn EmbeddingModel>,
+    embedding_cache: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, Vec<f32>>>>,
 }
 
 impl Evaluator {
@@ -112,18 +113,18 @@ impl Evaluator {
         // Falls back to FakeEmbeddingModel when:
         //   - `candle` feature is not enabled, or
         //   - model files are not present / HF download fails (CI, quick testing)
-        let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> =
+        let embedding_model: std::sync::Arc<dyn crate::embeddings::EmbeddingModel> =
             match crate::embeddings::CandleEmbeddingModel::load() {
                 Ok(real) => {
                     println!("[Evaluator] Loaded real CandleEmbeddingModel (all-MiniLM-L6-v2)");
-                    Box::new(real)
+                    std::sync::Arc::new(real)
                 }
                 Err(e) => {
                     println!(
                         "[Evaluator] Using FakeEmbeddingModel (Candle not available: {})",
                         e
                     );
-                    Box::new(crate::embeddings::FakeEmbeddingModel::default())
+                    std::sync::Arc::new(crate::embeddings::FakeEmbeddingModel::default())
                 }
             };
 
@@ -131,6 +132,7 @@ impl Evaluator {
             config: cfg,
             window: VecDeque::with_capacity(WINDOW_SIZE),
             embedding_model,
+            embedding_cache: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }
     }
 
@@ -142,29 +144,93 @@ impl Evaluator {
         self.window.push_back(event);
     }
 
+    /// Helper method to score semantic similarity of a candidate text against a reference text.
+    pub async fn score_similarity(&self, reference: &str, candidate: &str) -> f32 {
+        let ref_emb = {
+            let r_cache = self.embedding_cache.read().await;
+            r_cache.get(reference).cloned()
+        };
+        let ref_emb = match ref_emb {
+            Some(e) => Some(e),
+            None => {
+                let model = self.embedding_model.clone();
+                let ref_str = reference.to_string();
+                let res = tokio::task::spawn_blocking(move || model.embed(&ref_str)).await;
+                if let Ok(Ok(e)) = res {
+                    let mut w_cache = self.embedding_cache.write().await;
+                    w_cache.insert(reference.to_string(), e.clone());
+                    Some(e)
+                } else {
+                    None
+                }
+            }
+        };
+
+        let cand_emb = {
+            let r_cache = self.embedding_cache.read().await;
+            r_cache.get(candidate).cloned()
+        };
+        let cand_emb = match cand_emb {
+            Some(e) => Some(e),
+            None => {
+                let model = self.embedding_model.clone();
+                let cand_str = candidate.to_string();
+                let res = tokio::task::spawn_blocking(move || model.embed(&cand_str)).await;
+                if let Ok(Ok(e)) = res {
+                    let mut w_cache = self.embedding_cache.write().await;
+                    w_cache.insert(candidate.to_string(), e.clone());
+                    Some(e)
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let (Some(r), Some(c)) = (ref_emb, cand_emb) {
+            cosine_similarity(&r, &c)
+        } else {
+            0.3
+        }
+    }
+
+
     /// The key polish requested: semantic_entropy is now a first-class method
     /// that any rubric can call directly. It uses the pluggable embedding model.
     ///
     /// Takes recent surface texts (or falls back to window), embeds them, computes
     /// the pairwise formula from Evaluation-Guardrail-Layer.md:
     ///   H_sem = 1 - (2 / (N*(N-1))) * Σ_{i<j} S_ij
-    pub fn semantic_entropy(&self, texts: &[String]) -> f32 {
+    pub async fn semantic_entropy(&self, texts: Vec<String>) -> f32 {
         if texts.len() < 2 {
             // Not enough signal — treat as low entropy (stable)
             return 0.15;
         }
 
-        let mut embeddings = vec![];
-        for t in texts {
-            if let Ok(e) = self.embedding_model.embed(t) {
+        let mut embeddings = Vec::with_capacity(texts.len());
+        for t in &texts {
+            let cached_opt = {
+                let r_cache = self.embedding_cache.read().await;
+                r_cache.get(t).cloned()
+            };
+
+            if let Some(e) = cached_opt {
                 embeddings.push(e);
+            } else {
+                let model = self.embedding_model.clone();
+                let t_clone = t.clone();
+                let res = tokio::task::spawn_blocking(move || model.embed(&t_clone)).await;
+                if let Ok(Ok(e)) = res {
+                    let mut w_cache = self.embedding_cache.write().await;
+                    w_cache.insert(t.clone(), e.clone());
+                    embeddings.push(e);
+                }
             }
         }
+
         if embeddings.len() < 2 {
             return 0.25;
         }
 
-        let _n = embeddings.len() as f32;
         let mut sum_sim = 0.0f32;
         let mut pairs = 0usize;
 
@@ -180,22 +246,20 @@ impl Evaluator {
             return 0.3;
         }
 
-        // The formula normalizes average pairwise similarity into an entropy-like score [0,1]
         let avg_sim = sum_sim / (pairs as f32);
-        // Higher similarity → lower entropy. We invert and clamp.
         let h = 1.0 - avg_sim;
         h.clamp(0.0, 1.0)
     }
 
     /// Convenience wrapper that uses the current window's surface_text values.
-    pub fn semantic_entropy_from_window(&self) -> f32 {
+    pub async fn semantic_entropy_from_window(&self) -> f32 {
         let texts: Vec<String> = self.window.iter().map(|e| e.surface_text.clone()).collect();
-        self.semantic_entropy(&texts)
+        self.semantic_entropy(texts).await
     }
 
     // ---------- The five harsh binary rubrics (self-contained, call semantic_entropy directly) ----------
 
-    fn check_trajectory_efficiency(&self) -> (bool, String) {
+    fn check_trajectory_efficiency(&self, entropy: f32) -> (bool, String) {
         if self.window.is_empty() {
             return (
                 true,
@@ -204,7 +268,6 @@ impl Evaluator {
         }
 
         let verified_rate = self.average_verified_rate();
-        let entropy = self.semantic_entropy_from_window();
         let avg_velocity = self.average_token_velocity();
 
         let entropy_penalty = if entropy > self.config.entropy_threshold_for_doom * 0.9 {
@@ -231,14 +294,13 @@ impl Evaluator {
         (!fail, justification)
     }
 
-    fn check_epistemic_integrity(&self) -> (bool, String) {
+    fn check_epistemic_integrity(&self, entropy: f32) -> (bool, String) {
         if self.window.is_empty() {
             return (true, "No data — default PASS".into());
         }
 
         let avg_conf = self.average_epistemic_confidence();
         let avg_conflict = self.average_conflict_rate();
-        let entropy = self.semantic_entropy_from_window();
 
         let fail = avg_conf < self.config.min_epistemic_confidence
             && avg_conflict > self.config.max_conflict_rate * 0.6;
@@ -288,12 +350,11 @@ impl Evaluator {
         (!fail, justification)
     }
 
-    fn check_semantic_adherence(&self) -> (bool, String) {
+    fn check_semantic_adherence(&self, entropy: f32) -> (bool, String) {
         if self.window.is_empty() {
             return (true, "No data — default PASS".into());
         }
 
-        let entropy = self.semantic_entropy_from_window();
         let velocity_drift = self.velocity_drift();
 
         let fail = entropy > self.config.entropy_threshold_for_doom
@@ -313,7 +374,7 @@ impl Evaluator {
         (!fail, justification)
     }
 
-    fn check_resource_utilization(&self) -> (bool, String) {
+    fn check_resource_utilization(&self, entropy: f32) -> (bool, String) {
         if self.window.is_empty() {
             return (true, "No data — default PASS".into());
         }
@@ -322,7 +383,6 @@ impl Evaluator {
         let avg_risk = self.average_risk_score();
         let avg_conf = self.average_epistemic_confidence();
         let avg_velocity = self.average_token_velocity();
-        let entropy = self.semantic_entropy_from_window();
 
         let fail = (avg_gpu > self.config.max_gpu_util && avg_risk > 0.55)
             || (avg_velocity > self.config.max_token_velocity * 1.1 && avg_conf < 0.5)
@@ -405,15 +465,15 @@ impl Evaluator {
 
     /// Main entry point: run all five rubrics, compute live semantic_entropy,
     /// decide overall harsh verdict, and return a rich EvaluationVerdict.
-    pub fn evaluate(&mut self, session_id: Uuid) -> EvaluationVerdict {
-        let live_entropy = self.semantic_entropy_from_window();
+    pub async fn evaluate(&mut self, session_id: Uuid) -> EvaluationVerdict {
+        let live_entropy = self.semantic_entropy_from_window().await;
 
         let checks = vec![
-            ("Trajectory Efficiency", self.check_trajectory_efficiency()),
-            ("Epistemic Integrity", self.check_epistemic_integrity()),
+            ("Trajectory Efficiency", self.check_trajectory_efficiency(live_entropy)),
+            ("Epistemic Integrity", self.check_epistemic_integrity(live_entropy)),
             ("Tool-Use Precision", self.check_tool_use_precision()),
-            ("Semantic Adherence", self.check_semantic_adherence()),
-            ("Resource Utilization", self.check_resource_utilization()),
+            ("Semantic Adherence", self.check_semantic_adherence(live_entropy)),
+            ("Resource Utilization", self.check_resource_utilization(live_entropy)),
         ];
 
         let mut passed = 0u8;
@@ -465,8 +525,8 @@ impl Evaluator {
 mod tests {
     use super::*;
 
-    #[test]
-    fn evaluator_produces_harsh_verdicts_with_real_semantic_entropy() {
+    #[tokio::test]
+    async fn evaluator_produces_harsh_verdicts_with_real_semantic_entropy() {
         let mut ev = Evaluator::new(None);
 
         // Seed with some low-quality, high-churn events
@@ -481,7 +541,7 @@ mod tests {
             ev.ingest(evt);
         }
 
-        let v = ev.evaluate(Uuid::now_v7());
+        let v = ev.evaluate(Uuid::now_v7()).await;
         assert!(
             v.semantic_entropy > 0.5,
             "High churn should produce high entropy"
@@ -493,14 +553,14 @@ mod tests {
         assert!(v.overall != "PASS");
     }
 
-    #[test]
-    fn semantic_entropy_method_is_directly_callable() {
+    #[tokio::test]
+    async fn semantic_entropy_method_is_directly_callable() {
         let ev = Evaluator::new(None);
         let texts = vec![
             "we are building a clean refactored module".to_string(),
             "the new design separates concerns beautifully".to_string(),
         ];
-        let h = ev.semantic_entropy(&texts);
+        let h = ev.semantic_entropy(texts).await;
         assert!(h >= 0.0 && h <= 1.0);
     }
 }

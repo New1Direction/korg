@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/example/grok-acp-harness"
 
 [dependencies]
+mimalloc = "0.1"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -32,7 +33,7 @@ ratatui = "0.24"
 crossterm = { version = "0.27", features = ["event-stream"] }
 
 [features]
-default = []
+default = ["candle"]
 candle = [
     "dep:candle-core",
     "dep:candle-nn",
