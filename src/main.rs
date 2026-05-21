@@ -76,6 +76,10 @@ struct Cli {
     #[arg(long)]
     web: bool,
 
+    /// Cognition Mode (instant, balanced, heavy, research, recovery, autonomous)
+    #[arg(long, default_value = "balanced")]
+    mode: String,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -128,6 +132,10 @@ enum Commands {
         /// Launch inside the web-based korg dashboard
         #[arg(long)]
         web: bool,
+
+        /// Cognition Mode (instant, balanced, heavy, research, recovery, autonomous)
+        #[arg(long, default_value = "balanced")]
+        mode: String,
     },
 
     /// Fully observable end-to-end Heavy-Tier campaign (recommended for demos).
@@ -144,6 +152,10 @@ enum Commands {
         /// Launch inside the web-based korg dashboard
         #[arg(long)]
         web: bool,
+
+        /// Cognition Mode (instant, balanced, heavy, research, recovery, autonomous)
+        #[arg(long, default_value = "balanced")]
+        mode: String,
     },
 
     /// Launch the interactive Ratatui TUI dashboard (live ticker, approvals, .ktrans stream, etc.)
@@ -214,6 +226,17 @@ fn print_welcome_banner() {
     println!();
 }
 
+fn parse_cognition_mode(mode_str: &str) -> crate::leader::CognitionMode {
+    match mode_str.to_lowercase().as_str() {
+        "instant" => crate::leader::CognitionMode::Instant,
+        "heavy" => crate::leader::CognitionMode::Heavy,
+        "research" => crate::leader::CognitionMode::Research,
+        "recovery" => crate::leader::CognitionMode::Recovery,
+        "autonomous" => crate::leader::CognitionMode::Autonomous,
+        _ => crate::leader::CognitionMode::Balanced,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -221,7 +244,7 @@ async fn main() -> Result<()> {
     if let Some(prompt) = cli.prompt {
         if cli.web {
             println!("Launching web dashboard with live campaign for prompt: {}", prompt);
-            crate::web::run_web_with_campaign(prompt, None).await?;
+            crate::web::run_web_with_campaign(prompt, None, Some(parse_cognition_mode(&cli.mode))).await?;
         } else if cli.headless {
             let cyan = "\x1b[38;2;0;240;255m";
             let pink = "\x1b[38;2;255;0;180m";
@@ -232,6 +255,7 @@ async fn main() -> Result<()> {
             println!("\n{bold}{cyan}=== ⚡ RUNNING SWARM CAMPAIGN IN HEADLESS MODE ⚡ ==={reset}\n");
             println!("{slate}├──{reset} Prompt: {bold}{pink}{}{reset}", prompt);
             let mut leader = LeaderOrchestrator::new(prompt, None);
+            *leader.cognition_mode.lock().unwrap() = parse_cognition_mode(&cli.mode);
             println!("{slate}├──{reset} Session: {bold}{cyan}{}{reset}", leader.session_id());
             println!("{slate}└──{reset} Base snapshot: {bold}{cyan}{}{reset}\n", leader.base_snapshot());
             leader.run_observable_campaign().await?;
@@ -285,6 +309,7 @@ async fn main() -> Result<()> {
             live_stream,
             tui,
             web,
+            mode,
         } => {
             let sid = if resume {
                 None
@@ -297,6 +322,7 @@ async fn main() -> Result<()> {
                     .to_string(),
                 sid,
             );
+            *leader.cognition_mode.lock().unwrap() = parse_cognition_mode(&mode);
 
             if let Some(replay_arg) = replay {
                 let replay_sid = if replay_arg == "latest" {
@@ -332,7 +358,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Campaign { session, tui, web } => {
+        Commands::Campaign { session, tui, web, mode } => {
             let sid = session.and_then(|s| uuid::Uuid::parse_str(&s).ok());
 
             if web {
@@ -340,6 +366,7 @@ async fn main() -> Result<()> {
                 crate::web::run_web_with_campaign(
                     "Implement production-grade semantic evaluation guardrail with 5 adversarial rubrics".to_string(),
                     sid,
+                    Some(parse_cognition_mode(&mode)),
                 ).await?;
             } else if tui || !cli.headless {
                 println!("Launching Ratatui dashboard with live campaign...");
@@ -352,6 +379,7 @@ async fn main() -> Result<()> {
                     "Implement production-grade semantic evaluation guardrail with 5 adversarial rubrics".to_string(),
                     sid,
                 );
+                *leader.cognition_mode.lock().unwrap() = parse_cognition_mode(&mode);
 
                 let cyan = "\x1b[38;2;0;240;255m";
                 let bold = "\x1b[1m";

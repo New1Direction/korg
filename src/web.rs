@@ -34,6 +34,7 @@ mod ax_sse {
 struct AppState {
     broadcaster: broadcast::Sender<TuiUpdate>,
     feedback_tx: Mutex<Option<mpsc::Sender<ContractResponse>>>,
+    cognition_mode: Arc<std::sync::Mutex<crate::leader::CognitionMode>>,
 }
 
 /// Auto-opens the default system browser targeting the given URL.
@@ -53,19 +54,27 @@ fn open_browser(url: &str) {
 
 /// Runs a web dashboard campaign.
 /// This matches `crate::tui::run_tui_with_campaign` but routes telemetry to a web server.
-pub async fn run_web_with_campaign(prompt: String, session: Option<Uuid>) -> anyhow::Result<()> {
+pub async fn run_web_with_campaign(
+    prompt: String,
+    session: Option<Uuid>,
+    mode: Option<crate::leader::CognitionMode>,
+) -> anyhow::Result<()> {
     let (tui_tx, mut tui_rx) = mpsc::channel::<TuiUpdate>(128);
     let (feedback_tx, feedback_rx) = mpsc::channel::<ContractResponse>(1);
 
     // 1. Create the broadcast channel for multi-subscriber SSE mapping
     let (broadcaster_tx, _) = broadcast::channel::<TuiUpdate>(256);
 
+    let cognition_mode_arc = Arc::new(std::sync::Mutex::new(mode.unwrap_or(crate::leader::CognitionMode::Balanced)));
+
     // 2. Spawn the leader process campaign in the background
     let campaign_tx = tui_tx.clone();
+    let cognition_mode_leader = cognition_mode_arc.clone();
     tokio::spawn(async move {
         let mut leader = LeaderOrchestrator::new(prompt, session);
         leader.tui_tx = Some(campaign_tx.clone());
         leader.tui_rx = Some(feedback_rx);
+        leader.cognition_mode = cognition_mode_leader;
 
         let _ = leader.run_observable_campaign().await;
 
@@ -106,6 +115,7 @@ pub async fn run_web_with_campaign(prompt: String, session: Option<Uuid>) -> any
     let app_state = Arc::new(AppState {
         broadcaster: broadcaster_tx,
         feedback_tx: Mutex::new(Some(feedback_tx)),
+        cognition_mode: cognition_mode_arc,
     });
 
     let router = Router::new()
@@ -115,6 +125,7 @@ pub async fn run_web_with_campaign(prompt: String, session: Option<Uuid>) -> any
         .route("/api/events", get(sse_handler))
         .route("/api/state", get(state_handler))
         .route("/api/override", post(override_handler))
+        .route("/api/mode", post(mode_handler))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
@@ -138,6 +149,7 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
     leader.tui_rx = Some(feedback_rx);
 
     let (broadcaster_tx, _) = broadcast::channel::<TuiUpdate>(256);
+    let cognition_mode_arc = leader.cognition_mode.clone();
 
     tokio::spawn(async move {
         let _ = leader.run_observable_campaign().await;
@@ -175,6 +187,7 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
     let app_state = Arc::new(AppState {
         broadcaster: broadcaster_tx,
         feedback_tx: Mutex::new(Some(feedback_tx)),
+        cognition_mode: cognition_mode_arc,
     });
 
     let router = Router::new()
@@ -225,10 +238,19 @@ async fn sse_handler(
 }
 
 /// GET `/api/state`
-async fn state_handler() -> Json<serde_json::Value> {
+async fn state_handler(
+    State(state): State<Arc<AppState>>,
+) -> Json<serde_json::Value> {
+    let mode = {
+        let m = state.cognition_mode.lock().unwrap();
+        format!("{:?}", *m)
+    };
     let path = "/tmp/korg/blackboard/blackboard.json";
     if let Ok(content) = tokio::fs::read_to_string(path).await {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert("cognition_mode".to_string(), serde_json::json!(mode));
+            }
             return Json(json);
         }
     }
@@ -236,6 +258,7 @@ async fn state_handler() -> Json<serde_json::Value> {
         "session_id": Uuid::now_v7().to_string(),
         "trace_buffer": [],
         "recent_pulses": [],
+        "cognition_mode": mode,
         "info": "Dashboard loaded; waiting for first campaign telemetry stream."
     }))
 }
@@ -253,6 +276,41 @@ async fn override_handler(
         }
     }
     Err(axum::http::StatusCode::SERVICE_UNAVAILABLE)
+}
+
+#[derive(serde::Deserialize)]
+struct ModeRequest {
+    mode: String,
+}
+
+/// POST `/api/mode`
+async fn mode_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ModeRequest>,
+) -> impl IntoResponse {
+    let mode = match payload.mode.to_lowercase().as_str() {
+        "instant" => crate::leader::CognitionMode::Instant,
+        "heavy" => crate::leader::CognitionMode::Heavy,
+        "research" => crate::leader::CognitionMode::Research,
+        "recovery" => crate::leader::CognitionMode::Recovery,
+        "autonomous" => crate::leader::CognitionMode::Autonomous,
+        _ => crate::leader::CognitionMode::Balanced,
+    };
+    
+    {
+        let mut m = state.cognition_mode.lock().unwrap();
+        *m = mode;
+    }
+    
+    println!("[Web API] Dynamic Cognition Mode updated to: {:?}", mode);
+    
+    // Broadcast trace event to live console log stream
+    let _ = state.broadcaster.send(TuiUpdate::Trace(format!(
+        "[cognition-mode] Dynamically switched active mode to: {:?}",
+        mode
+    )));
+    
+    axum::http::StatusCode::OK
 }
 
 // ============================================================================
@@ -2159,6 +2217,107 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
             color: #000000;
             border-color: #ffaa00;
         }
+
+        /* PREMIUM MONOCHROME COGNITION MODE SELECTOR STYLE */
+        .cognition-selector-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background-color: #0c0c0e;
+            border: 1px solid #27272a;
+            padding: 3px 6px;
+            border-radius: 6px;
+        }
+
+        .mode-pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #a1a1aa; /* silver */
+            margin-left: 6px;
+            transition: background-color 0.4s ease, box-shadow 0.4s ease;
+        }
+
+        /* Pulsating depth pulses for different modes */
+        .mode-pulse-dot.instant {
+            background-color: #38bdf8;
+            box-shadow: 0 0 8px #38bdf8;
+            animation: pulse-blue 2s infinite;
+        }
+        .mode-pulse-dot.balanced {
+            background-color: #a1a1aa;
+            box-shadow: 0 0 6px #a1a1aa;
+            animation: pulse-silver 2s infinite;
+        }
+        .mode-pulse-dot.heavy {
+            background-color: #a855f7;
+            box-shadow: 0 0 10px #a855f7;
+            animation: pulse-purple 2s infinite;
+        }
+        .mode-pulse-dot.research {
+            background-color: #22c55e;
+            box-shadow: 0 0 8px #22c55e;
+            animation: pulse-green 2s infinite;
+        }
+        .mode-pulse-dot.recovery {
+            background-color: #ef4444;
+            box-shadow: 0 0 12px #ef4444;
+            animation: pulse-red 2s infinite;
+        }
+        .mode-pulse-dot.autonomous {
+            background-color: #f59e0b;
+            box-shadow: 0 0 10px #f59e0b;
+            animation: pulse-gold 2s infinite;
+        }
+
+        @keyframes pulse-blue {
+            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
+        }
+        @keyframes pulse-silver {
+            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
+        }
+        @keyframes pulse-purple {
+            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
+        }
+        @keyframes pulse-green {
+            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
+        }
+        @keyframes pulse-red {
+            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
+        }
+        @keyframes pulse-gold {
+            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
+        }
+
+        .cognition-selector {
+            display: flex;
+            gap: 2px;
+        }
+
+        .mode-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            color: #71717a;
+            font-family: var(--font-sans);
+            font-size: 11px;
+            font-weight: 500;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            text-transform: lowercase;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .mode-btn:hover {
+            color: #ffffff;
+            background-color: #18181b;
+        }
+
+        .mode-btn.active {
+            color: #ffffff;
+            background-color: #27272a;
+            border-color: #3f3f46;
+        }
     </style>
 </head>
 <body>
@@ -2166,6 +2325,18 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
         <div class="logo-container">
             <span class="logo">korg</span>
             <span class="logo-sub">autonomous engineering runtime</span>
+        </div>
+
+        <div class="cognition-selector-container">
+            <div class="mode-pulse-dot balanced" id="mode-pulse"></div>
+            <div class="cognition-selector">
+                <button class="mode-btn" data-mode="instant" onclick="setCognitionMode('instant')">instant</button>
+                <button class="mode-btn active" data-mode="balanced" onclick="setCognitionMode('balanced')">balanced</button>
+                <button class="mode-btn" data-mode="heavy" onclick="setCognitionMode('heavy')">heavy</button>
+                <button class="mode-btn" data-mode="research" onclick="setCognitionMode('research')">research</button>
+                <button class="mode-btn" data-mode="recovery" onclick="setCognitionMode('recovery')">recovery</button>
+                <button class="mode-btn" data-mode="autonomous" onclick="setCognitionMode('autonomous')">autonomous</button>
+            </div>
         </div>
         <div class="session-info">
             <div class="status-badge">
@@ -2730,6 +2901,15 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
                     
                     if (update.Trace) {
                         appendConsole(update.Trace);
+                        if (update.Trace.includes("[cognition-mode]")) {
+                            const parts = update.Trace.split("to:");
+                            if (parts.length > 1) {
+                                const modeName = parts[1].trim();
+                                updateModeUI(modeName);
+                            }
+                        } else if (update.Trace.includes("[cognition-escalation]")) {
+                            updateModeUI("heavy");
+                        }
                     } else if (update.Ktrans) {
                         appendProvenance(update.Ktrans);
                         try {
@@ -2949,9 +3129,50 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
                 .then(state => {
                     sessionID = state.session_id;
                     document.getElementById("session-id").innerText = `session: ${sessionID.substring(0, 12)}`;
+                    
+                    if (state.cognition_mode) {
+                        updateModeUI(state.cognition_mode);
+                    }
+                    
                     appendConsole("[system] synchronized with blackboard Evaluation Blackboard");
                     appendConsole("[system] awaiting leader runtime telemetry campaign...");
                 });
+        }
+
+        function updateModeUI(mode) {
+            if (!mode) return;
+            const lowercaseMode = mode.toLowerCase();
+            
+            document.querySelectorAll(".mode-btn").forEach(btn => {
+                if (btn.getAttribute("data-mode") === lowercaseMode) {
+                    btn.classList.add("active");
+                } else {
+                    btn.classList.remove("active");
+                }
+            });
+            
+            const pulse = document.getElementById("mode-pulse");
+            if (pulse) {
+                pulse.className = "mode-pulse-dot";
+                pulse.classList.add(lowercaseMode);
+            }
+        }
+
+        function setCognitionMode(mode) {
+            updateModeUI(mode);
+            fetch('/api/mode', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ mode: mode })
+            })
+            .then(res => {
+                if (!res.ok) {
+                    console.error("Failed to update cognition mode");
+                }
+            })
+            .catch(err => console.error("Error setting cognition mode:", err));
         }
 
         // Keyboard listeners for scrubbing
