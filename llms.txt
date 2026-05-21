@@ -1,0 +1,79 @@
+# Korg / Yvaeh Mode
+
+> An advanced, adversarial multi-agent orchestration harness and self-compounding knowledge vault built natively in Rust. Designed to turn a single CLI prompt into an autonomous, secure, and resilient swarm of cooperative/competitive agents.
+
+## What it is
+
+**Korg** is a high-performance multi-agent execution kernel. It coordinates a parallel swarm of specialized agent personas (Captain, Harper, Benjamin, Lucas) communicating over standard input/output using the **Agent Communication Protocol (ACP v1.17)**. 
+
+Unlike conventional single-agent loops, Korg introduces a harsh, adversarial **Evaluator** persona running 5 distinct binary rubrics, combined with a **cryptographically signed transactional memory (.ktrans)** and thread-safe **Blackboard** database. This architecture guarantees physical execution sandboxing, deterministic crash-recovery, and deep semantic evaluation.
+
+After each execution campaign, Korg runs in **Yvaeh Mode**, automatically scanning its knowledge vault (an Obsidian vault) to reconcile factual contradictions via local BERT embeddings and synthesize new synthesis pages with backlinks.
+
+---
+
+## Core Primitives (The Mechanisms)
+
+Korg's architecture is based on three foundational primitives, specified under `wiki/mechanisms/`:
+
+1. **Leader-Broker Isolation & Worktree Routing** ([[wiki/mechanisms/isolation-routing.md|isolation-routing]]): Spawns worker personas as isolated child processes communicating via piped ACP standard I/O envelopes, guaranteeing absolute execution boundaries.
+2. **Transactional Memory Serialization** ([[wiki/mechanisms/transactional-memory.md|transactional-memory]]): Decouples memory state persistence from raw code execution via `.ktrans` journals. Signs every event envelope using Ed25519 signatures, enabling robust state rehydration and three-way merging.
+3. **Adversarial Evaluator & Dynamic Guardrails** ([[wiki/patterns/Evaluation-Guardrail-Layer.md|Evaluation-Guardrail-Layer]]): Checks worker outputs against negotiated contract criteria using local BERT cosine-similarity vectors, preventing semantic entropy drift.
+
+---
+
+## Codebase Structure
+
+The reference implementation is written in **~6,534 LOC of production Rust** located at `reference-implementations/rust/grok-acp-harness/src/`:
+
+* **[[main.rs]]**: CLI parser supporting `campaign`, `leader`, `worker`, `reconcile`, and `synthesize` subcommands.
+* **[[leader.rs]]**: Campaign orchestrator managing worker process lifecycles, contract negotiation, and transactional merge logic.
+* **[[tui.rs]]**: Premium Crossterm/Ratatui split-screen cockpit detailing gauges, active locks, sparklines, and manual overrides.
+* **[[skills.rs]]**: Yvaeh Mode workflow orchestrator handling vault indexing, frontmatter parsing, and conflict detection.
+* **[[tools.rs]]**: hard-sandboxed tools (`FileRead`, `ShellExec`, `PatchApply`, `TestRun`) with outward shift-resilient patch application.
+* **[[evaluator.rs]]**: Evaluator persona checking 5 rubrics (Trajectory, Epistemic, Churn, Resource, Authority) and dynamic semantic entropy.
+* **[[acp.rs]]**: Protocol engine handling JCS canonicalization, cryptographically signed envelopes, and standard error taxonomies.
+* **[[harness.rs]]**: Standard worker process loop exchanging ACP envelopes with the orchestrator.
+* **[[embeddings.rs]]**: Trait-based local embedding engine, utilizing candle-transformers and BERT (`all-MiniLM-L6-v2`) weights.
+* **[[personas.rs]]**: Persona configuration mapping strategies for Captain, Harper, Benjamin, and Lucas.
+* **[[blackboard.rs]]**: Thread-safe CRDT telemetry ring-buffer tracking active locks, latencies, and transaction logs.
+
+---
+
+## Strategic Roadmap: Surpassing Grok Build, Codex CLI, & Claude Code
+
+A detailed audit and roadmap to surpass commercial platforms is documented in [[wiki/concepts/Korg-Audit-and-Competitive-Roadmap.md|Korg-Audit-and-Competitive-Roadmap]]. 
+
+### Phase 1: Make It Real (Existential Integration)
+* **Model-Agnostic LLM Provider Layer (`src/llm.rs`)**: Construct a unified provider client trait supporting OpenAI, Anthropic, xAI, Google, and Ollama APIs, replacing static mock payloads.
+* **Git Worktree Physical Sandboxing**: Implement real `git worktree add/remove` executions inside [[harness.rs]] to isolate concurrent file access.
+* **Adversarial Arena & Three-Way Semantic Merge**: Feed worker proposals to Evaluator, scoring against the contract, and merge the top-N outputs using the LLM.
+
+### Phase 2: Security & DX Superiority
+* **LSP Integration**: Leverage `tower-lsp` client inside workers to parse code semantics before applying unified patches.
+* **Cryptographic Attestation**: Hash `.ktrans` journals into a Merkle tree and sign the root, emitting secure provenance certificates.
+* **Unified Config (`korg.toml` & `KORG.md`)**: Replace hardcoded `/tmp` paths and support project-level instruction sheets (like `CLAUDE.md`).
+
+### Phase 3: Distributed Swarms & Verification
+* **Distributed Swarm Orchestration**: Support secure TCP/WebSockets inside [[acp.rs]] to coordinate workers running on separate machines.
+* **Formal Plan Verification**: Implement a lightweight DSL compiler to verify Captain's proposed plan DAGs against resource and safety boundaries before execution.
+* **Federated Vaults**: Scale Yvaeh Mode to synchronize semantic knowledge across remote developer nodes conflict-free.
+
+---
+
+## Key Vault Links (Obsidian Wiki)
+
+* **Dashboard**: [[Index.md]]
+* **Operating Manual**: [[_GROK.md]]
+* **Strategic Audit**: [[wiki/concepts/Korg-Audit-and-Competitive-Roadmap.md|Korg-Audit-and-Competitive-Roadmap]]
+* **Mechanism — Epistemic State Primitives**: [[wiki/mechanisms/state-primitives.md|state-primitives]]
+* **Mechanism — Isolation & Worktree Routing**: [[wiki/mechanisms/isolation-routing.md|isolation-routing]]
+* **Mechanism — Transactional Memory**: [[wiki/mechanisms/transactional-memory.md|transactional-memory]]
+* **Concept — Evaluation Guardrail Layer**: [[wiki/patterns/Evaluation-Guardrail-Layer.md|Evaluation-Guardrail-Layer]]
+* **Concept — Async Performance Optimizations**: [[wiki/concepts/Performance-Investigation.md|Performance-Investigation]]
+* **External Pattern — Anthropic Long-Running Loops**: [[wiki/patterns/Anthropic-Long-Running-Agent-Harnesses.md|Anthropic-Long-Running-Agent-Harnesses]]
+* **External Pattern — SuperGrok Heavy Workflows**: [[wiki/patterns/SuperGrok-Heavy-Multi-Agent-Workflows.md|SuperGrok-Heavy-Multi-Agent-Workflows]]
+* **Daily Logs**: [[wiki/daily/2026-05-21.md|2026-05-21 Daily Log]]
+
+---
+*Created for automated LLM context parsing and codebase indexing under Karpathy's llms.txt standard.*

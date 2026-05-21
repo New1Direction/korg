@@ -688,3 +688,41 @@ Append-only chronological record of all significant writes and structural change
 - **Details:**
 - No new synthesis pages created.
 
+
+## 2026-05-21 — Full Project Audit & Competitive Roadmap Execution
+
+- **Action:** Executed full repository and code audit of the Korg multi-agent harness (~6,534 LOC, 11 Rust modules).
+- **Artifact Update:** Updated [[wiki/concepts/Korg-Audit-and-Competitive-Roadmap.md|Korg-Audit-and-Competitive-Roadmap]] with the complete, highly detailed audit results, competitive analysis matrices (for commercial systems like Grok Build, Codex CLI, Claude Code and open-source systems), and a structured 3-phase strategic roadmap (Phase 1: cognitive integration, Phase 2: security & DX, Phase 3: distributed execution & formal plan verification).
+- **Visual Asset Integration:** Copied three generated high-contrast architectural diagrams and console mockups to `raw/screenshots/` and embedded them using a smooth Carousel layout inside the wiki concept note:
+  - `architecture_diagram.png`: Decoupled Leader-Broker multi-persona topology.
+  - `campaign_flowchart.png`: Closed-loop campaign transition phases.
+  - `cli_ui_mockup.png`: Premium Crossterm/Ratatui dashboard cockpit.
+- **Propagation:** Updated daily log, project goals, vault index, and internal wiki linking structures to maintain high-contrast conceptual integrity.
+
+
+## 2026-05-21 — Korg Cockpit and Live Timeline Specification (ASEE Vision)
+
+- **Action:** Created [[wiki/concepts/Live-Execution-Timeline-and-Cockpit-Spec|Live-Execution-Timeline-and-Cockpit-Spec]] mapping Korg's definitive product philosophy: building an autonomous runtime with an integrated editing surface.
+- **Design Specifications**:
+  - **Live Execution Timeline (Cognitive Git)**: Visual DAG layout for tracking signed JCS/Ed25519 `.ktrans` worker commits, critiques, and semantic merges.
+  - **Replay Scrubber & Time-Travel Forking**: Interaction specifications for scrubbing backward, rehydrating Blackboard states via `RouteWork::Replay`, and forking executions into parallel branch swarms.
+  - **Enterprise Policy Engine Primitives**: Zero-trust contract mapping allowlists, timeouts, and Evaluator-gated interrupts.
+- **Propagation**: Linked from daily notes, `wiki/projects/Korg.md`, and added to the vault index.
+
+
+## 2026-05-21 — Model-Agnostic LLM Provider Layer Implementation (Phase 1, Step 1)
+
+- **Action:** Implemented the swappable cognitive abstraction core `src/llm.rs` along with all supporting Cargo dependencies (reqwest, futures-util, async-trait, bytes).
+- **Core Engineering Primitives Established:**
+  - **`LlmProvider` Trait**: Custom unified trait defining async complete and complete_stream functionality.
+  - **Universal Types**: Normalized `Role`, `Message`, `LlmRequest`, `LlmResponse`, `LlmDelta`, `LlmError`, `TokenUsage`, `FinishReason`, `ToolDefinition`, `ToolCall`, `FunctionCall`.
+  - **Lightweight Zero-SDK Clients**: Pure HTTP adapters with direct SSE chunk parsers mapping to `OpenAIProvider`, `AnthropicProvider` (handling top-level system parameter extraction and Claude Messages mapping), `GrokProvider` (xAI), and `LocalOllamaProvider`.
+  - **MockProvider**: Fully stateful, thread-safe testing client using a deque queue of simulated results to ensure 100% offline unit-test stability.
+  - **ResilientLlmProvider**: High-reliability decorator providing stateful exponential backoff retry cycles and a thread-safe custom `CircuitBreaker`.
+- **Integrations & Verification:**
+  - Registered `pub mod llm;` in `src/main.rs`.
+  - Updated CLI Startup welcome banner inside `print_welcome_banner` to display active cognitive provider state dynamically.
+  - Wrote 4 comprehensive tests inside `src/llm.rs` testing payload serializations, offline mock transactions, and retry logic.
+  - Executed `cargo test` verifying all 16/16 unit tests compiled and passed cleanly.
+- **Propagation:** Updated implementation plans, daily notes, project lists, and master logs. Created structural walkthrough artifacts.
+

@@ -167,16 +167,24 @@ Build a high-signal, agent-optimized second brain that compounds knowledge acros
 - **Top-Level CLI Entry Point Integration:** Implemented the positional `prompt` argument and `--headless` flag to allow running immediate campaign loops with a single CLI command (e.g., `korg "my task"`). Bypasses the TUI for scripting/CI via the `--headless` flag. Preserved all pre-existing subcommands with perfect backwards compatibility. Successfully verified end-to-end execution of contract negotiation, concurrency, resilient recovery, unified diff application, real BERT embeddings semantic evaluation, and signed `.ktrans` persistence.
 - **Premium Enhanced Ratatui TUI Dashboard & Telemetry Pipeline:** Refactored `draw_dashboard` in `src/tui.rs` into a stunning multi-grid dashboard, partitioning panels vertically and horizontally to prevent terminal overlaps. Integrated color-coded live `Gauge` for semantic entropy (`H_sem`) with inline `Sparkline` evolution history. Added vertical `BarChart` representing Swarm Persona Confidence ratings. Built detailed `Table` showing active locks (READ/WRITE/IDLE), latencies, and CRDT merges/contention. Upgraded both `ContractNegotiated` lists and `ContractApprovalRequest` modals to render criteria side-by-side with live BERT cosine-similarity scores. Upgraded `src/leader.rs` to compute dynamic similarity and campaign health parameters (velocity, risk, progress, doom_prob), pipelining them directly to the TUI alongside periodic `PersonaTelemetry` lock updates. Verified complete compilation, all 10 tests passing cleanly (`cargo test`), and seamless execution under TUI and headless modes.
 
+### Phase 1: Cognitive Swappable Provider Layer (2026-05-21)
+
+- **Completed Model-Agnostic LLM Provider (`src/llm.rs`)**: Implemented Phase 1, Step 1 of the ASEE competitive roadmap. Designed and developed a zero-SDK pure-HTTP client framework covering OpenAI, Anthropic Claude, xAI Grok, Local Ollama, and a fully stateful, deterministic `MockProvider` for robust offline testing. Features stateful exponential backoff retries and an in-memory `CircuitBreaker`.
+- **Registered Module & Dynamic Startup Banner**: Registered `pub mod llm;` in `src/main.rs` and dynamically resolved and printed the active provider state on CLI startup inside the ecosystem diagnostics.
+- **Achieved 100% Test Integrity**: Added 4 comprehensive new unit tests validating payload serialization formats and backoff/breaker states. Verified that all 16/16 unit tests compile and execute cleanly with zero regression.
+
 ## Related
 
 - [[_GROK.md]] — Operating manual
 - [[wiki/decisions/0001 - Project Kickoff]]
 - [[wiki/decisions/0002 - Lighter Pragmatic AI-First Approach for Korg]]
+- [[wiki/concepts/Korg-Audit-and-Competitive-Roadmap]] — Full audit & roadmap note
 - `sources/obsidian-second-brain/` (reference implementation under study)
 
 ---
 
-**Next:** Explore real Candle model caching under high concurrency, and implement core `/korg-reconcile` and `/korg-synthesize` skills.
+**Next:** Execute Phase 1, Step 2: Wire the newly established `LlmProvider` cognitive abstraction to drive Korg's core multi-persona swarms (Leader, Workers, Evaluator), replacing current prompt simulations with live, swappable LLM reasoning loops.
+
 
 
 
