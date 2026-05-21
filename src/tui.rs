@@ -292,12 +292,26 @@ async fn run_tui_event_loop(
                     } else if app.policy_violation_alert.is_some() {
                         match key.code {
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                app.log("Policy Override APPROVED by operator");
+                                app.log("Policy Override APPROVED (Force Raw) by operator");
+                                if let Some(ref tx) = app.feedback_tx {
+                                    let _ = tx.try_send(ContractResponse::Approve);
+                                }
+                                app.policy_violation_alert = None;
+                                app.pending_approval = None;
+                            }
+                            KeyCode::Char('r') | KeyCode::Char('R') => {
+                                app.log("Policy Override APPROVED (Redact & Approve) by operator");
+                                if let Some(ref tx) = app.feedback_tx {
+                                    let _ = tx.try_send(ContractResponse::Force);
+                                }
                                 app.policy_violation_alert = None;
                                 app.pending_approval = None;
                             }
                             KeyCode::Char('n') | KeyCode::Char('N') => {
                                 app.log("Policy Violation REJECTED. Swarm execution terminated.");
+                                if let Some(ref tx) = app.feedback_tx {
+                                    let _ = tx.try_send(ContractResponse::Reject);
+                                }
                                 app.policy_violation_alert = None;
                                 app.pending_approval = None;
                             }
@@ -459,7 +473,11 @@ async fn run_tui_event_loop(
                     }
                 }
                 TuiUpdate::ApprovalRequest(reason) => {
-                    app.pending_approval = Some(reason);
+                    if reason.contains("Security Policy Blocked!") {
+                        app.policy_violation_alert = Some(reason);
+                    } else {
+                        app.pending_approval = Some(reason);
+                    }
                 }
                 TuiUpdate::Compaction(s) => {
                     app.compaction_status = s;
@@ -911,16 +929,23 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
 
     // Policy Violation Alert Modal (Thick Double Border Visuals)
     if let Some(reason) = &app.policy_violation_alert {
-        let area = centered_rect(60, 30, f.size());
+        let area = centered_rect(65, 35, f.size());
         let modal = Paragraph::new(format!(
-            "  security interrupt: contested policy violation\n\n  {}\n\n  [y] force override & approve   [n] reject & stop swarm   [esc] dismiss",
+            "\n  ❗ ZERO-TRUST SECURITY POLICY INTERCEPT INTERRUPT\n\n\
+              ──────────────────────────────────────────────────────────\n\n  \
+              Infraction Details:\n  {}\n\n  \
+              Operator Action Required:\n  \
+              [y] Force Override & Approve Raw (Bypass Redaction)\n  \
+              [r] Approve Redacted Screenshot Only (Proceed Redacted)\n  \
+              [n] Reject & Terminate Swarm (Kill Campaign)\n\n  \
+              [esc] Dismiss Alert Mode",
             reason
         ))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Plain)
-                .border_style(Style::default().fg(fg_slate))
+                .border_type(ratatui::widgets::BorderType::Double)
+                .border_style(Style::default().fg(fg_white))
                 .title(" [ zero-trust policy engine intercept ] "),
         )
         .style(Style::default().fg(fg_white));

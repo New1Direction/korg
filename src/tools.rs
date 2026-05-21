@@ -271,6 +271,10 @@ pub async fn dispatch_tool(msg: AcpMessage) -> Option<AcpMessage> {
             eprintln!("[ToolExecutor] Received CodeEditProposal for {}", payload.file_path);
             None // No direct result — the proposal is informational
         }
+        AcpMessage::ScreenshotRequest(payload) => {
+            let result = execute_screenshot(payload).await;
+            Some(AcpMessage::ScreenshotResult(result))
+        }
         _ => None,
     }
 }
@@ -979,6 +983,71 @@ async fn try_git_apply(file_path: &Path, patch: &str) -> Result<(), String> {
     } else {
         let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
         Err(format!("git apply failed: {}", err_msg))
+    }
+}
+
+/// Execute a ScreenshotRequest safely.
+pub async fn execute_screenshot(
+    req: crate::acp::ScreenshotRequestPayload,
+) -> crate::acp::ScreenshotResultPayload {
+    // 1. Check filename/target path policies if applicable
+    if let Err(err) = check_path_policy(&req.target_name) {
+        return crate::acp::ScreenshotResultPayload {
+            attachment: crate::acp::VisionAttachment {
+                name: req.target_name,
+                mime_type: "image/png".to_string(),
+                data_base64: crate::vision_policy::BLACKOUT_PNG_BASE64.to_string(),
+                description: req.description,
+                verdict: "BLOCKED".to_string(),
+                infraction_patterns: vec!["path_policy_violation".to_string()],
+                raw_data_base64: None,
+            },
+            error: Some(format!("CONTESTED: Policy Violation - {}", err)),
+        };
+    }
+
+    // 2. Generate mock base64 screenshot data
+    let mut raw_data = format!(
+        "Mock visual frame buffer for: {}\nDescription: {}\nTimestamp: 2026-05-21\n",
+        req.target_name, req.description
+    );
+
+    // Explicitly inject triggers for testing OCR scanning fallbacks if present
+    let lower_target = req.target_name.to_lowercase();
+    let lower_desc = req.description.to_lowercase();
+    if lower_target.contains("password") || lower_desc.contains("password") {
+        raw_data.push_str("[OCR: contains password=admin123]\n");
+    }
+    if lower_target.contains("api_key") || lower_desc.contains("api_key") {
+        raw_data.push_str("[OCR: contains api_key=sk-proj-5678]\n");
+    }
+    if lower_target.contains("secret") || lower_desc.contains("secret") {
+        raw_data.push_str("[OCR: contains secret token]\n");
+    }
+    if lower_target.contains("private_key") || lower_desc.contains("private_key") {
+        raw_data.push_str("[OCR: contains -----BEGIN PRIVATE KEY-----]\n");
+    }
+
+    let data_base64 = crate::vision_policy::base64_encode(raw_data.as_bytes());
+
+    let mut attachment = crate::acp::VisionAttachment {
+        name: req.target_name,
+        mime_type: "image/png".to_string(),
+        data_base64,
+        description: req.description,
+        verdict: "PENDING".to_string(),
+        infraction_patterns: vec![],
+        raw_data_base64: None,
+    };
+
+    // 3. Intercept captured screenshots immediately and filter them through the visual policy engine
+    let config = crate::llm::KorgConfig::load();
+    let policy_config = config.security_vision;
+    crate::vision_policy::check_attachment(&mut attachment, &policy_config);
+
+    crate::acp::ScreenshotResultPayload {
+        attachment,
+        error: None,
     }
 }
 

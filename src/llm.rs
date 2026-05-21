@@ -1012,6 +1012,53 @@ pub struct TomlOllamaSection {
     pub base_url: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VisionPolicyConfig {
+    pub allow_raw_screenshots: bool,
+    pub redact_before_broadcast: bool,
+    pub block_patterns: Vec<String>,
+    pub redaction_mode: String,
+    pub operator_override_allowed: bool,
+}
+
+impl Default for VisionPolicyConfig {
+    fn default() -> Self {
+        Self {
+            allow_raw_screenshots: false,
+            redact_before_broadcast: true,
+            block_patterns: vec![
+                "password".to_string(),
+                "bearer ".to_string(),
+                "token=".to_string(),
+                "api_key".to_string(),
+                "secret".to_string(),
+                "private_key".to_string(),
+            ],
+            redaction_mode: "blackout".to_string(),
+            operator_override_allowed: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlSecuritySection {
+    pub policies: Option<TomlPoliciesSection>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlPoliciesSection {
+    pub vision: Option<TomlVisionPolicySection>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlVisionPolicySection {
+    pub allow_raw_screenshots: Option<bool>,
+    pub redact_before_broadcast: Option<bool>,
+    pub block_patterns: Option<Vec<String>>,
+    pub redaction_mode: Option<String>,
+    pub operator_override_allowed: Option<bool>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct TomlConfig {
     pub default_llm: Option<String>,
@@ -1020,6 +1067,7 @@ pub struct TomlConfig {
     pub anthropic: Option<TomlLlmSection>,
     pub grok: Option<TomlLlmSection>,
     pub ollama: Option<TomlOllamaSection>,
+    pub security: Option<TomlSecuritySection>,
 }
 
 pub struct KorgConfig {
@@ -1032,6 +1080,7 @@ pub struct KorgConfig {
     pub grok_base_url: Option<String>,
     pub ollama_base_url: Option<String>,
     pub default_model: Option<String>,
+    pub security_vision: VisionPolicyConfig,
 }
 
 impl KorgConfig {
@@ -1046,6 +1095,7 @@ impl KorgConfig {
             grok_base_url: std::env::var("GROK_BASE_URL").ok(),
             ollama_base_url: std::env::var("OLLAMA_BASE_URL").ok(),
             default_model: std::env::var("KORG_MODEL").ok(),
+            security_vision: VisionPolicyConfig::default(),
         }
     }
 
@@ -1059,6 +1109,7 @@ impl KorgConfig {
         let mut grok_api_key = std::env::var("GROK_API_KEY").ok();
         let mut grok_base_url = std::env::var("GROK_BASE_URL").ok();
         let mut ollama_base_url = std::env::var("OLLAMA_BASE_URL").ok();
+        let mut security_vision = VisionPolicyConfig::default();
 
         let mut toml_content = None;
         if std::path::Path::new("korg.toml").exists() {
@@ -1097,6 +1148,27 @@ impl KorgConfig {
                 if let Some(sec) = parsed.ollama {
                     if ollama_base_url.is_none() { ollama_base_url = sec.base_url; }
                 }
+                if let Some(sec) = parsed.security {
+                    if let Some(pols) = sec.policies {
+                        if let Some(vis) = pols.vision {
+                            if let Some(val) = vis.allow_raw_screenshots {
+                                security_vision.allow_raw_screenshots = val;
+                            }
+                            if let Some(val) = vis.redact_before_broadcast {
+                                security_vision.redact_before_broadcast = val;
+                            }
+                            if let Some(val) = vis.block_patterns {
+                                security_vision.block_patterns = val;
+                            }
+                            if let Some(val) = vis.redaction_mode {
+                                security_vision.redaction_mode = val;
+                            }
+                            if let Some(val) = vis.operator_override_allowed {
+                                security_vision.operator_override_allowed = val;
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1110,6 +1182,7 @@ impl KorgConfig {
             grok_base_url,
             ollama_base_url,
             default_model,
+            security_vision,
         }
     }
 }

@@ -197,6 +197,10 @@ Build a high-signal, agent-optimized second brain that compounds knowledge acros
 
 ## See Also
 
+- [[Synthesis — ACP Protocol]]
+
+- [[Synthesis — Contract Negotiation]]
+
 - [[Synthesis — Adversarial Loop]]
 
 - [[Synthesis — Evaluator Persona]]

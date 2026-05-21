@@ -217,7 +217,7 @@ pub fn verify_cli_command(path: &Path) -> Result<()> {
 
     println!("  running cryptographic security validations...");
     
-    // 1. Validate top-level signature
+    // 1. Validate top-level signature and hash chain
     let sig_valid = match verify_attestation(&attestation) {
         Ok(valid) => valid,
         Err(e) => {
@@ -232,6 +232,98 @@ pub fn verify_cli_command(path: &Path) -> Result<()> {
     } else {
         println!("  ❌ {bold}verification failed: signature invalid or trace tampered!{reset}");
         return Ok(());
+    }
+
+    // 2. Perform deep local Merkle-DAG audit if .ktrans files are present
+    let campaign_dir = path.parent().unwrap_or(Path::new("."));
+    let mut ktrans_files = vec![];
+    let mut has_dag = false;
+    let mut dag_error = None;
+
+    if campaign_dir.exists() {
+        if let Ok(read_dir) = std::fs::read_dir(campaign_dir) {
+            for entry in read_dir.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".ktrans.json") && !name.contains("provenance") {
+                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                        if let Ok(envelope) = serde_json::from_str::<crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>>(&content) {
+                            ktrans_files.push(envelope.payload);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !ktrans_files.is_empty() {
+        has_dag = true;
+        ktrans_files.sort_by_key(|e| {
+            if e.round == 999 {
+                u32::MAX
+            } else {
+                e.round as u32
+            }
+        });
+
+        let mut seen_hashes = std::collections::HashSet::new();
+        for ktrans in &ktrans_files {
+            if !ktrans.tx_hash.is_empty() {
+                // Compute JCS hash
+                let payload = crate::acp::CampaignKtransPayload {
+                    tx_id: ktrans.tx_id,
+                    session_id: ktrans.session_id,
+                    round: ktrans.round,
+                    timestamp: ktrans.timestamp.clone(),
+                    arena_winner: ktrans.arena_winner.clone(),
+                    arena_confidence: ktrans.arena_confidence,
+                    mutations_this_round: ktrans.mutations_this_round,
+                    verdict: ktrans.verdict.clone(),
+                    leader_action: ktrans.leader_action.clone(),
+                    new_swarm_size: ktrans.new_swarm_size,
+                    total_mutations_so_far: ktrans.total_mutations_so_far,
+                    tx_hash: "".to_string(),
+                    parent_hashes: ktrans.parent_hashes.clone(),
+                    state_merkle_root: ktrans.state_merkle_root.clone(),
+                    codebase_merkle_root: ktrans.codebase_merkle_root.clone(),
+                    vision_attachments: ktrans.vision_attachments.clone(),
+                };
+
+                match compute_sha256(&payload) {
+                    Ok(computed) => {
+                        if computed != ktrans.tx_hash {
+                            dag_error = Some(format!("JCS Hash mismatch for round {}: expected {}, got {}", ktrans.round, ktrans.tx_hash, computed));
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        dag_error = Some(format!("Failed to compute JCS hash for round {}: {}", ktrans.round, e));
+                        break;
+                    }
+                }
+
+                // Verify parent chains
+                for parent in &ktrans.parent_hashes {
+                    if !seen_hashes.contains(parent) {
+                        dag_error = Some(format!("Merkle-DAG integrity broken at round {}: parent hash {} not found", ktrans.round, parent));
+                        break;
+                    }
+                }
+                if dag_error.is_some() {
+                    break;
+                }
+
+                seen_hashes.insert(ktrans.tx_hash.clone());
+            }
+        }
+    }
+
+    if let Some(err) = dag_error {
+        println!("  ❌ {bold}cryptographic verification error: Merkle-DAG validation failed:{reset} {}", err);
+        return Ok(());
+    } else if has_dag {
+        println!("  ✓ {white}physical and logical Merkle-DAG ledger verified (zero-trust audit pass){reset}");
+    } else {
+        println!("  ⚠ {gray}individual round transaction logs not found locally; skipping deep Merkle-DAG parent validation.{reset}");
     }
 
     println!("\n  {bold}execution trace transactions ledger:{reset}");

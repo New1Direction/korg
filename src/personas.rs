@@ -68,6 +68,7 @@ pub struct PersonaResult {
     pub arena_self_score: serde_json::Value,
     pub crashed: bool,
     pub error_msg: Option<String>,
+    pub vision_attachments: Vec<crate::acp::VisionAttachment>,
 }
 
 impl PersonaResult {
@@ -81,6 +82,7 @@ impl PersonaResult {
             arena_self_score: json!({}),
             crashed: false,
             error_msg: None,
+            vision_attachments: vec![],
         }
     }
 }
@@ -292,6 +294,7 @@ impl LlmPersona {
             arena_self_score: self_score,
             crashed: false,
             error_msg: None,
+            vision_attachments: vec![],
         })
     }
 }
