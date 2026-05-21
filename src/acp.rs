@@ -433,6 +433,8 @@ pub struct VisionAttachment {
     pub verdict: String,                 // "APPROVED" | "REDACTED" | "BLOCKED" | "PENDING"
     pub infraction_patterns: Vec<String>,
     pub raw_data_base64: Option<String>,
+    #[serde(default)]
+    pub temporal_frame_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

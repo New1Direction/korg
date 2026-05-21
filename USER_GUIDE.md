@@ -35,7 +35,7 @@ When you run Korg with the `--tui` flag, it launches an electric TrueColor visua
    * 🟦 **Orchestration Blue**: Captain planner events.
    * 🟨 **Worker Yellow/Green**: Harper audits and Benjamin code writes.
    * 🟥 **Evaluator Red**: Security and guardrail reviews.
-   * 🟪 **Operator Purple**: Direct human overrides and branched forks.
+   * 🟧 **Operator Amber**: Direct human overrides and branched forks.
 5. **Terminal Pane (Bottom-Left)**: Pipes subprocess `stdout` and `stderr` streams (e.g., live output from `cargo test` or compiler runs).
 6. **Scrubber Playhead Track (Bottom Rail)**: A horizontal playhead representing the transaction marks (index 0 to 10).
 

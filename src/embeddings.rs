@@ -259,6 +259,26 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     (dot / denom).clamp(-1.0, 1.0)
 }
 
+// ============================================================================
+// Codebase Indexing Data Structures
+// ============================================================================
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IndexedCodeBlock {
+    pub file_path: String,
+    pub block_name: String,
+    pub block_type: String, // "struct", "fn", "impl", "module", "generic"
+    pub start_line: usize,
+    pub end_line: usize,
+    pub content: String,
+    pub embedding: Vec<f32>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct CodebaseIndex {
+    pub blocks: Vec<IndexedCodeBlock>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

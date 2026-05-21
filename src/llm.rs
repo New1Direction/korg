@@ -908,6 +908,8 @@ impl CircuitBreaker {
     }
 }
 
+pub static CAMPAIGN_TOKENS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 pub struct ResilientLlmProvider {
     pub inner: Arc<dyn LlmProvider>,
     pub max_retries: usize,
@@ -939,6 +941,19 @@ impl LlmProvider for ResilientLlmProvider {
             return Err(LlmError::CircuitBreakerOpen);
         }
 
+        let config = KorgConfig::load();
+        let current_campaign_tokens = CAMPAIGN_TOKENS.load(std::sync::atomic::Ordering::Relaxed);
+        if current_campaign_tokens >= config.security_tokens.max_campaign_tokens as usize {
+            let gold = "\x1b[38;2;255;215;0m";
+            let reset = "\x1b[0m";
+            eprintln!("{gold}⚠️  [security-tokens] Campaign budget limit of {} exceeded (currently {}). Halting further operations.{reset}", config.security_tokens.max_campaign_tokens, current_campaign_tokens);
+            return Err(LlmError::RateLimit(format!(
+                "Campaign token limit of {} exceeded (currently {})",
+                config.security_tokens.max_campaign_tokens,
+                current_campaign_tokens
+            )));
+        }
+
         let mut delay = self.initial_delay;
         let mut last_err = LlmError::Unknown("No attempts made".to_string());
 
@@ -951,6 +966,39 @@ impl LlmProvider for ResilientLlmProvider {
             match self.inner.complete(req.clone()).await {
                 Ok(resp) => {
                     self.circuit_breaker.record_success();
+                    
+                    let usage_total = resp.usage.total_tokens;
+                    if usage_total > config.security_tokens.max_request_tokens {
+                        let gold = "\x1b[38;2;255;215;0m";
+                        let reset = "\x1b[0m";
+                        eprintln!("{gold}⚠️  [security-tokens] Single request token limit of {} exceeded (got {}).{reset}", config.security_tokens.max_request_tokens, usage_total);
+                        return Err(LlmError::RateLimit(format!(
+                            "Request token limit of {} exceeded (got {})",
+                            config.security_tokens.max_request_tokens,
+                            usage_total
+                        )));
+                    }
+
+                    let prev = CAMPAIGN_TOKENS.fetch_add(usage_total as usize, std::sync::atomic::Ordering::Relaxed);
+                    let new_total = prev + usage_total as usize;
+                    let limit = config.security_tokens.max_campaign_tokens as usize;
+                    if new_total >= (limit * 8 / 10) && prev < (limit * 8 / 10) {
+                        let gold = "\x1b[38;2;255;215;0m";
+                        let reset = "\x1b[0m";
+                        println!("{gold}⚠️  [security-tokens] Campaign token usage has reached 80% of budget ({} / {}).{reset}", new_total, limit);
+                    }
+
+                    if new_total >= limit {
+                        let gold = "\x1b[38;2;255;215;0m";
+                        let reset = "\x1b[0m";
+                        eprintln!("{gold}⚠️  [security-tokens] Campaign budget limit of {} exceeded (currently {}). Halting further operations.{reset}", limit, new_total);
+                        return Err(LlmError::RateLimit(format!(
+                            "Campaign token limit of {} exceeded (currently {})",
+                            limit,
+                            new_total
+                        )));
+                    }
+
                     return Ok(resp);
                 }
                 Err(err) => {
@@ -1040,6 +1088,71 @@ impl Default for VisionPolicyConfig {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PathsPolicyConfig {
+    pub allowed_directories: Vec<String>,
+    pub blocked_paths: Vec<String>,
+}
+
+impl Default for PathsPolicyConfig {
+    fn default() -> Self {
+        Self {
+            allowed_directories: vec![
+                "/Users/clubpenguin/Documents/Korg".to_string(),
+                "/tmp".to_string(),
+            ],
+            blocked_paths: vec![
+                "/etc".to_string(),
+                "~/.ssh".to_string(),
+                ".env".to_string(),
+                ".git".to_string(),
+                "/etc/passwd".to_string(),
+                "/etc/shadow".to_string(),
+                "id_rsa".to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NetworkPolicyConfig {
+    pub allowed_domains: Vec<String>,
+    pub blocked_domains: Vec<String>,
+}
+
+impl Default for NetworkPolicyConfig {
+    fn default() -> Self {
+        Self {
+            allowed_domains: vec![
+                "github.com".to_string(),
+                "crates.io".to_string(),
+                "api.github.com".to_string(),
+                "localhost".to_string(),
+            ],
+            blocked_domains: vec![
+                "evil.com".to_string(),
+                "malicious-subnet.net".to_string(),
+                "10.0.0.1".to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TokensPolicyConfig {
+    pub max_request_tokens: u32,
+    pub max_campaign_tokens: u32,
+}
+
+impl Default for TokensPolicyConfig {
+    fn default() -> Self {
+        Self {
+            max_request_tokens: 50000,
+            max_campaign_tokens: 1000000,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct TomlSecuritySection {
     pub policies: Option<TomlPoliciesSection>,
@@ -1048,6 +1161,27 @@ pub struct TomlSecuritySection {
 #[derive(Clone, Debug, Deserialize)]
 pub struct TomlPoliciesSection {
     pub vision: Option<TomlVisionPolicySection>,
+    pub paths: Option<TomlPathsPolicySection>,
+    pub network: Option<TomlNetworkPolicySection>,
+    pub tokens: Option<TomlTokensPolicySection>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlPathsPolicySection {
+    pub allowed_directories: Option<Vec<String>>,
+    pub blocked_paths: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlNetworkPolicySection {
+    pub allowed_domains: Option<Vec<String>>,
+    pub blocked_domains: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlTokensPolicySection {
+    pub max_request_tokens: Option<u32>,
+    pub max_campaign_tokens: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1081,6 +1215,9 @@ pub struct KorgConfig {
     pub ollama_base_url: Option<String>,
     pub default_model: Option<String>,
     pub security_vision: VisionPolicyConfig,
+    pub security_paths: PathsPolicyConfig,
+    pub security_network: NetworkPolicyConfig,
+    pub security_tokens: TokensPolicyConfig,
 }
 
 impl KorgConfig {
@@ -1096,6 +1233,9 @@ impl KorgConfig {
             ollama_base_url: std::env::var("OLLAMA_BASE_URL").ok(),
             default_model: std::env::var("KORG_MODEL").ok(),
             security_vision: VisionPolicyConfig::default(),
+            security_paths: PathsPolicyConfig::default(),
+            security_network: NetworkPolicyConfig::default(),
+            security_tokens: TokensPolicyConfig::default(),
         }
     }
 
@@ -1110,6 +1250,9 @@ impl KorgConfig {
         let mut grok_base_url = std::env::var("GROK_BASE_URL").ok();
         let mut ollama_base_url = std::env::var("OLLAMA_BASE_URL").ok();
         let mut security_vision = VisionPolicyConfig::default();
+        let mut security_paths = PathsPolicyConfig::default();
+        let mut security_network = NetworkPolicyConfig::default();
+        let mut security_tokens = TokensPolicyConfig::default();
 
         let mut toml_content = None;
         if std::path::Path::new("korg.toml").exists() {
@@ -1167,6 +1310,30 @@ impl KorgConfig {
                                 security_vision.operator_override_allowed = val;
                             }
                         }
+                        if let Some(p) = pols.paths {
+                            if let Some(val) = p.allowed_directories {
+                                security_paths.allowed_directories = val;
+                            }
+                            if let Some(val) = p.blocked_paths {
+                                security_paths.blocked_paths = val;
+                            }
+                        }
+                        if let Some(n) = pols.network {
+                            if let Some(val) = n.allowed_domains {
+                                security_network.allowed_domains = val;
+                            }
+                            if let Some(val) = n.blocked_domains {
+                                security_network.blocked_domains = val;
+                            }
+                        }
+                        if let Some(t) = pols.tokens {
+                            if let Some(val) = t.max_request_tokens {
+                                security_tokens.max_request_tokens = val;
+                            }
+                            if let Some(val) = t.max_campaign_tokens {
+                                security_tokens.max_campaign_tokens = val;
+                            }
+                        }
                     }
                 }
             }
@@ -1183,6 +1350,9 @@ impl KorgConfig {
             ollama_base_url,
             default_model,
             security_vision,
+            security_paths,
+            security_network,
+            security_tokens,
         }
     }
 }
