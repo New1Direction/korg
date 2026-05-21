@@ -27,6 +27,7 @@ async-trait = "0.1"
 bytes = "1"
 toml = "0.8"
 directories = "5.0"
+thumper-cli = { path = "../API/api-anything" }
 
 # Optional real embedding backend (Heavy-Tier semantic_entropy)
 candle-core = { version = "0.8", optional = true }

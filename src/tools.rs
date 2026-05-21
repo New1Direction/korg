@@ -20,7 +20,98 @@ use tokio::time::{timeout, Duration};
 /// Maximum bytes we'll read from a file or command output for safety.
 const MAX_OUTPUT_BYTES: u64 = 512 * 1024; // 512 KiB
 
+fn expand_tilde(path: &str) -> String {
+    if path.starts_with("~/") || path == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            let suffix = if path == "~" { "" } else { &path[2..] };
+            let home_path = std::path::Path::new(&home);
+            return home_path.join(suffix).to_string_lossy().to_string();
+        }
+    }
+    path.to_string()
+}
+
+fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut normalized = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::CurDir => {}
+            Component::Normal(c) => {
+                normalized.push(c);
+            }
+            c => {
+                normalized.push(c.as_os_str());
+            }
+        }
+    }
+    normalized
+}
+
+fn extract_domains(command: &str, args: &[String]) -> Vec<String> {
+    let mut domains = Vec::new();
+    let all_tokens: Vec<String> = std::iter::once(command.to_string())
+        .chain(args.iter().cloned())
+        .collect();
+
+    for token in all_tokens {
+        // Check for URL
+        if let Some(pos) = token.find("://") {
+            let rest = &token[pos + 3..];
+            let host_part = rest.split('/').next().unwrap_or(rest)
+                .split(':').next().unwrap_or(rest)
+                .split('@').next().unwrap_or(rest);
+            if !host_part.is_empty() {
+                domains.push(host_part.to_string());
+            }
+            continue;
+        }
+
+        // Check for Git SSH
+        if token.starts_with("git@") {
+            if let Some(colon_pos) = token.find(':') {
+                let host = &token[4..colon_pos];
+                if !host.is_empty() {
+                    domains.push(host.to_string());
+                }
+            }
+            continue;
+        }
+
+        // Parse general token to see if it resembles a domain name or IP
+        let cleaned: String = token.chars()
+            .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == ':')
+            .collect();
+
+        for part in cleaned.split(':') {
+            if part.contains('.') {
+                let has_ignored_ext = if let Some(last_dot) = part.rfind('.') {
+                    let ext = &part[last_dot + 1..];
+                    let ignored_exts = [
+                        "rs", "toml", "lock", "git", "sh", "png", "jpg", "jpeg", "gif", "svg",
+                        "md", "txt", "json", "yml", "yaml", "css", "js", "ts", "html", "htm",
+                        "exe", "bin", "o", "a", "so", "dylib", "tar", "gz", "zip"
+                    ];
+                    ignored_exts.contains(&ext.to_lowercase().as_str())
+                } else {
+                    false
+                };
+
+                if !has_ignored_ext {
+                    domains.push(part.to_string());
+                }
+            }
+        }
+    }
+    domains
+}
+
 pub fn check_policy(command: &str, args: &[String]) -> Result<(), String> {
+    let config = crate::llm::KorgConfig::load();
+
     // 1. Load whitelist from POLICY.md if it exists
     let policy_path = std::path::Path::new("POLICY.md");
     let mut whitelisted_commands = vec![
@@ -55,45 +146,100 @@ pub fn check_policy(command: &str, args: &[String]) -> Result<(), String> {
         return Err(format!("Command '{}' is not whitelisted in POLICY.md", base_cmd));
     }
 
+    // 3. Block system file/credential arguments
     let full_cmd = format!("{} {}", command, args.join(" "));
-    if full_cmd.contains("/etc/passwd") || full_cmd.contains("/etc/shadow") || full_cmd.contains(".ssh") || full_cmd.contains("id_rsa") || full_cmd.contains(".env") {
-        return Err("Credentials or blacklisted path found in command arguments".to_string());
+    for blocked_pat in &config.security_paths.blocked_paths {
+        let expanded_blocked = expand_tilde(blocked_pat);
+        if full_cmd.contains(&expanded_blocked) {
+            return Err("Credentials or blacklisted path found in command arguments".to_string());
+        }
+    }
+
+    // 4. Validate network domains
+    let extracted = extract_domains(command, args);
+    for domain in extracted {
+        let lower_domain = domain.to_lowercase();
+        if lower_domain == "localhost" || lower_domain == "127.0.0.1" {
+            continue;
+        }
+
+        // Check blocked domains
+        for blocked_dom in &config.security_network.blocked_domains {
+            let lower_blocked = blocked_dom.to_lowercase();
+            if lower_domain == lower_blocked || lower_domain.ends_with(&format!(".{}", lower_blocked)) {
+                return Err(format!("CONTESTED: Policy Violation - Command attempts to access blocked domain '{}'", domain));
+            }
+        }
+
+        // Check allowed domains
+        if !config.security_network.allowed_domains.is_empty() {
+            let mut allowed = false;
+            for allowed_dom in &config.security_network.allowed_domains {
+                let lower_allowed = allowed_dom.to_lowercase();
+                if lower_domain == lower_allowed || lower_domain.ends_with(&format!(".{}", lower_allowed)) {
+                    allowed = true;
+                    break;
+                }
+            }
+            if !allowed {
+                return Err(format!("CONTESTED: Policy Violation - Command attempts to access unverified domain '{}'", domain));
+            }
+        }
     }
 
     Ok(())
 }
 
 pub fn check_path_policy(path_str: &str) -> Result<(), String> {
-    if path_str.contains("/etc/passwd") || path_str.contains("/etc/shadow") || path_str.contains(".ssh") || path_str.contains("id_rsa") || path_str.contains(".env") {
-        return Err("Access to credentials or blacklisted system file strictly forbidden".to_string());
+    let config = crate::llm::KorgConfig::load();
+    let expanded_str = expand_tilde(path_str);
+    let path = std::path::Path::new(&expanded_str);
+    let normalized = normalize_path(path);
+    let normalized_str = normalized.to_string_lossy();
+
+    // 1. Check blocked paths
+    for blocked_pat in &config.security_paths.blocked_paths {
+        let expanded_blocked = expand_tilde(blocked_pat);
+        if normalized_str.contains(&expanded_blocked) || expanded_str.contains(&expanded_blocked) {
+            return Err("Access to credentials or blacklisted system file strictly forbidden".to_string());
+        }
     }
 
-    let path = std::path::Path::new(path_str);
-    if path.is_absolute() {
-        if path.starts_with("/tmp") {
-            Ok(())
-        } else if path.starts_with("/Users/clubpenguin/Documents/Korg") {
-            Ok(())
+    // 2. Check allowed directories
+    if !config.security_paths.allowed_directories.is_empty() {
+        let mut allowed = false;
+        let abs_path = if normalized.is_absolute() {
+            normalized.clone()
         } else {
-            Err(format!("Absolute path '{}' is outside whitelisted directories (/tmp or Korg root)", path_str))
-        }
-    } else {
-        if path_str.contains("..") {
-            let canonical = std::fs::canonicalize(path);
-            match canonical {
-                Ok(c) => {
-                    if c.starts_with("/Users/clubpenguin/Documents/Korg") || c.starts_with("/tmp") {
-                        Ok(())
-                    } else {
-                        Err("Path traversal went outside whitelisted workspace".to_string())
-                    }
-                }
-                Err(_) => Err("Path traversal check failed".to_string())
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/Users/clubpenguin/Documents/Korg")).join(&normalized)
+        };
+        let abs_normalized = normalize_path(&abs_path);
+
+        for allowed_dir in &config.security_paths.allowed_directories {
+            let expanded_allowed = expand_tilde(allowed_dir);
+            let allowed_path = std::path::Path::new(&expanded_allowed);
+            let abs_allowed = if allowed_path.is_absolute() {
+                allowed_path.to_path_buf()
+            } else {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/Users/clubpenguin/Documents/Korg")).join(allowed_path)
+            };
+            let abs_allowed_normalized = normalize_path(&abs_allowed);
+            
+            if abs_normalized.starts_with(&abs_allowed_normalized) {
+                allowed = true;
+                break;
             }
-        } else {
-            Ok(())
+        }
+
+        if !allowed {
+            return Err(format!(
+                "Absolute path '{}' is outside whitelisted directories (/tmp or Korg root)",
+                path_str
+            ));
         }
     }
+
+    Ok(())
 }
 
 /// Execute a FileReadRequest safely.
@@ -1001,6 +1147,7 @@ pub async fn execute_screenshot(
                 verdict: "BLOCKED".to_string(),
                 infraction_patterns: vec!["path_policy_violation".to_string()],
                 raw_data_base64: None,
+                temporal_frame_index: None,
             },
             error: Some(format!("CONTESTED: Policy Violation - {}", err)),
         };
@@ -1038,6 +1185,7 @@ pub async fn execute_screenshot(
         verdict: "PENDING".to_string(),
         infraction_patterns: vec![],
         raw_data_base64: None,
+        temporal_frame_index: None,
     };
 
     // 3. Intercept captured screenshots immediately and filter them through the visual policy engine

@@ -62,7 +62,7 @@ The cockpit renders the **Live Execution Timeline** as a vertical, high-contrast
     *   *System Nodes (Blue)*: Graph materialization, contract negotiation, and semantic merges.
     *   *Worker Nodes (Yellow/Green)*: Concurrent worker execution steps, active tool invokers, and intermediate code edits.
     *   *Evaluator Nodes (Red/Green)*: Pass/Fail rubric verdicts and semantic entropy gauges.
-    *   *Human Nodes (Purple)*: Approvals, manual interventions, and policy overrides.
+    *   *Human Nodes (Amber)*: Approvals, manual interventions, and policy overrides.
 *   **Connecting Edges**: Color-coded streams indicating information flow, token consumption, and state dependency.
 *   **Live Sparklines**: Integrated directly into nodes, showcasing worker confidence, memory latencies, and tool execution success rates in real-time Crossterm/Ratatui cells.
 
@@ -118,7 +118,7 @@ Whenever a worker attempts a tool execution or plans a code patch, the request i
     *   *If allowed*: The tool executes, and the telemetry pulse registers resource metrics.
     *   *If whitelisted with restrictions (e.g., custom shell command)*: The Evaluator calculates the semantic distance from allowed commands.
     *   *If blocked*: The Evaluator instantly emits an `EvaluationVerdict::Fail` with a `CONTESTED` state.
-3.  **The Cockpit Interrupt**: The ASEE suspends execution, highlights the timeline node in flashing high-contrast magenta, and pops up the **Operator Override Dialog** detailing the policy violation, allowing the operator to **Approve Once**, **Deny**, or **Scrub & Fork**.
+3.  **The Cockpit Interrupt**: The ASEE suspends execution, highlights the timeline node in flashing high-contrast amber, and pops up the **Operator Override Dialog** detailing the policy violation, allowing the operator to **Approve Once**, **Deny**, or **Scrub & Fork**.
 
 ---
 
