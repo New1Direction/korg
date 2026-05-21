@@ -180,9 +180,10 @@ fn print_welcome_banner() {
     println!();
 
     println!("{}⚙️  {}SYSTEM ECOSYSTEM STATUS:{}", bold, cyan, reset);
-    println!("  {}• Swarm Engine:{}   4 Adversarial Personas (Lucas, Harper, Benjamin, Sophia)", slate, reset);
+    println!("  {}• Swarm Engine:{}   5 Adversarial Personas (Captain, Harper, Benjamin, Lucas, Evaluator)", slate, reset);
     let llm_config = crate::llm::KorgConfig::from_env();
-    println!("  {}• Cognitive Core:{} Swappable Provider [Active: {}]", slate, reset, llm_config.default_llm.to_uppercase());
+    let model_str = llm_config.default_model.clone().unwrap_or_else(|| "default".to_string());
+    println!("  {}• Cognitive Core:{} Swappable Provider [Active: {} | Model: {}]", slate, reset, llm_config.default_llm.to_uppercase(), model_str);
     println!("  {}• Guardrails:{}     5 semantic evaluation rubrics (Trajectory, Epistemic, etc.)", slate, reset);
     println!("  {}• Knowledge:{}     Factual Reconciliation & Semantic Synthesis (Yvaeh mode)", slate, reset);
     println!("  {}• Persistence:{}   Signed .ktrans transactions & secure state recovery", slate, reset);

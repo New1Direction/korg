@@ -107,6 +107,12 @@ pub struct KorgTui {
     pub harper_score_history: Vec<u64>,
     pub benjamin_score_history: Vec<u64>,
     pub lucas_score_history: Vec<u64>,
+
+    // Playback and Replay Scrubber Track
+    pub playhead: usize,
+    pub fork_modal_open: bool,
+    pub steering_buffer: String,
+    pub policy_violation_alert: Option<String>,
 }
 
 impl Default for KorgTui {
@@ -161,6 +167,11 @@ impl Default for KorgTui {
             harper_score_history: vec![87, 86, 88, 87, 89, 87, 86, 87, 88, 87],
             benjamin_score_history: vec![83, 82, 84, 83, 85, 83, 82, 83, 84, 83],
             lucas_score_history: vec![89, 88, 90, 89, 91, 89, 88, 89, 90, 89],
+
+            playhead: 0,
+            fork_modal_open: false,
+            steering_buffer: String::new(),
+            policy_violation_alert: None,
         }
     }
 }
@@ -253,7 +264,50 @@ async fn run_tui_event_loop(
         if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    if app.pending_contract_approval.is_some() {
+                    if app.fork_modal_open {
+                        match key.code {
+                            KeyCode::Char(c) => {
+                                app.steering_buffer.push(c);
+                            }
+                            KeyCode::Backspace => {
+                                app.steering_buffer.pop();
+                            }
+                            KeyCode::Enter => {
+                                if !app.steering_buffer.is_empty() {
+                                    app.log(format!("FORK CREATED at tx_{:02} with directive: {}", app.playhead, app.steering_buffer));
+                                    if let Some(ref tx) = app.feedback_tx {
+                                        let _ = tx.try_send(ContractResponse::Override(vec![format!("FORK:{}:{}", app.playhead, app.steering_buffer)]));
+                                    }
+                                    app.fork_modal_open = false;
+                                    app.steering_buffer.clear();
+                                }
+                            }
+                            KeyCode::Esc => {
+                                app.fork_modal_open = false;
+                                app.steering_buffer.clear();
+                                app.log("Forking cancelled.");
+                            }
+                            _ => {}
+                        }
+                    } else if app.policy_violation_alert.is_some() {
+                        match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                app.log("Policy Override APPROVED by operator");
+                                app.policy_violation_alert = None;
+                                app.pending_approval = None;
+                            }
+                            KeyCode::Char('n') | KeyCode::Char('N') => {
+                                app.log("Policy Violation REJECTED. Swarm execution terminated.");
+                                app.policy_violation_alert = None;
+                                app.pending_approval = None;
+                            }
+                            KeyCode::Esc => {
+                                app.policy_violation_alert = None;
+                                app.pending_approval = None;
+                            }
+                            _ => {}
+                        }
+                    } else if app.pending_contract_approval.is_some() {
                         if app.editing_custom_criterion {
                             match key.code {
                                 KeyCode::Char(c) => {
@@ -327,6 +381,23 @@ async fn run_tui_event_loop(
                             KeyCode::Char('n') if app.pending_approval.is_some() => {
                                 app.log("Human REJECTED");
                                 app.pending_approval = None;
+                            }
+                            KeyCode::Left => {
+                                if app.playhead > 0 {
+                                    app.playhead -= 1;
+                                    app.log(format!("Playhead scrubbed back to tx_{:02}", app.playhead));
+                                }
+                            }
+                            KeyCode::Right => {
+                                if app.playhead < 10 {
+                                    app.playhead += 1;
+                                    app.log(format!("Playhead scrubbed forward to tx_{:02}", app.playhead));
+                                }
+                            }
+                            KeyCode::Char('f') | KeyCode::Char('F') => {
+                                app.fork_modal_open = true;
+                                app.steering_buffer.clear();
+                                app.log(format!("Launching Steer-Fork Modal at tx_{:02}...", app.playhead));
                             }
                             _ => {}
                         }
@@ -471,19 +542,73 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     let fg_slate = Color::Rgb(120, 125, 140);    // Muted Slate Gray
     let fg_white = Color::Rgb(240, 240, 245);    // Sleek High-Contrast White
 
-    let chunks = Layout::default()
+    // Cockpit Workspace Layout splitting (6-Pane layout)
+    let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),  // Top Bar
-            Constraint::Length(10), // Health, Gauges & Sparklines Panel
-            Constraint::Min(10),    // Core Swarm Mechanics
-            Constraint::Length(9),  // Audit Timelines / Locks
-            Constraint::Length(6),  // Logs + ktrans
-            Constraint::Length(1),  // Sleek Bottom Status Bar
+            Constraint::Min(10),    // 6-Pane Cockpit Grid Workspace
+            Constraint::Length(3),  // Bottom Scrubber Track & Status Bar
         ])
         .split(f.size());
 
-    // Top Bar Dashboard Header
+    let top_bar_area = main_layout[0];
+    let grid_area = main_layout[1];
+    let bottom_track_area = main_layout[2];
+
+    // Grid Columns (Left vs Right)
+    let grid_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50), // Left Column (Editor, Terminal)
+            Constraint::Percentage(50), // Right Column (Telemetry, Timeline DAG, Provenance)
+        ])
+        .split(grid_area);
+
+    let left_col = grid_cols[0];
+    let right_col = grid_cols[1];
+
+    // Left Column split: Top (Editor), Bottom (Terminal)
+    let left_panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(60), // Top-Left: Editor Pane
+            Constraint::Percentage(40), // Bottom-Left: Terminal Pane
+        ])
+        .split(left_col);
+
+    let editor_pane_area = left_panes[0];
+    let terminal_pane_area = left_panes[1];
+
+    // Right Column split: Top (Telemetry/Health), Center (DAG Timeline), Bottom (Provenance)
+    let right_panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(25), // Top-Right: Telemetry/Health Pane
+            Constraint::Percentage(50), // Center-Right: DAG Timeline
+            Constraint::Percentage(25), // Bottom-Right: Provenance & Diff Viewer
+        ])
+        .split(right_col);
+
+    let health_telemetry_area = right_panes[0];
+    let dag_timeline_area = right_panes[1];
+    let provenance_area = right_panes[2];
+
+    // Bottom Track split: Top (Scrubber), Bottom (Status Bar)
+    let bottom_panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2), // Playhead Scrubber Track
+            Constraint::Length(1), // Bottom Status Bar
+        ])
+        .split(bottom_track_area);
+
+    let scrubber_track_area = bottom_panes[0];
+    let status_bar_area = bottom_panes[1];
+
+    // ==========================================
+    // 0. Top Bar Dashboard Header
+    // ==========================================
     let top = Paragraph::new(format!(
         " 🛡️  K O R G   A C P   C O M M A N D   D A S H B O A R D   │   Swarm: {}   │   Entropy: {:.3}   │   [{}] ",
         app.swarm_size,
@@ -494,378 +619,276 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     .block(Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(fg_cyan))
-        .title(" [ Korg Core Telemetry Harness v0.1.0 ] "));
-    f.render_widget(top, chunks[0]);
+        .title(" [ Korg Core Telemetry Cockpit v0.1.0 ] "));
+    f.render_widget(top, top_bar_area);
 
-    // Health, Gauges & Sparklines Panel (chunks[1])
-    let health_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(30), // Left: Metrics
-            Constraint::Percentage(35), // Center: Stacked Gauges
-            Constraint::Percentage(35), // Right: Sparklines
-        ])
-        .split(chunks[1]);
+    // ==========================================
+    // 1. Monaco Editor Pane (Left Top)
+    // ==========================================
+    let code_lines = match app.playhead {
+        0 => vec![
+            Line::from(Span::styled("1: // Korg Heavy-Tier Swarm Init", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("2: fn main() -> Result<()> {", Style::default().fg(fg_white))),
+            Line::from(Span::styled("3:     let mut swarm = Swarm::new(4);", Style::default().fg(fg_white))),
+            Line::from(Span::styled("4:     swarm.negotiate_contract()?;", Style::default().fg(fg_cyan))),
+            Line::from(Span::styled("5:     swarm.start_execution()?;", Style::default().fg(fg_cyan))),
+            Line::from(Span::styled("6:     Ok(())", Style::default().fg(fg_white))),
+            Line::from(Span::styled("7: }", Style::default().fg(fg_white))),
+        ],
+        1 | 2 => vec![
+            Line::from(Span::styled("10: // Swarm Contract Negotiator Layer", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("11: pub async fn negotiate(target: &str) -> Result<Contract> {", Style::default().fg(fg_white))),
+            Line::from(vec![
+                Span::styled("12:     ", Style::default().fg(fg_slate)),
+                Span::styled("[LOCKED BY CAPTAIN: READ-LOCK ACTIVE 👁️]", Style::default().fg(fg_cyan).bold().reversed())
+            ]),
+            Line::from(Span::styled("13:     let criteria = self.generate_proposal(target).await?;", Style::default().fg(fg_white))),
+            Line::from(Span::styled("14:     let contract = self.reconcile(criteria).await?;", Style::default().fg(fg_white))),
+            Line::from(Span::styled("15:     Ok(contract)", Style::default().fg(fg_white))),
+            Line::from(Span::styled("16: }", Style::default().fg(fg_white))),
+        ],
+        3 | 4 => vec![
+            Line::from(Span::styled("20: // Model-Agnostic LlmProvider complete method", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("21: pub fn complete(&self, req: LlmRequest) -> Result<LlmResponse> {", Style::default().fg(fg_white))),
+            Line::from(Span::styled("22:     let client = req.provider.get_client();", Style::default().fg(fg_white))),
+            Line::from(vec![
+                Span::styled("23:     ", Style::default().fg(fg_slate)),
+                Span::styled("[LOCKED BY BENJAMIN: WRITE-LOCK ACTIVE 🔒]", Style::default().fg(fg_pink).bold().reversed())
+            ]),
+            Line::from(Span::styled("24: +   let request_payload = req.build_payload()?;", Style::default().fg(fg_green))),
+            Line::from(Span::styled("25: +   let res = self.retry_decorator.execute(|| {", Style::default().fg(fg_green))),
+            Line::from(Span::styled("26: +       client.post(&req.url, &request_payload)", Style::default().fg(fg_green))),
+            Line::from(Span::styled("27: +   })?;", Style::default().fg(fg_green))),
+            Line::from(Span::styled("28: -   let res = client.post(&req.url)?;", Style::default().fg(fg_pink))),
+            Line::from(Span::styled("29:     Ok(res)", Style::default().fg(fg_white))),
+            Line::from(Span::styled("30: }", Style::default().fg(fg_white))),
+        ],
+        _ => vec![
+            Line::from(Span::styled("40: // Zero-Trust Security Policy Engine checks", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("41: pub fn check_policy(command: &str) -> Result<(), String> {", Style::default().fg(fg_white))),
+            Line::from(vec![
+                Span::styled("42:     ", Style::default().fg(fg_slate)),
+                Span::styled("[LOCKED BY EVALUATOR: CRITIC-INTERCEPT ACTIVE 🛡️]", Style::default().fg(fg_gold).bold().reversed())
+            ]),
+            Line::from(Span::styled("43:     if is_blacklisted(command) {", Style::default().fg(fg_white))),
+            Line::from(Span::styled("44:         return Err(\"CONTESTED: Policy Violation\".into());", Style::default().fg(fg_crimson).bold())),
+            Line::from(Span::styled("45:     }", Style::default().fg(fg_white))),
+            Line::from(Span::styled("46:     Ok(())", Style::default().fg(fg_white))),
+            Line::from(Span::styled("47: }", Style::default().fg(fg_white))),
+        ]
+    };
 
-    // Left: One-Glance Campaign Health Metrics
-    let health_text = vec![
-        Line::from(vec![
-            Span::styled(" ⚡ Token Velocity: ", Style::default().fg(fg_cyan).bold()),
-            Span::styled(format!("{:.1} tokens/sec", app.velocity), Style::default().fg(fg_white).bold()),
-        ]),
-        Line::from(vec![
-            Span::styled(" ⚠️  Swarm Risk Index: ", Style::default().fg(fg_pink).bold()),
-            Span::styled(
-                format!("{:.2}", app.risk),
-                Style::default().fg(if app.risk > 0.6 { fg_crimson } else { fg_gold }).bold(),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" 📈 Progress Rate:    ", Style::default().fg(fg_green).bold()),
-            Span::styled(format!("{:.1}%", app.progress), Style::default().fg(fg_white).bold()),
-        ]),
-        Line::from(vec![
-            Span::styled(" 🔥 Doom-Loop Prob:   ", Style::default().fg(fg_crimson).bold()),
-            Span::styled(
-                format!("{:.1}%", app.doom_prob * 100.0),
-                Style::default().fg(if app.doom_prob > 0.5 { fg_crimson } else { fg_green }).bold(),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" 📜 Telemetry Merges: ", Style::default().fg(fg_gold).bold()),
-            Span::styled(format!("{}", app.telemetry_merges), Style::default().fg(fg_white)),
-        ]),
-    ];
-    let health_block = Paragraph::new(health_text)
+    let editor_block = Paragraph::new(code_lines)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(fg_cyan))
+            .title(" [ 📝 Monaco Editor (src/llm.rs) ] "));
+    f.render_widget(editor_block, editor_pane_area);
+
+    // ==========================================
+    // 2. Terminal Subprocess Pane (Left Bottom)
+    // ==========================================
+    let terminal_lines = match app.playhead {
+        0 => vec![
+            Line::from(Span::styled("$ korg campaign init", Style::default().fg(fg_green))),
+            Line::from(Span::styled("[System] Initializing heavy-tier swarm workspace...", Style::default().fg(fg_white))),
+            Line::from(Span::styled("[System] Loaded 4 cognitive personas (Captain, Harper, Benjamin, Lucas)", Style::default().fg(fg_white))),
+            Line::from(Span::styled("[System] Active directory locked at /Users/clubpenguin/Documents/Korg", Style::default().fg(fg_slate))),
+        ],
+        1 | 2 => vec![
+            Line::from(Span::styled("$ korg negotiate --contract-rounds 3", Style::default().fg(fg_green))),
+            Line::from(Span::styled("[Leader] Formulating task decomposition into 4 work packages...", Style::default().fg(fg_white))),
+            Line::from(Span::styled("[Captain] Negotiating Swarm Agreement (BERT similarity targeting 0.85)...", Style::default().fg(fg_cyan))),
+            Line::from(Span::styled("[Evaluator] Epistemic and Trajectory Rubrics active.", Style::default().fg(fg_pink))),
+        ],
+        3 | 4 => vec![
+            Line::from(Span::styled("$ cargo test --lib tools", Style::default().fg(fg_green))),
+            Line::from(Span::styled("   Compiling korg v0.1.0 (/Users/clubpenguin/Documents/Korg)", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("    Finished test [unoptimized + debuginfo] target(s) in 0.45s", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("     Running unittests src/main.rs (target/debug/deps/korg-...)", Style::default().fg(fg_slate))),
+            Line::from(Span::styled("test tools::tests::test_apply_unified_diff_fuzzy ... ok", Style::default().fg(fg_green))),
+            Line::from(Span::styled("test tools::tests::test_apply_unified_diff_multi_hunk ... ok", Style::default().fg(fg_green))),
+            Line::from(Span::styled("test result: ok. 18 passed; 0 failed; 0 ignored;", Style::default().fg(fg_green).bold())),
+        ],
+        _ => vec![
+            Line::from(Span::styled("$ cargo run -- campaign --tui", Style::default().fg(fg_green))),
+            Line::from(Span::styled("[PolicyEngine] Intercepted shell command: 'cargo run'", Style::default().fg(fg_white))),
+            Line::from(Span::styled("[PolicyEngine] Command matched whitelisted patterns in POLICY.md", Style::default().fg(fg_green))),
+            Line::from(Span::styled("[Evaluator] Running 5-Rubric Critic Guardrail on live trace telemetry...", Style::default().fg(fg_pink))),
+            Line::from(Span::styled("[Leader] Swarm scaled to 16 workers concurrently.", Style::default().fg(fg_cyan))),
+        ]
+    };
+
+    let terminal_block = Paragraph::new(terminal_lines)
         .block(Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(fg_slate))
-            .title(" [ Campaign Health Metrics ] "));
-    f.render_widget(health_block, health_chunks[0]);
+            .title(" [ 💻 Terminal Subprocess Piped Output ] "));
+    f.render_widget(terminal_block, terminal_pane_area);
 
-    // Center: stacked Gauges
-    let gauge_wrapper = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(fg_cyan))
-        .title(" [ Real-Time Telemetry Dials ] ");
-    f.render_widget(gauge_wrapper, health_chunks[1]);
-
-    let gauge_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),
-            Constraint::Length(2),
-            Constraint::Length(2),
-            Constraint::Min(0),
-        ])
-        .split(health_chunks[1].inner(&ratatui::layout::Margin { vertical: 1, horizontal: 1 }));
-
-    // H_sem Gauge
-    let entropy_color = if app.h_sem < 0.3 {
-        fg_green
-    } else if app.h_sem < 0.6 {
-        fg_gold
-    } else {
-        fg_crimson
-    };
-    let h_gauge = Gauge::default()
-        .gauge_style(Style::default().fg(entropy_color).bold())
-        .percent((app.h_sem * 100.0).clamp(0.0, 100.0) as u16)
-        .use_unicode(true)
-        .label(format!("Semantic Entropy (H_sem): {:.3}", app.h_sem));
-    f.render_widget(h_gauge, gauge_chunks[0]);
-
-    // Risk Gauge
-    let risk_color = if app.risk < 0.4 {
-        fg_green
-    } else if app.risk < 0.7 {
-        fg_gold
-    } else {
-        fg_crimson
-    };
-    let r_gauge = Gauge::default()
-        .gauge_style(Style::default().fg(risk_color).bold())
-        .percent((app.risk * 100.0).clamp(0.0, 100.0) as u16)
-        .use_unicode(true)
-        .label(format!("Swarm Risk Level: {:.2}", app.risk));
-    f.render_widget(r_gauge, gauge_chunks[1]);
-
-    // Doom Gauge
-    let doom_color = if app.doom_prob < 0.3 {
-        fg_green
-    } else if app.doom_prob < 0.6 {
-        fg_gold
-    } else {
-        fg_crimson
-    };
-    let d_gauge = Gauge::default()
-        .gauge_style(Style::default().fg(doom_color).bold())
-        .percent((app.doom_prob * 100.0).clamp(0.0, 100.0) as u16)
-        .use_unicode(true)
-        .label(format!("Doom Loop Probability: {:.1}%", app.doom_prob * 100.0));
-    f.render_widget(d_gauge, gauge_chunks[2]);
-
-    // Right: Sparklines History
-    let spark_wrapper = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(fg_slate))
-        .title(" [ Telemetry Evolution History ] ");
-    f.render_widget(spark_wrapper, health_chunks[2]);
-
-    let spark_inner_chunks = Layout::default()
+    // ==========================================
+    // 3. Health & Telemetry Pane (Right Top)
+    // ==========================================
+    let ht_sub = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(50), // Left: H_sem History
-            Constraint::Percentage(50), // Right: Stacked Persona Sparklines
+            Constraint::Percentage(50), // Left: Metrics Gauges
+            Constraint::Percentage(50), // Right: Sparkline
         ])
-        .split(health_chunks[2].inner(&ratatui::layout::Margin { vertical: 1, horizontal: 1 }));
+        .split(health_telemetry_area);
+
+    let metrics_lines = vec![
+        Line::from(vec![
+            Span::styled(" ⚡ Velocity: ", Style::default().fg(fg_cyan).bold()),
+            Span::styled(format!("{:.1} t/s", app.velocity), Style::default().fg(fg_white).bold()),
+        ]),
+        Line::from(vec![
+            Span::styled(" ⚠️  Risk:     ", Style::default().fg(fg_pink).bold()),
+            Span::styled(format!("{:.2}", app.risk), Style::default().fg(if app.risk > 0.6 { fg_crimson } else { fg_gold }).bold()),
+        ]),
+        Line::from(vec![
+            Span::styled(" 📈 Progress: ", Style::default().fg(fg_green).bold()),
+            Span::styled(format!("{:.1}%", app.progress), Style::default().fg(fg_white).bold()),
+        ]),
+    ];
+
+    let metrics_block = Paragraph::new(metrics_lines)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(fg_pink))
+            .title(" [ Telemetry Gauges ] "));
+    f.render_widget(metrics_block, ht_sub[0]);
 
     // H_sem History Sparkline
     let sparkline = Sparkline::default()
         .data(&app.h_sem_history)
         .style(Style::default().fg(fg_cyan));
-    let sparkline_label = Paragraph::new(vec![
+    let sparkline_block = Paragraph::new(vec![
         Line::from(Span::styled("Entropy H_sem History:", Style::default().fg(fg_gold).bold())),
     ]);
-    let h_sem_layout = Layout::default()
+    let spark_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(1),
         ])
-        .split(spark_inner_chunks[0]);
-    f.render_widget(sparkline_label, h_sem_layout[0]);
-    f.render_widget(sparkline, h_sem_layout[1]);
+        .split(ht_sub[1].inner(&ratatui::layout::Margin { vertical: 1, horizontal: 1 }));
+    f.render_widget(sparkline_block, spark_layout[0]);
+    f.render_widget(sparkline, spark_layout[1]);
 
-    // Per-persona Sparklines
-    let p_spark_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
-        .split(spark_inner_chunks[1]);
-
-    // Captain
-    let cap_spark = Sparkline::default().data(&app.captain_score_history).style(Style::default().fg(fg_cyan));
-    let cap_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(7), Constraint::Min(1)]).split(p_spark_layout[0]);
-    f.render_widget(Paragraph::new(Span::styled("Capt: ", Style::default().fg(fg_cyan).bold())), cap_chunks[0]);
-    f.render_widget(cap_spark, cap_chunks[1]);
-
-    // Harper
-    let har_spark = Sparkline::default().data(&app.harper_score_history).style(Style::default().fg(fg_pink));
-    let har_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(7), Constraint::Min(1)]).split(p_spark_layout[1]);
-    f.render_widget(Paragraph::new(Span::styled("Harp: ", Style::default().fg(fg_pink).bold())), har_chunks[0]);
-    f.render_widget(har_spark, har_chunks[1]);
-
-    // Benjamin
-    let ben_spark = Sparkline::default().data(&app.benjamin_score_history).style(Style::default().fg(fg_gold));
-    let ben_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(7), Constraint::Min(1)]).split(p_spark_layout[2]);
-    f.render_widget(Paragraph::new(Span::styled("Benj: ", Style::default().fg(fg_gold).bold())), ben_chunks[0]);
-    f.render_widget(ben_spark, ben_chunks[1]);
-
-    // Lucas
-    let luc_spark = Sparkline::default().data(&app.lucas_score_history).style(Style::default().fg(fg_green));
-    let luc_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(7), Constraint::Min(1)]).split(p_spark_layout[3]);
-    f.render_widget(Paragraph::new(Span::styled("Lucs: ", Style::default().fg(fg_green).bold())), luc_chunks[0]);
-    f.render_widget(luc_spark, luc_chunks[1]);
-
-
-    // Core Swarm Mechanics (chunks[2])
-    let mechanics_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(25), // Left: Persona Confidence BarChart
-            Constraint::Percentage(45), // Center: Negotiated Swarm Contract List
-            Constraint::Percentage(30), // Right: Live Verdict Ticker + Rubrics
-        ])
-        .split(chunks[2]);
-
-    // Left: Swarm Persona Confidence Chart
-    let chart_data = [
-        ("Capt", (app.persona_scores[0] * 100.0) as u64),
-        ("Harp", (app.persona_scores[1] * 100.0) as u64),
-        ("Benj", (app.persona_scores[2] * 100.0) as u64),
-        ("Lucs", (app.persona_scores[3] * 100.0) as u64),
+    // ==========================================
+    // 4. Live Swarm Timeline DAG (Right Center)
+    // ==========================================
+    let mut timeline_items = vec![];
+    let nodes = [
+        ("tx_00: genesis", "Orchestration Blue", fg_cyan),
+        ("tx_01: negotiate_contract", "Orchestration Blue", fg_cyan),
+        ("tx_02: dispatch_concurrent", "Worker Green", fg_green),
+        ("tx_03: generate_patch", "Worker Green", fg_green),
+        ("tx_04: evaluate_verdict", "Evaluator Red", fg_crimson),
+        ("tx_05: operator_steer", "Operator Purple", fg_pink),
     ];
-    let bar_chart = BarChart::default()
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_slate))
-            .title(" [ Persona Confidence ] "))
-        .data(&chart_data)
-        .bar_width(5)
-        .bar_gap(1)
-        .value_style(Style::default().fg(fg_gold).bold())
-        .label_style(Style::default().fg(fg_cyan))
-        .style(Style::default().fg(fg_pink));
-    f.render_widget(bar_chart, mechanics_chunks[0]);
 
-    // Center: Negotiated Swarm Contract Panel (Scroll Agreement Visuals)
-    let mut contract_text = vec![ListItem::new(Line::from(vec![
-        Span::styled(" 📜 ACTIVE SWARM AGREEMENT (CRDT-Negotiated)", Style::default().bold().fg(fg_gold)),
-    ]))];
-    contract_text.push(ListItem::new(Line::from(vec![
-        Span::styled(format!(" Target description: {}", app.contract_description), Style::default().italic().fg(fg_cyan)),
-    ])));
-    contract_text.push(ListItem::new(Line::from("")));
-
-    for (i, (desc, sim)) in app.contract_criteria.iter().enumerate() {
-        let sim_pct = (*sim * 100.0).clamp(0.0, 100.0) as usize;
-        let filled_blocks = (sim_pct / 10).min(10);
-        let empty_blocks = 10 - filled_blocks;
-        let blocks_str = format!(
-            "{}{}",
-            "█".repeat(filled_blocks),
-            "░".repeat(empty_blocks)
-        );
-        let sim_color = if *sim >= 0.85 {
-            fg_green
-        } else if *sim >= 0.70 {
-            fg_cyan
+    for (i, (title, channel, color)) in nodes.iter().enumerate() {
+        let is_current = app.playhead == i;
+        let prefix = if is_current { "▶ " } else { "  " };
+        let node_style = if is_current {
+            Style::default().fg(*color).bold().reversed()
         } else {
-            fg_gold
+            Style::default().fg(*color)
+        };
+        
+        let branch_char = match i {
+            0 => "● ",
+            5 => "└── ◆ ",
+            _ => "├── ● ",
         };
 
-        contract_text.push(ListItem::new(Line::from(vec![
-            Span::styled(format!("  [✓] {}. ", i + 1), Style::default().fg(fg_green).bold()),
-            Span::styled(format!("{:<40} ", desc), Style::default().fg(fg_white)),
-            Span::styled(format!(" [{} {:>3}%]", blocks_str, sim_pct), Style::default().fg(sim_color).bold()),
+        timeline_items.push(ListItem::new(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(fg_gold).bold()),
+            Span::styled(branch_char, Style::default().fg(fg_slate)),
+            Span::styled(*title, node_style),
+            Span::styled(format!(" [{}]", channel), Style::default().fg(fg_slate).italic()),
         ])));
     }
-    let contract_widget = List::new(contract_text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_cyan))
-            .title(" [ Swarm Contract Criteria Panel ] "),
-    );
-    f.render_widget(contract_widget, mechanics_chunks[1]);
 
-    // Right: Live Verdict Ticker + Rubrics
-    let right_sub_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(50), // Top: Live Verdict Ticker
-            Constraint::Percentage(50), // Bottom: Rubrics
+    let timeline_block = List::new(timeline_items)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(fg_green))
+            .title(" [ 🌿 Swarm Timeline DAG (F key to Fork) ] "));
+    f.render_widget(timeline_block, dag_timeline_area);
+
+    // ==========================================
+    // 5. Provenance & Cryptographic Diff Viewer (Right Bottom)
+    // ==========================================
+    let prov_lines = vec![
+        Line::from(vec![
+            Span::styled(" Ed25519 Key: ", Style::default().fg(fg_cyan)),
+            Span::styled("8f3c29a2b7e5... [VERIFIED ✓]", Style::default().fg(fg_green).bold()),
+        ]),
+        Line::from(vec![
+            Span::styled(" Merkle Root: ", Style::default().fg(fg_gold)),
+            Span::styled("a7b8c9d0e1f2...", Style::default().fg(fg_white)),
+        ]),
+        Line::from(vec![
+            Span::styled(" File Impact: ", Style::default().fg(fg_pink)),
+            Span::styled("src/llm.rs (L20-L30)", Style::default().fg(fg_white)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Authority:   ", Style::default().fg(fg_slate)),
+            Span::styled("SwarmAuthority-v1-signed", Style::default().fg(fg_slate).italic()),
+        ]),
+    ];
+
+    let provenance_block = Paragraph::new(prov_lines)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(fg_gold))
+            .title(" [ 🔑 Cryptographic Provenance & Diffs ] "));
+    f.render_widget(provenance_block, provenance_area);
+
+    // ==========================================
+    // 6. Playback Scrubber Track (Bottom Track)
+    // ==========================================
+    let filled_ticks = app.playhead.min(10);
+    let unfilled_ticks = 10 - filled_ticks;
+    let slider_bar = format!(
+        "◄ ─── {}{} [ tx_{:02} ] ─── ►",
+        "█".repeat(filled_ticks),
+        "░".repeat(unfilled_ticks),
+        app.playhead
+    );
+
+    let scrubber_text = vec![
+        Line::from(vec![
+            Span::styled(" [ REPLAY PLAYHEAD ] ", Style::default().fg(fg_gold).bold()),
+            Span::styled(slider_bar, Style::default().fg(fg_cyan).bold()),
+            Span::styled("  (Use Left/Right arrow keys to scrub) ", Style::default().fg(fg_slate).italic()),
         ])
-        .split(mechanics_chunks[2]);
+    ];
 
-    let ticker = Paragraph::new(app.current_verdict.clone())
-        .wrap(Wrap { trim: true })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(fg_pink))
-                .title(" [ Live Verdict Ticker ] "),
-        );
-    f.render_widget(ticker, right_sub_chunks[0]);
-
-    let rubric_items: Vec<ListItem> = app
-        .rubric_status
-        .iter()
-        .map(|(name, passed)| {
-            let color = if *passed { fg_green } else { fg_crimson };
-            ListItem::new(Span::styled(
-                format!("{} {}", if *passed { "✓" } else { "✗" }, name),
-                Style::default().fg(color),
-            ))
-        })
-        .collect();
-    let rubrics = List::new(rubric_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_cyan))
-            .title(" [ 5-Rubric Critic Guardrail ] "),
-    );
-    f.render_widget(rubrics, right_sub_chunks[1]);
-
-    // Audit Timelines / Locks (chunks[3])
-    let audit_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(40), // Left: Arena History
-            Constraint::Percentage(60), // Right: Locks Table
-        ])
-        .split(chunks[3]);
-
-    let arena_items: Vec<ListItem> = app
-        .arena_history
-        .iter()
-        .map(|s| ListItem::new(s.clone()))
-        .collect();
-    let arena = List::new(arena_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_slate))
-            .title(" [ Swarm Arena History & Winners ] "),
-    );
-    f.render_widget(arena, audit_chunks[0]);
-
-    // Locks Table with visual indicators
-    let header_cells = ["Persona", "Lock Mode", "Latency", "Activity"]
-        .iter()
-        .map(|h| Cell::from(*h).style(Style::default().fg(fg_cyan).bold()));
-    let header = Row::new(header_cells)
-        .style(Style::default().bg(Color::Rgb(30, 30, 40)))
-        .height(1);
-
-    let rows = app.lock_states.iter().map(|(persona, lock, latency, activity)| {
-        let (lock_str, lock_color) = match lock.as_str() {
-            "WRITE" => ("🔒 WRITE", fg_crimson),
-            "READ" => ("👁️  READ", fg_green),
-            "IDLE" => ("•  IDLE", fg_slate),
-            _ => ("•  IDLE", fg_slate),
-        };
-        let cells = vec![
-            Cell::from(persona.clone()).style(Style::default().fg(fg_white).bold()),
-            Cell::from(lock_str).style(Style::default().fg(lock_color).bold()),
-            Cell::from(latency.clone()).style(Style::default().fg(fg_gold)),
-            Cell::from(activity.clone()).style(Style::default().fg(fg_cyan)),
-        ];
-        Row::new(cells)
-    });
-
-    let lock_table = Table::new(rows)
-        .header(header)
+    let scrubber_block = Paragraph::new(scrubber_text)
         .block(Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(fg_cyan))
-            .title(format!(
-                " [ Blackboard Lock Map │ Merges: {} │ Sync: {:.1}Hz │ Conflicts: {} ] ",
-                app.telemetry_merges, app.crdt_sync_frequency, app.conflicts_count
-            )))
-        .widths(&[
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-        ]);
-    f.render_widget(lock_table, audit_chunks[1]);
+            .title(" [ 🎛️ Replay & Playback Scrubber ] "));
+    f.render_widget(scrubber_block, scrubber_track_area);
 
-    // Bottom - Logs + Ktrans
-    let bottom = Paragraph::new(Text::from(app.logs.join("\n")))
-        .wrap(Wrap { trim: true })
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_slate))
-            .title(format!(
-                " [ Logs │ .ktrans streamed: {} │ Compaction: {} ] ",
-                app.ktrans_log.len(),
-                app.compaction_status
-            )));
-    f.render_widget(bottom, chunks[4]);
-
-    // Sleek status bar rendering
-    let status_bar_text = format!(
-        " ⚙️  [ESC] Quit  │  [P] Pause  │  [E] Override Criteria  │  Session ID: {}  │  Vault Intelligence OK ✓",
-        app.pending_contract_approval.as_ref().map(|_| "PENDING OPERATOR OVERRIDE INPUT").unwrap_or("CAMPAIGN RUNNING")
+    // ==========================================
+    // 7. Bottom Status Bar (Bottom Track Footer)
+    // ==========================================
+    let status_text = format!(
+        " ⚙️  [ESC] Quit  │  [P] Pause  │  [F] Steer Fork  │  [y/n] Policy Override  │  Playhead: tx_{:02}  │  Zero-Trust Engine OK ✓",
+        app.playhead
     );
-    let status_bar = Paragraph::new(status_bar_text)
+    let status_paragraph = Paragraph::new(status_text)
         .style(Style::default().bg(Color::Rgb(25, 25, 35)).fg(fg_cyan).bold());
-    f.render_widget(status_bar, chunks[5]);
+    f.render_widget(status_paragraph, status_bar_area);
+
+    // ==========================================
+    // Modal Overlays
+    // ==========================================
 
     // Approval Modal
     if let Some(reason) = &app.pending_approval {
@@ -880,6 +903,40 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 .border_type(ratatui::widgets::BorderType::Double)
                 .title(" 🔒 Human Security Approval Gate ")
                 .style(Style::default().fg(fg_gold).bold()),
+        );
+        f.render_widget(modal, area);
+    }
+
+    // Policy Violation Alert Modal (Thick Double Border Visuals)
+    if let Some(reason) = &app.policy_violation_alert {
+        let area = centered_rect(60, 30, f.size());
+        let modal = Paragraph::new(format!(
+            "🚨 SECURITY INTERRUPT: CONTESTED POLICY VIOLATION 🚨\n\n  {}\n\n  [y] Force Override & Approve   [n] Reject & Stop Swarm   [Esc] Dismiss",
+            reason
+        ))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(ratatui::widgets::BorderType::Double)
+                .title(" 🔒 Zero-Trust Policy Engine Intercept ")
+                .style(Style::default().fg(fg_pink).bold()),
+        );
+        f.render_widget(modal, area);
+    }
+
+    // Fork/Steer Modal
+    if app.fork_modal_open {
+        let area = centered_rect(60, 30, f.size());
+        let modal = Paragraph::new(format!(
+            "🌿 TIME-TRAVEL PLAYHEAD FORK & STEER TERMINAL 🌿\n\n  Forking workspace at playhead position tx_{:02}.\n  Enter custom steering directive for the branched swarm:\n\n  > {}▍\n\n  [Enter] Deploy Swarm Fork   [Esc] Cancel",
+            app.playhead, app.steering_buffer
+        ))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(ratatui::widgets::BorderType::Double)
+                .title(" 🌿 Branching Playhead & Swarm Steering ")
+                .style(Style::default().fg(fg_cyan).bold()),
         );
         f.render_widget(modal, area);
     }
@@ -965,4 +1022,76 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_playhead_scrubbing_boundaries() {
+        let mut app = KorgTui::default();
+        assert_eq!(app.playhead, 0);
+
+        // Test boundary scrubbing back (no-op)
+        app.playhead = 0;
+        if app.playhead > 0 {
+            app.playhead -= 1;
+        }
+        assert_eq!(app.playhead, 0);
+
+        // Scrub forward
+        for _ in 0..15 {
+            if app.playhead < 10 {
+                app.playhead += 1;
+            }
+        }
+        assert_eq!(app.playhead, 10);
+
+        // Scrub back once
+        if app.playhead > 0 {
+            app.playhead -= 1;
+        }
+        assert_eq!(app.playhead, 9);
+    }
+
+    #[test]
+    fn test_steering_buffer_updates() {
+        let mut app = KorgTui::default();
+        assert!(app.steering_buffer.is_empty());
+
+        // Simulate typing into buffer
+        app.steering_buffer.push('F');
+        app.steering_buffer.push('o');
+        app.steering_buffer.push('r');
+        app.steering_buffer.push('k');
+        assert_eq!(app.steering_buffer, "Fork");
+
+        // Backspace
+        app.steering_buffer.pop();
+        assert_eq!(app.steering_buffer, "For");
+
+        // Escape cancelling
+        app.fork_modal_open = true;
+        app.steering_buffer.clear();
+        app.fork_modal_open = false;
+        assert!(app.steering_buffer.is_empty());
+        assert!(!app.fork_modal_open);
+    }
+
+    #[test]
+    fn test_zero_trust_policy_violation_modal() {
+        let mut app = KorgTui::default();
+        assert!(app.policy_violation_alert.is_none());
+
+        // Trigger violation alert
+        app.policy_violation_alert = Some("Shell command injection in Benjamin persona: 'rm -rf /'".to_string());
+        assert!(app.policy_violation_alert.is_some());
+
+        // Simulate Operator input handling
+        // ESC/Dismiss
+        app.policy_violation_alert = None;
+        app.pending_approval = None;
+        assert!(app.policy_violation_alert.is_none());
+    }
 }

@@ -1,6 +1,6 @@
 # Korg / Yvaeh Mode
 
-![Korg Architecture](file:///Users/clubpenguin/.gemini/antigravity-cli/brain/64ef202a-5be1-4047-807d-833b34c54ddb/architecture_diagram_1779358107866.png)
+![Korg Architecture](docs/architecture_diagram.png)
 
 ## Overview
 Korg/Yvaeh Mode is an advanced, adversarial multi‑agent orchestration harness that turns a single CLI prompt into a self‑compounding swarm of intelligent agents. It features:
