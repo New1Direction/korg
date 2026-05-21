@@ -1,0 +1,18 @@
+/target
+
+# Temporary preview files
+README-preview.html
+
+# Environment / secrets
+.env
+.env.*
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,20 @@
+{
+  "readableLineLength": true,
+  "lineWrap": true,
+  "defaultViewMode": "source",
+  "livePreview": true,
+  "showInlineTitle": true,
+  "spellcheck": true,
+  "spellcheckDictionary": [],
+  "showUnsupportedFiles": false,
+  "attachmentFolderPath": "Attachments",
+  "newFileLocation": "folder",
+  "newFileFolderPath": "Inbox",
+  "pdfExportSettings": {
+    "includeName": true,
+    "pageSize": "A4",
+    "landscape": false,
+    "margin": "0",
+    "downscalePercent": 100
+  }
+}

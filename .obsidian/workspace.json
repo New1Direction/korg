@@ -1,0 +1,222 @@
+{
+  "main": {
+    "id": "61f45c1a9fc89bb5",
+    "type": "split",
+    "children": [
+      {
+        "id": "8050af6aaa75a041",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "9851f7a483012c29",
+            "type": "leaf",
+            "state": {
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "left",
+    "type": "split",
+    "children": [
+      {
+        "id": "file-explorer",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "file-explorer-tab",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "45872d820384d4af",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "7589bf705a37f5b9",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 220
+  },
+  "right": {
+    "id": "right",
+    "type": "split",
+    "children": [
+      {
+        "id": "backlinks",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "backlinks-tab",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "6eed977566c036c5",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "Korg - Queries.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from Korg - Queries"
+            }
+          },
+          {
+            "id": "3cdb2427a6faa8ae",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "e02fba5aca79a7eb",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "320161c5420f1c04",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "Korg - Queries.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of Korg - Queries"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 280
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false,
+      "templater-obsidian:Templater": false,
+      "obsidian42-brat:BRAT": false,
+      "obsidian-git:Open Git source control": false
+    }
+  },
+  "active": "9851f7a483012c29",
+  "lastOpenFiles": [
+    "src/tui.rs",
+    "src/tools.rs",
+    "src/skills.rs",
+    "src/personas.rs",
+    "src/main.rs",
+    "src/leader.rs",
+    "src/harness.rs",
+    "src/evaluator.rs",
+    "src/embeddings.rs",
+    "src/blackboard.rs",
+    "src/acp.rs",
+    "PRODUCT_OVERVIEW.md",
+    "README.md",
+    "implementation_plan.md",
+    "wiki/decisions/Conflict — Rust Async Performance Optimizations – Practical Investigation and 0002 - Lighter Pragmatic AI-First Approach for Korg.md",
+    "wiki/decisions/Conflict — Rust Async Performance Optimizations – Practical Investigation and SuperGrok-Heavy-Multi-Agent-Workflows.md",
+    "wiki/decisions/Conflict — Rust Async Performance Optimizations – Practical Investigation and Cross-Harness-Pattern-Extraction.md",
+    "wiki/decisions/Conflict — Rust Async Performance Optimizations – Practical Investigation and transactional-memory.md",
+    "wiki/decisions/Conflict — Rust Async Performance Optimizations – Practical Investigation and Korg.md",
+    "wiki/decisions/Conflict — Rust Async Performance Optimizations – Practical Investigation and Operational-Intelligence-Layer-Mandate.md",
+    "wiki/concepts/Performance-Investigation.md",
+    "wiki/decisions/Conflict — 0001 - Project Kickoff and 0002 - Lighter Pragmatic AI-First Approach for Korg.md",
+    "wiki/decisions/Conflict — SuperGrok-Heavy-Multi-Agent-Workflows and 0001 - Project Kickoff.md",
+    "wiki/decisions/Conflict — Anthropic-Long-Running-Agent-Harnesses and 0002 - Lighter Pragmatic AI-First Approach for Korg.md",
+    "wiki/decisions/Conflict — Anthropic-Long-Running-Agent-Harnesses and 0001 - Project Kickoff.md",
+    "wiki/decisions/Conflict — Anthropic-Long-Running-Agent-Harnesses and Cross-Harness-Pattern-Extraction.md",
+    "wiki/decisions/Conflict — Evaluation-Guardrail-Layer and SuperGrok-Heavy-Multi-Agent-Workflows.md",
+    "wiki/decisions/Conflict — transactional-memory and 0002 - Lighter Pragmatic AI-First Approach for Korg.md",
+    "wiki/decisions/Conflict — transactional-memory and 0001 - Project Kickoff.md",
+    "wiki/decisions/Conflict — transactional-memory and Cross-Harness-Pattern-Extraction.md",
+    "wiki/decisions/Conflict — transactional-memory and Anthropic-Long-Running-Agent-Harnesses.md",
+    "wiki/decisions/Conflict — isolation-routing and SuperGrok-Heavy-Multi-Agent-Workflows.md",
+    "wiki/decisions/Conflict — isolation-routing and Anthropic-Long-Running-Agent-Harnesses.md",
+    "wiki/decisions/Conflict — isolation-routing and Evaluation-Guardrail-Layer.md",
+    "wiki/decisions/Conflict — state-primitives and SuperGrok-Heavy-Multi-Agent-Workflows.md",
+    "wiki/decisions/Conflict — state-primitives and Evaluation-Guardrail-Layer.md"
+  ]
+}

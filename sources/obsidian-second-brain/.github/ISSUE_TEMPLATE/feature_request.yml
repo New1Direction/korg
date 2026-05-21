@@ -1,0 +1,80 @@
+name: ✨ Feature request
+description: Suggest a new command, integration, or improvement
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for thinking about how to make this better. A few asks before you continue:
+        - Search [open issues + discussions](https://github.com/eugeniughelbur/obsidian-second-brain/issues) to see if it's already been proposed.
+        - For free-form ideas / "what if..." questions, prefer [Discussions](https://github.com/eugeniughelbur/obsidian-second-brain/discussions). Issues are for concrete proposals.
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: What kind of feature?
+      options:
+        - New slash command (e.g., /obsidian-something)
+        - Improvement to an existing command
+        - New research source (e.g., Reddit, podcasts, papers)
+        - New scheduled or background agent
+        - New integration (Notion, Linear, Slack, etc.)
+        - Documentation / examples
+        - Performance / cost optimization
+        - Cross-platform support (Windows, Linux)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Lead with the WHY. What's currently painful or impossible without this feature?
+      placeholder: |
+        I do weekly retrospectives in my vault but I have to manually pull together
+        what I shipped. There's no command that summarizes "what changed in the vault
+        this week" with an AI-first preamble.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should the new feature do? If it's a new command, what's its name and behavior?
+      placeholder: |
+        New command `/obsidian-shipped [period]`. Reads dev logs and Recent Activity
+        sections of project notes for the period. Produces an AI-first note in
+        Reviews/ summarizing shipped work, decisions made, and people interacted with.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Could `/obsidian-recap` or `/obsidian-review` already do this with different prompts? What would make this distinct?
+      placeholder: |
+        /obsidian-recap is conversational. /obsidian-review is structured. This would
+        focus narrowly on shipped work — the kind of thing you'd post about.
+
+  - type: dropdown
+    id: ai-first
+    attributes:
+      label: How does this interact with the AI-first vault rule?
+      description: Every new command must produce notes following references/ai-first-rules.md.
+      options:
+        - Produces vault notes — will follow ai-first-rules.md
+        - Reads vault only, produces no notes
+        - Doesn't touch vault (e.g., install.sh improvement)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Mockups, example outputs, related issues, similar tools.

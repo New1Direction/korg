@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Discussions
+    url: https://github.com/eugeniughelbur/obsidian-second-brain/discussions
+    about: Ask questions, share workflows, request commands, show off your vault setup
+  - name: 📖 Read the docs
+    url: https://github.com/eugeniughelbur/obsidian-second-brain#readme
+    about: Most "how do I..." questions are answered in the README + FAQ
+  - name: 📜 Read the AI-first vault rule
+    url: https://github.com/eugeniughelbur/obsidian-second-brain/blob/main/references/ai-first-rules.md
+    about: How notes are structured for future-Claude retrieval
+  - name: 📰 Subscribe on Substack
+    url: https://ghelburlabs.substack.com
+    about: Long-form posts about the build, vault philosophy, and AI workflows
