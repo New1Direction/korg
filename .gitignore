@@ -1,18 +1,20 @@
-/target
+# .gitignore for Korg project (Rust based)
+# Ignore Cargo build output
+/target/
 
-# Temporary preview files
-README-preview.html
+# IDE / editor directories
+/.vscode/
+/.idea/
 
-# Environment / secrets
-.env
-.env.*
+# Generated temporary files
+*.log
+*.tmp
+/tmp/
+.ktrans
+*.ktrans
 
-# IDE / editor
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS files
+# OS generated files
 .DS_Store
-Thumbs.db
+
+# Miscellaneous
+*.rs.bk
