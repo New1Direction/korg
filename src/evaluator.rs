@@ -44,7 +44,7 @@ impl Default for RubricConfig {
 }
 
 /// One normalized observation from the swarm (mapped from SwarmTelemetryPulse).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TraceEvent {
     pub agent_id: String,
     pub timestamp: String,

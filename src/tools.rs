@@ -20,21 +20,107 @@ use tokio::time::{timeout, Duration};
 /// Maximum bytes we'll read from a file or command output for safety.
 const MAX_OUTPUT_BYTES: u64 = 512 * 1024; // 512 KiB
 
+pub fn check_policy(command: &str, args: &[String]) -> Result<(), String> {
+    // 1. Load whitelist from POLICY.md if it exists
+    let policy_path = std::path::Path::new("POLICY.md");
+    let mut whitelisted_commands = vec![
+        "cargo".to_string(),
+        "git".to_string(),
+        "echo".to_string(),
+    ];
+    
+    if let Ok(content) = std::fs::read_to_string(policy_path) {
+        let mut extracted = Vec::new();
+        for line in content.lines() {
+            if line.trim().starts_with("- `") {
+                if let Some(cmd) = line.split('`').nth(1) {
+                    if let Some(word) = cmd.split_whitespace().next() {
+                        extracted.push(word.to_string());
+                    }
+                }
+            }
+        }
+        if !extracted.is_empty() {
+            whitelisted_commands = extracted;
+        }
+    }
+
+    // 2. Validate command
+    let base_cmd = std::path::Path::new(command)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(command);
+
+    if !whitelisted_commands.iter().any(|c| c == base_cmd) {
+        return Err(format!("Command '{}' is not whitelisted in POLICY.md", base_cmd));
+    }
+
+    let full_cmd = format!("{} {}", command, args.join(" "));
+    if full_cmd.contains("/etc/passwd") || full_cmd.contains("/etc/shadow") || full_cmd.contains(".ssh") || full_cmd.contains("id_rsa") || full_cmd.contains(".env") {
+        return Err("Credentials or blacklisted path found in command arguments".to_string());
+    }
+
+    Ok(())
+}
+
+pub fn check_path_policy(path_str: &str) -> Result<(), String> {
+    if path_str.contains("/etc/passwd") || path_str.contains("/etc/shadow") || path_str.contains(".ssh") || path_str.contains("id_rsa") || path_str.contains(".env") {
+        return Err("Access to credentials or blacklisted system file strictly forbidden".to_string());
+    }
+
+    let path = std::path::Path::new(path_str);
+    if path.is_absolute() {
+        if path.starts_with("/tmp") {
+            Ok(())
+        } else if path.starts_with("/Users/clubpenguin/Documents/Korg") {
+            Ok(())
+        } else {
+            Err(format!("Absolute path '{}' is outside whitelisted directories (/tmp or Korg root)", path_str))
+        }
+    } else {
+        if path_str.contains("..") {
+            let canonical = std::fs::canonicalize(path);
+            match canonical {
+                Ok(c) => {
+                    if c.starts_with("/Users/clubpenguin/Documents/Korg") || c.starts_with("/tmp") {
+                        Ok(())
+                    } else {
+                        Err("Path traversal went outside whitelisted workspace".to_string())
+                    }
+                }
+                Err(_) => Err("Path traversal check failed".to_string())
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// Execute a FileReadRequest safely.
 ///
 /// Only allows reading inside the current working directory or /tmp for now
 /// (basic sandboxing — can be hardened later with chroot/namespaces).
 pub async fn execute_file_read(req: FileReadRequestPayload) -> FileReadResultPayload {
+    if let Err(err) = check_path_policy(&req.path) {
+        return FileReadResultPayload {
+            path: req.path.clone(),
+            content: String::new(),
+            bytes_read: 0,
+            truncated: false,
+            error: Some(format!("CONTESTED: Policy Violation - {}", err)),
+        };
+    }
+
     let path = Path::new(&req.path);
 
     // Very basic sandbox: only allow relative paths or under /tmp
-    if path.is_absolute() && !path.starts_with("/tmp") {
+    if path.is_absolute() && !path.starts_with("/tmp") && !path.starts_with("/Users/clubpenguin/Documents/Korg") {
         return FileReadResultPayload {
             path: req.path,
             content: String::new(),
             bytes_read: 0,
             truncated: false,
-            error: Some("absolute paths outside /tmp are not allowed in this reference harness".to_string()),
+            error: Some("absolute paths outside /tmp or Korg root are not allowed in this reference harness".to_string()),
         };
     }
 
@@ -80,6 +166,17 @@ pub async fn execute_file_read(req: FileReadRequestPayload) -> FileReadResultPay
 
 /// Execute a ShellExecRequestPayload safely with timeout and output limits.
 pub async fn execute_shell(req: ShellExecRequestPayload) -> ShellExecResultPayload {
+    if let Err(err) = check_policy(&req.command, &req.args) {
+        return ShellExecResultPayload {
+            command: format!("{} {}", req.command, req.args.join(" ")),
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: String::new(),
+            duration_ms: 0,
+            error: Some(format!("CONTESTED: Policy Violation - {}", err)),
+        };
+    }
+
     let start = Instant::now();
 
     let mut cmd = Command::new(&req.command);
@@ -180,6 +277,23 @@ pub async fn dispatch_tool(msg: AcpMessage) -> Option<AcpMessage> {
 
 /// Execute a test run (cargo test, uv run pytest, etc.) and return a rich result.
 pub async fn execute_test_run(req: TestRunRequestPayload) -> TestRunResultPayload {
+    if let Err(err) = check_policy(&req.command, &req.args) {
+        return TestRunResultPayload {
+            command: format!("{} {}", req.command, req.args.join(" ")),
+            exit_code: -1,
+            duration_ms: 0,
+            tests_run: 0,
+            tests_passed: 0,
+            tests_failed: 0,
+            tests_ignored: 0,
+            coverage_percent: None,
+            failure_summaries: vec![],
+            stdout: String::new(),
+            stderr: String::new(),
+            error: Some(format!("CONTESTED: Policy Violation - {}", err)),
+        };
+    }
+
     let start = Instant::now();
 
     let mut cmd = Command::new(&req.command);
@@ -337,17 +451,28 @@ fn truncate_output_string(s: String, max: usize) -> String {
 
 /// Execute a patch application request safely.
 pub async fn execute_patch_apply(req: PatchApplyRequestPayload) -> PatchApplyResultPayload {
-    let target_path = Path::new(&req.file_path);
-
-    // Basic sandbox: only relative paths or under current dir / /tmp
-    if target_path.is_absolute() && !target_path.starts_with("/tmp") {
+    if let Err(err) = check_path_policy(&req.file_path) {
         return PatchApplyResultPayload {
             file_path: req.file_path,
             success: false,
             applied_hunks: 0,
             rejected_hunks: 0,
             new_content_preview: None,
-            error: Some("Absolute paths outside /tmp are not allowed".to_string()),
+            error: Some(format!("CONTESTED: Policy Violation - {}", err)),
+        };
+    }
+
+    let target_path = Path::new(&req.file_path);
+
+    // Basic sandbox: only relative paths or under current dir / /tmp
+    if target_path.is_absolute() && !target_path.starts_with("/tmp") && !target_path.starts_with("/Users/clubpenguin/Documents/Korg") {
+        return PatchApplyResultPayload {
+            file_path: req.file_path,
+            success: false,
+            applied_hunks: 0,
+            rejected_hunks: 0,
+            new_content_preview: None,
+            error: Some("Absolute paths outside /tmp or Korg root are not allowed".to_string()),
         };
     }
 

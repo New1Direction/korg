@@ -921,6 +921,31 @@ impl LeaderOrchestrator {
         println!("Watching the swarm for {} rounds...\n", 10);
 
         for round in 0..10 {
+            // Poll for real-time playhead steering overrides or other signals from TUI
+            let mut rx = self.tui_rx.take();
+            if let Some(ref mut r) = rx {
+                while let Ok(response) = r.try_recv() {
+                    match response {
+                        crate::tui::ContractResponse::Override(override_vec) => {
+                            if let Some(first) = override_vec.first() {
+                                if first.starts_with("FORK:") {
+                                    let parts: Vec<&str> = first.splitn(3, ':').collect();
+                                    if parts.len() == 3 {
+                                        if let Ok(tx_id) = parts[1].parse::<usize>() {
+                                            let directive = parts[2];
+                                            println!("[Leader] OPERATOR TRIGGERED PLAYHEAD FORK at tx_{:02} with directive: {}", tx_id, directive);
+                                            let _ = self.handle_operator_fork(tx_id, directive).await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            self.tui_rx = rx;
+
             // Give the background telemetry emitters (and any future real workers) time to produce pulses
             tokio::time::sleep(std::time::Duration::from_millis(650)).await;
 
@@ -1034,6 +1059,70 @@ impl LeaderOrchestrator {
             self.live_ktrans_streamed
         );
         println!("(Live .ktrans events were also emitted as AcpMessage::CampaignKtrans on stdout for real-time subscribers)");
+        Ok(())
+    }
+
+    /// Asynchronously triggers a playhead steering fork, reverting the blackboard state,
+    /// writing a snapshot, and clone-branching the workspace.
+    pub async fn handle_operator_fork(&mut self, tx_id: usize, directive: &str) -> Result<()> {
+        let dir = format!("/tmp/korg/campaigns/{}", self.session_id);
+        let mut ktrans_records = vec![];
+        if let Ok(mut read_dir) = tokio::fs::read_dir(&dir).await {
+            while let Ok(Some(entry)) = read_dir.next_entry().await {
+                if let Ok(content) = tokio::fs::read_to_string(entry.path()).await {
+                    if let Ok(envelope) = serde_json::from_str::<crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>>(&content) {
+                        ktrans_records.push(envelope.payload);
+                    } else if let Ok(ktrans) = serde_json::from_str::<crate::acp::CampaignKtrans>(&content) {
+                        ktrans_records.push(ktrans);
+                    }
+                }
+            }
+        }
+        ktrans_records.sort_by_key(|r| r.round);
+
+        // Revert the blackboard state to tx_id (round <= tx_id)
+        let bb_json = {
+            if let Ok(mut bb_guard) = self.telemetry_blackboard.lock() {
+                let target_ratio = (tx_id + 1) as f32 / 11.0; // 0 to 10 rounds
+                let trace_len = (bb_guard.trace_buffer.len() as f32 * target_ratio) as usize;
+                bb_guard.trace_buffer.truncate(trace_len);
+                let pulse_len = (bb_guard.recent_pulses.len() as f32 * target_ratio) as usize;
+                bb_guard.recent_pulses.truncate(pulse_len);
+
+                serde_json::to_string_pretty(&*bb_guard).ok()
+            } else {
+                None
+            }
+        };
+
+        if let Some(bb_json) = bb_json {
+            // Write a reverted snapshot to /tmp/korg/blackboard/blackboard.json
+            let bb_dir = "/tmp/korg/blackboard";
+            tokio::fs::create_dir_all(bb_dir).await?;
+            let bb_path = format!("{}/blackboard.json", bb_dir);
+            tokio::fs::write(&bb_path, bb_json).await?;
+            println!("[Leader] Reverted Blackboard snapshot written to {}", bb_path);
+        }
+
+        // Clone files to /tmp/korg/forks/
+        let forks_dir = format!("/tmp/korg/forks/tx_{:02}", tx_id);
+        tokio::fs::create_dir_all(&forks_dir).await?;
+        let _ = copy_dir_recursive("src", format!("{}/src", forks_dir));
+        if std::path::Path::new("Cargo.toml").exists() {
+            let _ = std::fs::copy("Cargo.toml", format!("{}/Cargo.toml", forks_dir));
+        }
+        if std::path::Path::new("POLICY.md").exists() {
+            let _ = std::fs::copy("POLICY.md", format!("{}/POLICY.md", forks_dir));
+        }
+        println!("[Leader] Workspace cloned to {}", forks_dir);
+
+        // Log the split
+        let fork_log = format!("[Fork] Split occurred at playhead tx_{:02}. Directive: '{}'. Reverted Blackboard snapshot written to /tmp/korg/blackboard/blackboard.json. Sandbox path: {}", tx_id, directive, forks_dir);
+        println!("{}", fork_log);
+        if let Some(tx) = &self.tui_tx {
+            let _ = tx.try_send(crate::tui::TuiUpdate::Trace(fork_log));
+        }
+
         Ok(())
     }
 
@@ -1903,6 +1992,20 @@ async fn spawn_worker_process(
     }
 
     Ok(res)
+}
+
+fn copy_dir_recursive(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    std::fs::create_dir_all(&dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_recursive(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            std::fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

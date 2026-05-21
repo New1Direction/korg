@@ -39,6 +39,13 @@ updated: 2026-05-20
 
 ## Key Locations
 
+- **Product Documentation:**
+  - [[README.md]] — Project landing page & quick start
+  - [[PRODUCT_OVERVIEW.md]] — Market positioning & value proposition
+  - [[ARCHITECTURE.md]] — Deep-dive system design & swarming topologies
+  - [[USER_GUIDE.md]] — 6-pane TUI cockpit manual & playhead controls
+  - [[INSTALLATION_GUIDE.md]] — Homebrew, Docker, and source build instructions
+  - [[RELEASE_NOTES.md]] — Version changelogs & Phase 2 roadmap
 - **Operating Manual:** `[[_GROK.md]]`
 - **Audit Log:** `[[log.md]]`
 - **Daily Notes:** `wiki/daily/`

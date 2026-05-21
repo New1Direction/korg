@@ -14,6 +14,7 @@ use std::collections::VecDeque;
 use uuid::Uuid;
 
 /// Simple but real blackboard that the Leader owns (upgrade path to full CRDT + vector clocks later).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Blackboard {
     /// Ring buffer of recent normalized telemetry observations.
     /// The Evaluator's window is fed from here.
