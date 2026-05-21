@@ -1,0 +1,6 @@
+# korg Swarm cognitive configuration surface
+default_llm = "ollama"
+default_model = "llama3-70b-monochrome"
+
+[ollama]
+base_url = "http://localhost:11434/v1"

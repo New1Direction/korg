@@ -1001,6 +1001,27 @@ impl LlmProvider for ResilientLlmProvider {
 // Factory and Config Loading
 // =========================================================================
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlLlmSection {
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlOllamaSection {
+    pub base_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlConfig {
+    pub default_llm: Option<String>,
+    pub default_model: Option<String>,
+    pub openai: Option<TomlLlmSection>,
+    pub anthropic: Option<TomlLlmSection>,
+    pub grok: Option<TomlLlmSection>,
+    pub ollama: Option<TomlOllamaSection>,
+}
+
 pub struct KorgConfig {
     pub default_llm: String,
     pub openai_api_key: Option<String>,
@@ -1025,6 +1046,70 @@ impl KorgConfig {
             grok_base_url: std::env::var("GROK_BASE_URL").ok(),
             ollama_base_url: std::env::var("OLLAMA_BASE_URL").ok(),
             default_model: std::env::var("KORG_MODEL").ok(),
+        }
+    }
+
+    pub fn load() -> Self {
+        let mut default_llm = std::env::var("KORG_DEFAULT_LLM").ok();
+        let mut default_model = std::env::var("KORG_MODEL").ok();
+        let mut openai_api_key = std::env::var("OPENAI_API_KEY").ok();
+        let mut openai_base_url = std::env::var("OPENAI_BASE_URL").ok();
+        let mut anthropic_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        let mut anthropic_base_url = std::env::var("ANTHROPIC_BASE_URL").ok();
+        let mut grok_api_key = std::env::var("GROK_API_KEY").ok();
+        let mut grok_base_url = std::env::var("GROK_BASE_URL").ok();
+        let mut ollama_base_url = std::env::var("OLLAMA_BASE_URL").ok();
+
+        let mut toml_content = None;
+        if std::path::Path::new("korg.toml").exists() {
+            if let Ok(c) = std::fs::read_to_string("korg.toml") {
+                toml_content = Some(c);
+            }
+        } else if let Some(proj_dirs) = directories::ProjectDirs::from("lol", "yvaehkorg", "korg") {
+            let config_path = proj_dirs.config_dir().join("korg.toml");
+            if config_path.exists() {
+                if let Ok(c) = std::fs::read_to_string(config_path) {
+                    toml_content = Some(c);
+                }
+            }
+        }
+
+        if let Some(content) = toml_content {
+            if let Ok(parsed) = toml::from_str::<TomlConfig>(&content) {
+                if default_llm.is_none() {
+                    default_llm = parsed.default_llm;
+                }
+                if default_model.is_none() {
+                    default_model = parsed.default_model;
+                }
+                if let Some(sec) = parsed.openai {
+                    if openai_api_key.is_none() { openai_api_key = sec.api_key; }
+                    if openai_base_url.is_none() { openai_base_url = sec.base_url; }
+                }
+                if let Some(sec) = parsed.anthropic {
+                    if anthropic_api_key.is_none() { anthropic_api_key = sec.api_key; }
+                    if anthropic_base_url.is_none() { anthropic_base_url = sec.base_url; }
+                }
+                if let Some(sec) = parsed.grok {
+                    if grok_api_key.is_none() { grok_api_key = sec.api_key; }
+                    if grok_base_url.is_none() { grok_base_url = sec.base_url; }
+                }
+                if let Some(sec) = parsed.ollama {
+                    if ollama_base_url.is_none() { ollama_base_url = sec.base_url; }
+                }
+            }
+        }
+
+        Self {
+            default_llm: default_llm.unwrap_or_else(|| "mock".to_string()),
+            openai_api_key,
+            openai_base_url,
+            anthropic_api_key,
+            anthropic_base_url,
+            grok_api_key,
+            grok_base_url,
+            ollama_base_url,
+            default_model,
         }
     }
 }
@@ -1233,5 +1318,30 @@ mod tests {
             LlmError::RateLimit(msg) => assert_eq!(msg, "API key throttled"),
             other => panic!("Expected RateLimit error, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_toml_config_parsing_and_defaults() {
+        let toml_str = r#"
+            default_llm = "grok"
+            default_model = "grok-2"
+
+            [grok]
+            api_key = "grok-special-key"
+            base_url = "https://api.x.ai/v1"
+
+            [openai]
+            api_key = "openai-key"
+
+            [ollama]
+            base_url = "http://localhost:11434/v1"
+        "#;
+
+        let parsed: TomlConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.default_llm.unwrap(), "grok");
+        assert_eq!(parsed.default_model.unwrap(), "grok-2");
+        assert_eq!(parsed.grok.unwrap().api_key.unwrap(), "grok-special-key");
+        assert_eq!(parsed.openai.unwrap().api_key.unwrap(), "openai-key");
+        assert_eq!(parsed.ollama.unwrap().base_url.unwrap(), "http://localhost:11434/v1");
     }
 }
