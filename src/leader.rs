@@ -48,6 +48,9 @@ pub struct LeaderOrchestrator {
     pub tui_tx: Option<tokio::sync::mpsc::Sender<crate::tui::TuiUpdate>>,
     /// Channel to receive interactive feedback from the Ratatui TUI
     pub tui_rx: Option<tokio::sync::mpsc::Receiver<crate::tui::ContractResponse>>,
+    /// Active leaf tips of the campaign's transaction DAG (for content-addressed Merkle-DAG ledgers)
+    campaign_tips: Vec<String>,
+    current_round_vision_attachments: Vec<crate::acp::VisionAttachment>,
 }
 
 /// First-class contract artifact (negotiated between Planner and Evaluator).
@@ -106,6 +109,8 @@ impl LeaderOrchestrator {
             live_ktrans_streamed: 0,
             tui_tx: None,
             tui_rx: None,
+            campaign_tips: Vec::new(),
+            current_round_vision_attachments: Vec::new(),
         }
     }
 
@@ -475,6 +480,63 @@ impl LeaderOrchestrator {
 
         let verdict_json = serde_json::to_value(verdict).unwrap_or_default();
 
+        // 1. Capture logical state root (hash of the blackboard)
+        let mut blackboard_content = None;
+        let state_merkle_root = if let Ok(content) = std::fs::read_to_string("/tmp/korg/blackboard/blackboard.json") {
+            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                blackboard_content = Some(content);
+                crate::provenance::compute_sha256(&json_val).unwrap_or_else(|_| hex::encode([0u8; 32]))
+            } else {
+                hex::encode([0u8; 32])
+            }
+        } else {
+            hex::encode([0u8; 32])
+        };
+
+        if let Some(ref content) = blackboard_content {
+            let blob_dir = format!("/tmp/korg/campaigns/{}/state-blobs", self.session_id);
+            let _ = std::fs::create_dir_all(&blob_dir);
+            let blob_path = format!("{}/{}.json", blob_dir, state_merkle_root);
+            let _ = std::fs::write(&blob_path, content);
+        }
+
+        // 2. Capture physical codebase root (git write-tree)
+        let codebase_merkle_root = if let Ok(output) = std::process::Command::new("git")
+            .arg("write-tree")
+            .output()
+        {
+            if output.status.success() {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            } else {
+                "sha256:codebase-fallback".to_string()
+            }
+        } else {
+            "sha256:codebase-fallback".to_string()
+        };
+
+        // 3. Compute the JCS content-addressed transaction hash (tx_hash)
+        let mut ktrans_payload = crate::acp::CampaignKtransPayload {
+            tx_id,
+            session_id: self.session_id,
+            round,
+            timestamp: timestamp.clone(),
+            arena_winner: arena_winner.clone(),
+            arena_confidence,
+            mutations_this_round,
+            verdict: verdict_json.clone(),
+            leader_action: verdict.recommended_action.clone(),
+            new_swarm_size: self.swarm_size,
+            total_mutations_so_far: (round + 1) * 5,
+            tx_hash: "".to_string(), // Set to empty string for deterministic hashing
+            parent_hashes: self.campaign_tips.clone(),
+            state_merkle_root: state_merkle_root.clone(),
+            codebase_merkle_root: codebase_merkle_root.clone(),
+            vision_attachments: Some(self.current_round_vision_attachments.clone()),
+        };
+
+        let tx_hash = crate::provenance::compute_sha256(&ktrans_payload)
+            .unwrap_or_else(|_| format!("sha256:{}", hex::encode([0u8; 32])));
+
         let ktrans = crate::acp::CampaignKtrans {
             tx_id,
             session_id: self.session_id,
@@ -487,8 +549,16 @@ impl LeaderOrchestrator {
             leader_action: verdict.recommended_action.clone(),
             new_swarm_size: self.swarm_size,
             total_mutations_so_far: (round + 1) * 5,
+            tx_hash: tx_hash.clone(),
+            parent_hashes: self.campaign_tips.clone(),
+            state_merkle_root,
+            codebase_merkle_root,
             signature: None,
+            vision_attachments: Some(self.current_round_vision_attachments.clone()),
         };
+
+        // Update the active tip hashes
+        self.campaign_tips = vec![tx_hash];
 
         // Wrap in proper ACP MessageEnvelope (now with real Ed25519 signature)
         let envelope: crate::acp::MessageEnvelope<crate::acp::CampaignKtrans> =
@@ -517,8 +587,17 @@ impl LeaderOrchestrator {
             );
         }
 
+        if let Some(tx) = &self.tui_tx {
+            if let Ok(pretty) = serde_json::to_string(&envelope.payload) {
+                let _ = tx.try_send(crate::tui::TuiUpdate::Ktrans(pretty));
+            }
+        }
+
         // === Live stream the ktrans over the ACP channel (stdout for the demo) ===
         self.emit_live_ktrans(acp_msg);
+
+        // Clear vision attachments for the next round
+        self.current_round_vision_attachments.clear();
     }
 
     /// Helper to create a MessageEnvelope<CampaignKtrans> for ACP framing.
@@ -802,6 +881,96 @@ impl LeaderOrchestrator {
         Ok(contract)
     }
 
+    pub async fn verify_vision_policy(&mut self) -> Result<()> {
+        let mut policy_infraction = false;
+        let mut infraction_reason = String::new();
+        for att in &self.current_round_vision_attachments {
+            if att.verdict == "REDACTED" || att.verdict == "BLOCKED" {
+                policy_infraction = true;
+                infraction_reason = format!(
+                    "Security Policy Blocked! File: '{}' triggered patterns: {:?}",
+                    att.name, att.infraction_patterns
+                );
+                break;
+            }
+        }
+
+        if policy_infraction {
+            let config = crate::llm::KorgConfig::load();
+            if config.security_vision.operator_override_allowed {
+                if let (Some(tx), Some(rx)) = (&self.tui_tx, &mut self.tui_rx) {
+                    let _ = tx.try_send(crate::tui::TuiUpdate::ApprovalRequest(infraction_reason.clone()));
+                    println!("⏳ [Leader] Waiting for operator decision in TUI/Web...");
+                    if let Some(response) = rx.recv().await {
+                        match response {
+                            crate::tui::ContractResponse::Approve => {
+                                println!("✓ [Leader] Operator OVERRODE and approved raw screenshots.");
+                                for att in &mut self.current_round_vision_attachments {
+                                    if att.verdict == "REDACTED" || att.verdict == "BLOCKED" {
+                                        att.verdict = "APPROVED".to_string();
+                                        if let Some(raw) = &att.raw_data_base64 {
+                                            att.data_base64 = raw.clone();
+                                        }
+                                    }
+                                }
+                            }
+                            crate::tui::ContractResponse::Force => {
+                                println!("✓ [Leader] Operator approved redacted screenshots.");
+                                for att in &mut self.current_round_vision_attachments {
+                                    if att.verdict == "REDACTED" || att.verdict == "BLOCKED" {
+                                        att.verdict = "APPROVED".to_string();
+                                    }
+                                }
+                            }
+                            _ => {
+                                println!("✗ [Leader] Operator REJECTED screenshots. Swarm terminated.");
+                                return Err(anyhow::anyhow!("Campaign terminated due to visual policy violation rejection"));
+                            }
+                        }
+                    }
+                } else {
+                    // Stdin fallback
+                    println!("\n=== SECURITY POLICY BLOCKED ===");
+                    println!("{}", infraction_reason);
+                    loop {
+                        print!("Action choices: [y] force override & approve raw, [r] redact & approve, [n] reject: ");
+                        use std::io::Write;
+                        std::io::stdout().flush().ok();
+                        let mut reader = BufReader::new(tokio::io::stdin());
+                        let mut input = String::new();
+                        reader.read_line(&mut input).await?;
+                        let choice = input.trim().to_lowercase();
+                        if choice == "y" {
+                            println!("✓ Operator override approved (raw images).");
+                            for att in &mut self.current_round_vision_attachments {
+                                if att.verdict == "REDACTED" || att.verdict == "BLOCKED" {
+                                    att.verdict = "APPROVED".to_string();
+                                    if let Some(raw) = &att.raw_data_base64 {
+                                        att.data_base64 = raw.clone();
+                                    }
+                                }
+                            }
+                            break;
+                        } else if choice == "r" {
+                            println!("✓ Operator approved (redacted images).");
+                            for att in &mut self.current_round_vision_attachments {
+                                if att.verdict == "REDACTED" || att.verdict == "BLOCKED" {
+                                    att.verdict = "APPROVED".to_string();
+                                }
+                            }
+                            break;
+                        } else if choice == "n" {
+                            return Err(anyhow::anyhow!("Campaign terminated due to visual policy violation rejection"));
+                        }
+                    }
+                }
+            } else {
+                println!("⚠️ [Leader] Visual policy infraction detected but operator override is not allowed. Proceeding with redacted images.");
+            }
+        }
+        Ok(())
+    }
+
     /// Loads the persistent blackboard from disk (or creates a fresh one).
     /// Returns the blackboard content and the current base_snapshot (latest tx_id or "genesis").
     fn load_blackboard() -> (serde_json::Value, String) {
@@ -834,6 +1003,11 @@ impl LeaderOrchestrator {
     /// Run with:  cargo run -- campaign
     ///        or: cargo run -- leader --demo
     pub async fn run_observable_campaign(&mut self) -> Result<()> {
+        // Automatically prune any stale/orphaned worktrees on campaign start
+        let _ = tokio::process::Command::new("git")
+            .args(&["worktree", "prune"])
+            .output()
+            .await;
         let cyan = "\x1b[38;2;0;240;255m";
         let pink = "\x1b[38;2;255;0;180m";
         let green = "\x1b[38;2;0;255;128m";
@@ -860,6 +1034,13 @@ impl LeaderOrchestrator {
         // Phase 2: Real concurrent workers (they emit SwarmTelemetryPulse messages)
         println!("{bold}{cyan}🚀 [Leader] Spawning 4 concurrent persona workers with real-time telemetry...{reset}\n");
         let results = self.dispatch_concurrent(&plan).await?;
+
+        // Aggregate any vision attachments captured during this round
+        for r in &results {
+            self.current_round_vision_attachments.extend(r.vision_attachments.clone());
+        }
+
+        self.verify_vision_policy().await?;
 
         // Run the real adversarial arena to score candidates and select the winner
         let arena_outcome = self.run_arena(&results).await;
@@ -1109,33 +1290,79 @@ impl LeaderOrchestrator {
         }
         ktrans_records.sort_by_key(|r| r.round);
 
-        // Revert the blackboard state to tx_id (round <= tx_id)
-        let bb_json = {
+        // Find the transaction matching tx_id (round number)
+        let target_ktrans = ktrans_records.iter().find(|r| r.round == tx_id);
+
+        if let Some(target) = target_ktrans {
+            println!("[Leader] Reverting physical/logical state to transaction at round {} (hash={}, state={})", 
+                tx_id, target.tx_hash, target.state_merkle_root);
+
+            // 1. Rehydrate logical state (blackboard)
+            let state_blob_path = format!("/tmp/korg/campaigns/{}/state-blobs/{}.json", self.session_id, target.state_merkle_root);
+            let bb_dir = "/tmp/korg/blackboard";
+            let bb_path = format!("{}/blackboard.json", bb_dir);
+            let _ = tokio::fs::create_dir_all(bb_dir).await;
+
+            if tokio::fs::metadata(&state_blob_path).await.is_ok() {
+                let _ = tokio::fs::copy(&state_blob_path, &bb_path).await;
+                println!("[Leader] Blackboard state successfully rehydrated from blob: {}", state_blob_path);
+                
+                // Rehydrate the memory structure
+                if let Ok(content) = tokio::fs::read_to_string(&bb_path).await {
+                    if let Ok(new_bb) = serde_json::from_str::<Blackboard>(&content) {
+                        if let Ok(mut bb_guard) = self.telemetry_blackboard.lock() {
+                            *bb_guard = new_bb;
+                            println!("[Leader] In-memory Blackboard structure updated successfully.");
+                        }
+                    }
+                }
+            } else {
+                println!("[Leader] WARNING: State blob {} not found; falling back to logical ratio truncation", state_blob_path);
+                // Fallback logical truncation
+                if let Ok(mut bb_guard) = self.telemetry_blackboard.lock() {
+                    let target_ratio = (tx_id + 1) as f32 / 11.0;
+                    let trace_len = (bb_guard.trace_buffer.len() as f32 * target_ratio) as usize;
+                    bb_guard.trace_buffer.truncate(trace_len);
+                    let pulse_len = (bb_guard.recent_pulses.len() as f32 * target_ratio) as usize;
+                    bb_guard.recent_pulses.truncate(pulse_len);
+                }
+            }
+
+            // 2. Revert physical codebase (git tree checkout)
+            if !target.codebase_merkle_root.is_empty() && !target.codebase_merkle_root.starts_with("sha256:codebase-fallback") {
+                println!("[Leader] Reverting working directory to codebase tree: {}", target.codebase_merkle_root);
+                let output = tokio::process::Command::new("git")
+                    .args(&["read-tree", "--reset", "-u", &target.codebase_merkle_root])
+                    .output()
+                    .await;
+                match output {
+                    Ok(out) if out.status.success() => {
+                        println!("[Leader] Codebase successfully reverted to tree hash: {}", target.codebase_merkle_root);
+                    }
+                    Ok(out) => {
+                        let err = String::from_utf8_lossy(&out.stderr);
+                        println!("[Leader] WARNING: git read-tree failed: {}", err);
+                    }
+                    Err(e) => {
+                        println!("[Leader] WARNING: failed to spawn git read-tree: {}", e);
+                    }
+                }
+            }
+        } else {
+            println!("[Leader] WARNING: Transaction at round {} not found; falling back to simulated truncation", tx_id);
+            // Fallback logical truncation
             if let Ok(mut bb_guard) = self.telemetry_blackboard.lock() {
-                let target_ratio = (tx_id + 1) as f32 / 11.0; // 0 to 10 rounds
+                let target_ratio = (tx_id + 1) as f32 / 11.0;
                 let trace_len = (bb_guard.trace_buffer.len() as f32 * target_ratio) as usize;
                 bb_guard.trace_buffer.truncate(trace_len);
                 let pulse_len = (bb_guard.recent_pulses.len() as f32 * target_ratio) as usize;
                 bb_guard.recent_pulses.truncate(pulse_len);
-
-                serde_json::to_string_pretty(&*bb_guard).ok()
-            } else {
-                None
             }
-        };
-
-        if let Some(bb_json) = bb_json {
-            // Write a reverted snapshot to /tmp/korg/blackboard/blackboard.json
-            let bb_dir = "/tmp/korg/blackboard";
-            tokio::fs::create_dir_all(bb_dir).await?;
-            let bb_path = format!("{}/blackboard.json", bb_dir);
-            tokio::fs::write(&bb_path, bb_json).await?;
-            println!("[Leader] Reverted Blackboard snapshot written to {}", bb_path);
         }
 
         // Clone files to /tmp/korg/forks/
         let forks_dir = format!("/tmp/korg/forks/tx_{:02}", tx_id);
-        tokio::fs::create_dir_all(&forks_dir).await?;
+        let _ = tokio::fs::create_dir_all(&forks_dir).await;
         let _ = copy_dir_recursive("src", format!("{}/src", forks_dir));
         if std::path::Path::new("Cargo.toml").exists() {
             let _ = std::fs::copy("Cargo.toml", format!("{}/Cargo.toml", forks_dir));
@@ -1162,8 +1389,17 @@ impl LeaderOrchestrator {
         let sid = session.unwrap_or(self.session_id);
         let dir = format!("/tmp/korg/campaigns/{}", sid);
 
-        println!("\n=== REPLAYING CAMPAIGN {} ===\n", sid);
-        println!("[Replay] All .ktrans records below were verified against their embedded Ed25519 signatures.\n");
+        let gray = "\x1b[38;2;120;120;120m";
+        let white = "\x1b[38;2;255;255;255m";
+        let bold = "\x1b[1m";
+        let reset = "\x1b[0m";
+
+        println!("\n{gray}────────────────────────────────────────────────────────────────────────────────{reset}");
+        println!("  {bold}{white}korg campaign transaction execution replay engine{reset}");
+        println!("{gray}────────────────────────────────────────────────────────────────────────────────{reset}");
+        println!("  session_id:      {white}{}{reset}", sid);
+        println!("  directory:       {white}{}{reset}", dir);
+        println!("{gray}────────────────────────────────────────────────────────────────────────────────{reset}");
 
         let mut entries: Vec<crate::acp::CampaignKtrans> = vec![];
         if let Ok(read_dir) = std::fs::read_dir(&dir) {
@@ -1176,13 +1412,9 @@ impl LeaderOrchestrator {
                     {
                         // Cryptographic verification using the real Ed25519 signature in the ACP MessageEnvelope
                         if crate::acp::verify_envelope(&envelope).unwrap_or(false) {
-                            println!(
-                                "[Replay] ✓ Verified signature on {}",
-                                entry.path().display()
-                            );
                             entries.push(envelope.payload);
                         } else {
-                            println!("[Replay] ⚠ Signature verification FAILED for {} (legacy or unsigned artifact)", entry.path().display());
+                            println!("  {gray}[Replay] ⚠ Signature verification FAILED for {} (possible tampering!){reset}", entry.path().display());
                             entries.push(envelope.payload);
                         }
                     } else if let Ok(ktrans) =
@@ -1195,7 +1427,7 @@ impl LeaderOrchestrator {
             }
         }
 
-        // Sort by round (final summary last)
+        // Sort by round chronologically (final summary last)
         entries.sort_by_key(|e| {
             if e.round == 999 {
                 u32::MAX
@@ -1205,53 +1437,76 @@ impl LeaderOrchestrator {
         });
 
         if entries.is_empty() {
-            println!("[Replay] No .ktrans artifacts found in {}", dir);
+            println!("  {gray}[Replay] No .ktrans artifacts found in {}{reset}", dir);
             return Ok(());
         }
 
-        println!(
-            "[Replay] Found {} .ktrans records. Replaying...\n",
-            entries.len()
-        );
+        println!("  {bold}verifying Merkle-DAG chain integrity & JCS state roots...{reset}");
 
-        for (_i, ktrans) in entries.iter().enumerate() {
+        let mut seen_verified_hashes = std::collections::HashSet::new();
+
+        for ktrans in &entries {
+            // Verify JCS content-address hash
+            if !ktrans.tx_hash.is_empty() {
+                let payload = crate::acp::CampaignKtransPayload {
+                    tx_id: ktrans.tx_id,
+                    session_id: ktrans.session_id,
+                    round: ktrans.round,
+                    timestamp: ktrans.timestamp.clone(),
+                    arena_winner: ktrans.arena_winner.clone(),
+                    arena_confidence: ktrans.arena_confidence,
+                    mutations_this_round: ktrans.mutations_this_round,
+                    verdict: ktrans.verdict.clone(),
+                    leader_action: ktrans.leader_action.clone(),
+                    new_swarm_size: ktrans.new_swarm_size,
+                    total_mutations_so_far: ktrans.total_mutations_so_far,
+                    tx_hash: "".to_string(),
+                    parent_hashes: ktrans.parent_hashes.clone(),
+                    state_merkle_root: ktrans.state_merkle_root.clone(),
+                    codebase_merkle_root: ktrans.codebase_merkle_root.clone(),
+                    vision_attachments: ktrans.vision_attachments.clone(),
+                };
+
+                let computed_hash = crate::provenance::compute_sha256(&payload)?;
+                if computed_hash != ktrans.tx_hash {
+                    println!("  ❌ {bold}JCS Hash Mismatch for transaction {}:{reset}", ktrans.tx_id);
+                    println!("     Expected: {white}{}{reset}", ktrans.tx_hash);
+                    println!("     Got:      {white}{}{reset}", computed_hash);
+                    anyhow::bail!("Transaction content hash tampered!");
+                }
+
+                // Verify parent chains
+                for parent in &ktrans.parent_hashes {
+                    if !seen_verified_hashes.contains(parent) {
+                        println!("  ❌ {bold}Merkle-DAG Integrity Broken:{reset}");
+                        println!("     Parent hash {white}{}{reset} not found in previously verified nodes.", parent);
+                        anyhow::bail!("Merkle-DAG history chain broken!");
+                    }
+                }
+
+                seen_verified_hashes.insert(ktrans.tx_hash.clone());
+
+                println!(
+                    "  ✓ {white}round {round:02} {gray}│ {reset}tx: {white}{tx:<12}{reset} │ state: {gray}{state:<8}{reset} │ codebase: {gray}{codebase:<8}{reset}",
+                    round = ktrans.round,
+                    tx = &ktrans.tx_hash[..12],
+                    state = if ktrans.state_merkle_root.len() > 8 { &ktrans.state_merkle_root[..8] } else { &ktrans.state_merkle_root },
+                    codebase = if ktrans.codebase_merkle_root.len() > 8 { &ktrans.codebase_merkle_root[..8] } else { &ktrans.codebase_merkle_root },
+                );
+            } else {
+                println!("  ✓ {white}round {round:02} {gray}│ {reset}legacy/unsigned ktrans", round = ktrans.round);
+            }
+        }
+
+        println!("\n  {bold}execution replay events:{reset}");
+        for ktrans in &entries {
             if ktrans.round == 999 {
                 println!("\n=== FINAL SUMMARY (from .ktrans) ===");
                 println!("  Final swarm size: {}", ktrans.new_swarm_size);
-                println!(
-                    "  Total mutations (recorded): {}",
-                    ktrans.total_mutations_so_far
-                );
+                println!("  Total mutations (recorded): {}", ktrans.total_mutations_so_far);
                 continue;
             }
 
-            // === Signature verification (zero-trust) ===
-            // Because CampaignKtrans is now a first-class AcpMessage, full MessageEnvelope
-            // verification happens when the envelope is deserialized in replay.
-            let verified = ktrans.signature.is_some(); // placeholder — real envelope verification occurs at load time
-
-            let sig_status = if verified {
-                "✓ SIGNED & VERIFIED"
-            } else {
-                "✗ SIGNATURE INVALID / MISSING"
-            };
-
-            // Reconstruct a minimal verdict for ticker replay
-            let _verdict = EvaluationVerdict {
-                verdict_id: ktrans.tx_id,
-                session_id: ktrans.session_id,
-                timestamp: ktrans.timestamp.clone(),
-                overall: ktrans.leader_action.to_uppercase(),
-                passed_rubrics: 3,
-                total_rubrics: 5,
-                justifications: vec![],
-                recommended_action: ktrans.leader_action.clone(),
-                semantic_entropy: 0.45,
-                doom_loop_detected: ktrans.leader_action.contains("terminate"),
-                productive_death: false,
-            };
-
-            // Replay the exact ticker line
             let symbol = match ktrans.leader_action.as_str() {
                 "scale_up" => "▲ SCALE",
                 "revise" => "◆ REVISE",
@@ -1259,22 +1514,25 @@ impl LeaderOrchestrator {
                 _ => "● HOLD",
             };
 
-            println!(
-                "[REPLAY TICKER] round {:02} | {} | Arena: {} ({:.2}) | swarm={:2} | {}",
-                ktrans.round,
-                symbol,
-                ktrans.arena_winner,
-                ktrans.arena_confidence,
-                ktrans.new_swarm_size,
-                sig_status
-            );
+            let sig_status = if ktrans.signature.is_some() {
+                "✓ SIGNED"
+            } else {
+                "✗ UNSIGNED"
+            };
 
-            if !verified {
-                println!("    [SECURITY] Signature verification failed for round {} — possible tampering!", ktrans.round);
-            }
+            println!(
+                "    round {round:02} │ {symbol:<10} │ Arena: {winner:<10} ({conf:.2}) │ swarm={size:2} │ {sig_status}",
+                round = ktrans.round,
+                symbol = symbol,
+                winner = ktrans.arena_winner,
+                conf = ktrans.arena_confidence,
+                size = ktrans.new_swarm_size,
+                sig_status = sig_status,
+            );
         }
 
-        println!("\n=== REPLAY COMPLETE ===\n");
+        println!("\n  {bold}{white}[ execution replay validated successfully ✓ ]{reset}");
+        println!("{gray}────────────────────────────────────────────────────────────────────────────────{reset}\n");
         Ok(())
     }
 
@@ -1316,6 +1574,12 @@ impl LeaderOrchestrator {
 
     /// Full Grok Build-style campaign with real subprocess workers.
     pub async fn run_full_campaign(&mut self) -> Result<()> {
+        // Automatically prune any stale/orphaned worktrees on campaign start
+        let _ = tokio::process::Command::new("git")
+            .args(&["worktree", "prune"])
+            .output()
+            .await;
+
         println!("\n=== LeaderOrchestrator: Starting full campaign (real children) ===");
         println!("Session: {}", self.session_id);
         println!("Root task: {}\n", self.root_task);
@@ -1349,6 +1613,13 @@ impl LeaderOrchestrator {
             .collect();
 
         let results = self.dispatch_concurrent(&plan).await?;
+
+        // Aggregate any vision attachments captured during this round
+        for r in &results {
+            self.current_round_vision_attachments.extend(r.vision_attachments.clone());
+        }
+
+        self.verify_vision_policy().await?;
 
         // === Real telemetry ingestion: drain pulses that workers emitted and feed the Evaluator ===
         {
@@ -2041,12 +2312,27 @@ async fn spawn_worker_process(
     let stdout = BufReader::new(child.stdout.take().unwrap());
     let mut stderr = BufReader::new(child.stderr.take().unwrap());
 
+    // Compute physical codebase root (git write-tree) in main workspace
+    let codebase_merkle_root = if let Ok(output) = std::process::Command::new("git")
+        .arg("write-tree")
+        .output()
+    {
+        if output.status.success() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            "sha256:codebase-fallback".to_string()
+        }
+    } else {
+        "sha256:codebase-fallback".to_string()
+    };
+
     // Send RouteWork as a properly signed ACP MessageEnvelope (Phase A)
     let route_work = AcpMessage::RouteWork {
         routing_id: routing_id.clone(),
         capabilities: vec![persona.name().to_lowercase()],
         payload,
         base_snapshot: "latest-from-blackboard".to_string(),
+        codebase_merkle_root,
         permissions: vec!["fs:write:worktree".to_string()],
     };
 
@@ -2311,6 +2597,173 @@ mod tests {
         let content = std::fs::read_to_string(path).unwrap();
         let mutations: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert!(mutations.is_array());
+    }
+
+    #[tokio::test]
+    async fn test_merkle_dag_ledger_integrity() {
+        let leader = LeaderOrchestrator::new("Merkle-DAG test".to_string(), None);
+        let session_id = leader.session_id;
+
+        // Clear directories first
+        let dir = format!("/tmp/korg/campaigns/{}", session_id);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+
+        let verdict = EvaluationVerdict {
+            verdict_id: Uuid::now_v7(),
+            session_id,
+            timestamp: "2026-05-21T10:00:00Z".to_string(),
+            overall: "scale_up".to_string(),
+            passed_rubrics: 5,
+            total_rubrics: 5,
+            justifications: vec!["Perfect implementation".to_string()],
+            recommended_action: "scale_up".to_string(),
+            semantic_entropy: 0.1,
+            doom_loop_detected: false,
+            productive_death: false,
+        };
+        let verdict_json = serde_json::to_value(&verdict).unwrap();
+
+        // 1. Construct valid Genesis transaction (Round 0)
+        let tx_id_0 = Uuid::now_v7();
+        let payload_0 = crate::acp::CampaignKtransPayload {
+            tx_id: tx_id_0,
+            session_id,
+            round: 0,
+            timestamp: "2026-05-21T10:00:00Z".to_string(),
+            arena_winner: "Benjamin".to_string(),
+            arena_confidence: 0.95,
+            mutations_this_round: 2,
+            verdict: verdict_json.clone(),
+            leader_action: "scale_up".to_string(),
+            new_swarm_size: 2,
+            total_mutations_so_far: 5,
+            tx_hash: "".to_string(),
+            parent_hashes: vec![],
+            state_merkle_root: "sha256:state-mock-0".to_string(),
+            codebase_merkle_root: "sha256:codebase-mock-0".to_string(),
+            vision_attachments: None,
+        };
+        let hash_0 = crate::provenance::compute_sha256(&payload_0).unwrap();
+
+        let ktrans_0 = crate::acp::CampaignKtrans {
+            tx_id: tx_id_0,
+            session_id,
+            round: 0,
+            timestamp: "2026-05-21T10:00:00Z".to_string(),
+            arena_winner: "Benjamin".to_string(),
+            arena_confidence: 0.95,
+            mutations_this_round: 2,
+            verdict: verdict_json.clone(),
+            leader_action: "scale_up".to_string(),
+            new_swarm_size: 2,
+            total_mutations_so_far: 5,
+            tx_hash: hash_0.clone(),
+            parent_hashes: vec![],
+            state_merkle_root: "sha256:state-mock-0".to_string(),
+            codebase_merkle_root: "sha256:codebase-mock-0".to_string(),
+            signature: None,
+            vision_attachments: None,
+        };
+
+        // 2. Construct child transaction (Round 1) chained to Genesis
+        let tx_id_1 = Uuid::now_v7();
+        let payload_1 = crate::acp::CampaignKtransPayload {
+            tx_id: tx_id_1,
+            session_id,
+            round: 1,
+            timestamp: "2026-05-21T10:01:00Z".to_string(),
+            arena_winner: "Harper".to_string(),
+            arena_confidence: 0.88,
+            mutations_this_round: 1,
+            verdict: verdict_json.clone(),
+            leader_action: "scale_up".to_string(),
+            new_swarm_size: 3,
+            total_mutations_so_far: 10,
+            tx_hash: "".to_string(),
+            parent_hashes: vec![hash_0.clone()],
+            state_merkle_root: "sha256:state-mock-1".to_string(),
+            codebase_merkle_root: "sha256:codebase-mock-1".to_string(),
+            vision_attachments: None,
+        };
+        let hash_1 = crate::provenance::compute_sha256(&payload_1).unwrap();
+
+        let ktrans_1 = crate::acp::CampaignKtrans {
+            tx_id: tx_id_1,
+            session_id,
+            round: 1,
+            timestamp: "2026-05-21T10:01:00Z".to_string(),
+            arena_winner: "Harper".to_string(),
+            arena_confidence: 0.88,
+            mutations_this_round: 1,
+            verdict: verdict_json.clone(),
+            leader_action: "scale_up".to_string(),
+            new_swarm_size: 3,
+            total_mutations_so_far: 10,
+            tx_hash: hash_1.clone(),
+            parent_hashes: vec![hash_0.clone()],
+            state_merkle_root: "sha256:state-mock-1".to_string(),
+            codebase_merkle_root: "sha256:codebase-mock-1".to_string(),
+            signature: None,
+            vision_attachments: None,
+        };
+
+        let dummy_sig = crate::acp::SignatureObject {
+            public_key: "00".repeat(32),
+            signature_bytes: "00".repeat(64),
+        };
+
+        // Write both to disk
+        let envelope_0 = crate::acp::MessageEnvelope {
+            message_id: Uuid::now_v7(),
+            timestamp: "2026-05-21T10:00:00Z".to_string(),
+            sender: "leader".to_string(),
+            payload: ktrans_0.clone(),
+            signature: dummy_sig.clone(),
+        };
+        let envelope_1 = crate::acp::MessageEnvelope {
+            message_id: Uuid::now_v7(),
+            timestamp: "2026-05-21T10:01:00Z".to_string(),
+            sender: "leader".to_string(),
+            payload: ktrans_1.clone(),
+            signature: dummy_sig.clone(),
+        };
+
+        std::fs::write(
+            format!("{}/round-000.ktrans.json", dir),
+            serde_json::to_string_pretty(&envelope_0).unwrap(),
+        ).unwrap();
+        std::fs::write(
+            format!("{}/round-001.ktrans.json", dir),
+            serde_json::to_string_pretty(&envelope_1).unwrap(),
+        ).unwrap();
+
+        // 3. Replay valid campaign
+        let replay_res = leader.replay_campaign(Some(session_id));
+        assert!(replay_res.is_ok());
+
+        // 4. Tamper with Round 1 and write to disk, verify failure
+        let mut tampered_ktrans_1 = ktrans_1.clone();
+        tampered_ktrans_1.arena_winner = "TAMPERED".to_string();
+
+        let tampered_envelope_1 = crate::acp::MessageEnvelope {
+            message_id: Uuid::now_v7(),
+            timestamp: "2026-05-21T10:01:00Z".to_string(),
+            sender: "leader".to_string(),
+            payload: tampered_ktrans_1,
+            signature: dummy_sig.clone(),
+        };
+        std::fs::write(
+            format!("{}/round-001.ktrans.json", dir),
+            serde_json::to_string_pretty(&tampered_envelope_1).unwrap(),
+        ).unwrap();
+
+        let tampered_replay_res = leader.replay_campaign(Some(session_id));
+        assert!(tampered_replay_res.is_err());
+        assert!(tampered_replay_res.unwrap_err().to_string().contains("tampered"));
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

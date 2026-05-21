@@ -62,8 +62,10 @@ updated: 2026-05-20
   - New specialized guide: `How-to-Watch-a-Live-16-Agent-Campaign.md` — operator manual for real Grok 4.20 Heavy swarms using the 4-persona lens (Captain, Harper, Benjamin, Lucas), Arena signals, token-bucket, human gates, and recovery.
 - **Decisions:** `wiki/decisions/`
 - **Syntheses:** `wiki/synthesis/`
+  - [[Synthesis — ACP Protocol]]
   - [[Synthesis — Adversarial Loop]]
   - [[Synthesis — Blackboard]]
+  - [[Synthesis — Contract Negotiation]]
   - [[Synthesis — Evaluator Persona]]
   - [[Synthesis — Semantic Entropy]]
   - [[Synthesis — Transactional Memory]]

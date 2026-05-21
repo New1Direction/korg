@@ -38,11 +38,12 @@ impl SingleWorkerHarness {
                     routing_id,
                     payload,
                     base_snapshot,
+                    codebase_merkle_root,
                     permissions,
                     ..
                 } => {
                     println!("[Harness] Received RouteWork with base_snapshot: {}", base_snapshot);
-                    self.handle_route_work(client, routing_id, payload, base_snapshot, permissions)
+                    self.handle_route_work(client, routing_id, payload, base_snapshot, codebase_merkle_root, permissions)
                         .await?;
                 }
                 _ => {
@@ -80,6 +81,7 @@ impl SingleWorkerHarness {
                         routing_id,
                         payload,
                         base_snapshot,
+                        codebase_merkle_root,
                         permissions,
                         ..
                     } => {
@@ -91,7 +93,7 @@ impl SingleWorkerHarness {
                         let mut real_client = AcpClient::new_stdio(&worker_id, worker_signing_key);
 
                         harness
-                            .handle_route_work(&mut real_client, routing_id, payload, base_snapshot, permissions)
+                            .handle_route_work(&mut real_client, routing_id, payload, base_snapshot, codebase_merkle_root, permissions)
                             .await?;
 
                         // === Polished demo: Handle one extra signed tool request after RouteWork ===
@@ -112,6 +114,7 @@ impl SingleWorkerHarness {
                     | tool @ AcpMessage::FileReadRequest(_)
                     | tool @ AcpMessage::PatchApplyRequest(_)
                     | tool @ AcpMessage::TestRunRequest(_)
+                    | tool @ AcpMessage::ScreenshotRequest(_)
                     | tool @ AcpMessage::CodeEditProposal(_) => {
                         eprintln!("[Harness] Received direct coding tool request");
                         let worker_signing_key = SigningKey::generate(&mut OsRng);
@@ -144,9 +147,14 @@ impl SingleWorkerHarness {
         routing_id: String,
         payload: String,
         base_snapshot: String,
+        codebase_merkle_root: String,
         _permissions: Vec<String>,
     ) -> Result<()> {
         eprintln!("[Harness] Received RouteWork {}: {}", routing_id, payload);
+
+        // Save original working directory to restore it during cleanup
+        let original_dir = std::env::current_dir()?;
+        eprintln!("[Harness] Parent repository working directory: {:?}", original_dir);
 
         // 1. Create isolated worktree (see isolation-routing.md)
         let worktree_path = PathBuf::from(format!(
@@ -154,8 +162,100 @@ impl SingleWorkerHarness {
             self.worker_id, routing_id
         ));
         self.current_worktree = Some(worktree_path.clone());
-        eprintln!("[Harness] Created worktree at {:?}", worktree_path);
-        // TODO: actually call `git worktree add` + mount verified snapshot
+
+        // Ensure parent and target worktree directory are completely clean
+        if let Some(parent) = worktree_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if worktree_path.exists() {
+            let _ = std::fs::remove_dir_all(&worktree_path);
+        }
+
+        // Verify if base_snapshot is a valid git reference/commit.
+        // If not valid or empty/genesis/latest, default to HEAD.
+        let mut snapshot_ref = "HEAD".to_string();
+        if !base_snapshot.is_empty() && base_snapshot != "genesis" && base_snapshot != "latest-from-blackboard" {
+            let verify_status = tokio::process::Command::new("git")
+                .args(&["rev-parse", "--verify", &base_snapshot])
+                .output()
+                .await;
+            if let Ok(output) = verify_status {
+                if output.status.success() {
+                    snapshot_ref = base_snapshot.clone();
+                }
+            }
+        }
+
+        let branch_name = format!("korg-branch-{}", routing_id);
+        eprintln!(
+            "[Harness] Spinning up physical worktree at {:?} from commit {} (branch: {})",
+            worktree_path, snapshot_ref, branch_name
+        );
+
+        // Run git worktree add
+        let add_status = tokio::process::Command::new("git")
+            .args(&[
+                "worktree",
+                "add",
+                "-f",
+                "-B",
+                &branch_name,
+                &worktree_path.to_string_lossy(),
+                &snapshot_ref,
+            ])
+            .output()
+            .await;
+
+        match add_status {
+            Ok(output) => {
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!("[Harness] ERROR: git worktree add failed: {}", stderr);
+                    anyhow::bail!("git worktree add failed: {}", stderr);
+                }
+                eprintln!("[Harness] Git worktree created successfully.");
+            }
+            Err(e) => {
+                eprintln!("[Harness] ERROR: failed to spawn git worktree add: {}", e);
+                anyhow::bail!("failed to spawn git worktree add: {}", e);
+            }
+        }
+
+        // Switch process working directory into the sandboxed worktree
+        std::env::set_current_dir(&worktree_path)?;
+        eprintln!("[Harness] Sandboxed worker process CWD to {:?}", worktree_path);
+
+        // Zero-Trust Sandbox Containment check:
+        // Run git write-tree inside the sandbox and compare it to the expected codebase_merkle_root.
+        if !codebase_merkle_root.is_empty() && !codebase_merkle_root.starts_with("sha256:codebase-fallback") {
+            let write_tree_output = tokio::process::Command::new("git")
+                .arg("write-tree")
+                .output()
+                .await;
+            match write_tree_output {
+                Ok(output) if output.status.success() => {
+                    let actual_tree = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    eprintln!("[Harness] Zero-Trust Verification: expected={}, actual={}", codebase_merkle_root, actual_tree);
+                    if actual_tree != codebase_merkle_root {
+                        eprintln!("[Harness] ERROR: Codebase Merkle Root Mismatch! Zero-Trust Containment violation.");
+                        let _ = std::env::set_current_dir(&original_dir);
+                        anyhow::bail!("Codebase Merkle Root Mismatch: expected {}, got {}", codebase_merkle_root, actual_tree);
+                    }
+                    eprintln!("[Harness] Zero-Trust Verification successful: tree hash matches.");
+                }
+                Ok(output) => {
+                    let err = String::from_utf8_lossy(&output.stderr);
+                    eprintln!("[Harness] ERROR: git write-tree failed during zero-trust verification: {}", err);
+                    let _ = std::env::set_current_dir(&original_dir);
+                    anyhow::bail!("git write-tree verification failed: {}", err);
+                }
+                Err(e) => {
+                    eprintln!("[Harness] ERROR: failed to execute git write-tree: {}", e);
+                    let _ = std::env::set_current_dir(&original_dir);
+                    anyhow::bail!("failed to execute git write-tree: {}", e);
+                }
+            }
+        }
 
         // Emit start-of-work telemetry pulse
         // (build_telemetry_pulse temporarily stubbed for structural cleanup)
@@ -245,12 +345,13 @@ impl SingleWorkerHarness {
             "mutations": result.mutations,
             "doom_loop_detected": result.doom_loop,
             "provenance": result.provenance,
+            "codebase_merkle_root": result.codebase_merkle_root,
         });
 
         client
             .send(&AcpMessage::SubmitTransaction {
                 tx_id,
-                content_hash: format!("sha256:{}", hex::encode([0u8; 32])), // placeholder
+                content_hash: result.codebase_merkle_root.clone(),
                 payload: ktrans.clone(),
             })
             .await?;
@@ -285,9 +386,62 @@ impl SingleWorkerHarness {
             routing_id, tx_id
         );
 
+        // Restore parent working directory to release lock on worktree path
+        eprintln!("[Harness] Restoring parent working directory to {:?}", original_dir);
+        if let Err(e) = std::env::set_current_dir(&original_dir) {
+            eprintln!("[Harness] WARNING: failed to restore original directory: {}", e);
+        }
+
         // Clean up worktree (or leave for forensics on failure)
         eprintln!("[Harness] Cleaning up worktree {:?}", worktree_path);
-        // TODO: git worktree remove
+        let remove_status = tokio::process::Command::new("git")
+            .args(&[
+                "worktree",
+                "remove",
+                "--force",
+                &worktree_path.to_string_lossy(),
+            ])
+            .output()
+            .await;
+
+        match remove_status {
+            Ok(output) => {
+                if !output.status.success() {
+                    eprintln!(
+                        "[Harness] WARNING: git worktree remove failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                } else {
+                    eprintln!("[Harness] Git worktree removed successfully.");
+                }
+            }
+            Err(e) => {
+                eprintln!("[Harness] WARNING: failed to spawn git worktree remove: {}", e);
+            }
+        }
+
+        // Delete temporary tracking branch
+        let branch_status = tokio::process::Command::new("git")
+            .args(&["branch", "-D", &branch_name])
+            .output()
+            .await;
+
+        match branch_status {
+            Ok(output) => {
+                if !output.status.success() {
+                    eprintln!(
+                        "[Harness] WARNING: failed to delete branch {}: {}",
+                        branch_name,
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                } else {
+                    eprintln!("[Harness] Branch {} deleted successfully.", branch_name);
+                }
+            }
+            Err(e) => {
+                eprintln!("[Harness] WARNING: failed to spawn git branch -D: {}", e);
+            }
+        }
 
         Ok(())
     }
@@ -303,6 +457,26 @@ impl SingleWorkerHarness {
 
         let persona_result = run_persona(persona, payload, "worker-task").await;
 
+        // Stage all modifications so git write-tree will capture them
+        let _ = tokio::process::Command::new("git")
+            .arg("add")
+            .arg(".")
+            .output()
+            .await;
+
+        // Compute the resulting physical codebase Merkle root
+        let write_tree_output = tokio::process::Command::new("git")
+            .arg("write-tree")
+            .output()
+            .await;
+
+        let codebase_merkle_root = match write_tree_output {
+            Ok(output) if output.status.success() => {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            }
+            _ => "sha256:codebase-fallback".to_string(),
+        };
+
         Ok(TaskResult {
             mutations: persona_result.mutations,
             doom_loop: false,
@@ -310,6 +484,7 @@ impl SingleWorkerHarness {
             // Store extra signals so we can emit high-fidelity telemetry
             confidence: persona_result.confidence,
             arena_scores: persona_result.arena_self_score.clone(),
+            codebase_merkle_root,
         })
     }
 
@@ -375,6 +550,7 @@ struct TaskResult {
     // Enriched signals for high-quality SwarmTelemetryPulse emission
     confidence: f32,
     arena_scores: serde_json::Value,
+    codebase_merkle_root: String,
 }
 
 /// Writes a proper .ktrans file to disk (terminal transaction).
@@ -412,5 +588,41 @@ fn write_terminal_ktrans(
         if std::fs::write(&path, content).is_ok() {
             eprintln!("[Harness] Wrote terminal .ktrans → {}", path.display());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_git_worktree_isolation() {
+        let worker_id = "benjamin-test-worktree".to_string();
+        let routing_id = "test-route-123".to_string();
+        
+        let mut harness = SingleWorkerHarness::new(worker_id.clone());
+        
+        let worker_signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        let mut client = AcpClient::new_stdio(&worker_id, worker_signing_key);
+
+        let payload = "Write a mock implementation plan".to_string();
+        
+        let res = harness.handle_route_work(
+            &mut client,
+            routing_id.clone(),
+            payload,
+            "HEAD".to_string(),
+            "".to_string(),
+            vec![]
+        ).await;
+
+        assert!(res.is_ok());
+
+        // Verify that the worktree directory is removed and cleaned up after successful completion
+        let worktree_path = std::path::PathBuf::from(format!(
+            "/tmp/korg/worktrees/{}-{}",
+            worker_id, routing_id
+        ));
+        assert!(!worktree_path.exists());
     }
 }

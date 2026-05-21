@@ -34,6 +34,7 @@ mod tui;
 pub mod llm;
 mod web;
 pub mod provenance;
+pub mod vision_policy;
 
 use acp::AcpClient;
 use harness::SingleWorkerHarness;

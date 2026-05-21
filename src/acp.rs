@@ -288,6 +288,7 @@ impl AcpClient {
             capabilities: vec!["benjamin".into()],
             payload: "stub task from leader simulation".into(),
             base_snapshot: "genesis".into(),
+            codebase_merkle_root: "sha256:codebase-fallback".into(),
             permissions: vec![],
         })
     }
@@ -322,6 +323,7 @@ pub enum AcpMessage {
         capabilities: Vec<String>,
         payload: String,
         base_snapshot: String,
+        codebase_merkle_root: String,
         permissions: Vec<String>,
     },
     SubmitTransaction {
@@ -386,6 +388,10 @@ pub enum AcpMessage {
     // Test execution (real coding validation tool)
     TestRunRequest(TestRunRequestPayload),
     TestRunResult(TestRunResultPayload),
+
+    // Vision tools
+    ScreenshotRequest(ScreenshotRequestPayload),
+    ScreenshotResult(ScreenshotResultPayload),
 }
 
 // Convenience payload for the Evaluator (can be embedded in EvaluationVerdict)
@@ -418,6 +424,29 @@ pub struct SwarmTelemetryPulsePayload {
     pub surface_text: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisionAttachment {
+    pub name: String,
+    pub mime_type: String,
+    pub data_base64: String,
+    pub description: String,
+    pub verdict: String,                 // "APPROVED" | "REDACTED" | "BLOCKED" | "PENDING"
+    pub infraction_patterns: Vec<String>,
+    pub raw_data_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenshotRequestPayload {
+    pub target_name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenshotResultPayload {
+    pub attachment: VisionAttachment,
+    pub error: Option<String>,
+}
+
 /// Campaign-level transactional log entry (one per Arena round + final summary).
 /// This is now a first-class ACP message type so .ktrans can travel over the wire
 /// exactly like SwarmTelemetryPulse or EvaluationVerdict.
@@ -434,7 +463,12 @@ pub struct CampaignKtrans {
     pub leader_action: String,
     pub new_swarm_size: u32,
     pub total_mutations_so_far: usize,
+    pub tx_hash: String,
+    pub parent_hashes: Vec<String>,
+    pub state_merkle_root: String,
+    pub codebase_merkle_root: String,
     pub signature: Option<SignatureObject>,
+    pub vision_attachments: Option<Vec<VisionAttachment>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -450,6 +484,11 @@ pub struct CampaignKtransPayload {
     pub leader_action: String,
     pub new_swarm_size: u32,
     pub total_mutations_so_far: usize,
+    pub tx_hash: String,
+    pub parent_hashes: Vec<String>,
+    pub state_merkle_root: String,
+    pub codebase_merkle_root: String,
+    pub vision_attachments: Option<Vec<VisionAttachment>>,
 }
 
 // === Coding Tool Payload Structs (Option C) ===

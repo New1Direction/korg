@@ -212,3 +212,10 @@ To kick off Phase 1, follow this precise sequence of actions:
 *   **Evaluation & Guardrails**: [[wiki/patterns/Evaluation-Guardrail-Layer|Evaluation-Guardrail-Layer]]
 *   **Daily Log**: [[wiki/daily/2026-05-21|2026-05-21 Daily Log]]
 *   **Audit Journal**: [[log.md]]
+
+
+## See Also
+
+- [[Synthesis — ACP Protocol]]
+
+- [[Synthesis — Contract Negotiation]]

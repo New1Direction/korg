@@ -726,3 +726,69 @@ Append-only chronological record of all significant writes and structural change
   - Executed `cargo test` verifying all 16/16 unit tests compiled and passed cleanly.
 - **Propagation:** Updated implementation plans, daily notes, project lists, and master logs. Created structural walkthrough artifacts.
 
+
+## 2026-05-21 — Yvaeh Mode Reconciliation
+
+- **Command:** `korg reconcile`
+- **Result:** Found 50 semantic contradictions, auto-resolved 0, and flagged 50 as unresolved conflicts.
+- **Details:**
+- Flagged: [[Conflict — Korg Audit and Competitive Roadmap and Rust Async Performance Optimizations – Practical Investigation]]
+- Flagged: [[Conflict — Korg Audit and Competitive Roadmap and Operational-Intelligence-Layer-Mandate]]
+- Flagged: [[Conflict — Korg Audit and Competitive Roadmap and state-primitives]]
+- Flagged: [[Conflict — Korg Audit and Competitive Roadmap and SuperGrok-Heavy-Multi-Agent-Workflows]]
+- Flagged: [[Conflict — Korg Audit and Competitive Roadmap and 0001 - Project Kickoff]]
+- Flagged: [[Conflict — Korg Audit and Competitive Roadmap and 0002 - Lighter Pragmatic AI-First Approach for Korg]]
+- Flagged: [[Conflict — Rust Async Performance Optimizations – Practical Investigation and Live Execution Timeline and Cockpit Spec]]
+- Flagged: [[Conflict — Rust Async Performance Optimizations – Practical Investigation and Operational-Intelligence-Layer-Mandate]]
+- Flagged: [[Conflict — Rust Async Performance Optimizations – Practical Investigation and Korg]]
+- Flagged: [[Conflict — Rust Async Performance Optimizations – Practical Investigation and transactional-memory]]
+- Flagged: [[Conflict — Rust Async Performance Optimizations – Practical Investigation and Cross-Harness-Pattern-Extraction]]
+- Flagged: [[Conflict — Rust Async Performance Optimizations – Practical Investigation and SuperGrok-Heavy-Multi-Agent-Workflows]]
+- Flagged: [[Conflict — Rust Async Performance Optimizations – Practical Investigation and 0002 - Lighter Pragmatic AI-First Approach for Korg]]
+- Flagged: [[Conflict — AI-First Vault Principles and Live Execution Timeline and Cockpit Spec]]
+- Flagged: [[Conflict — AI-First Vault Principles and Operational-Intelligence-Layer-Mandate]]
+- Flagged: [[Conflict — AI-First Vault Principles and transactional-memory]]
+- Flagged: [[Conflict — AI-First Vault Principles and Anthropic-Long-Running-Agent-Harnesses]]
+- Flagged: [[Conflict — AI-First Vault Principles and Cross-Harness-Pattern-Extraction]]
+- Flagged: [[Conflict — AI-First Vault Principles and 0001 - Project Kickoff]]
+- Flagged: [[Conflict — AI-First Vault Principles and 0002 - Lighter Pragmatic AI-First Approach for Korg]]
+- Flagged: [[Conflict — Live Execution Timeline and Cockpit Spec and Korg]]
+- Flagged: [[Conflict — Live Execution Timeline and Cockpit Spec and Cross-Harness-Pattern-Extraction]]
+- Flagged: [[Conflict — Live Execution Timeline and Cockpit Spec and SuperGrok-Heavy-Multi-Agent-Workflows]]
+- Flagged: [[Conflict — Live Execution Timeline and Cockpit Spec and 0001 - Project Kickoff]]
+- Flagged: [[Conflict — Live Execution Timeline and Cockpit Spec and 0002 - Lighter Pragmatic AI-First Approach for Korg]]
+- Flagged: [[Conflict — Operational-Intelligence-Layer-Mandate and isolation-routing]]
+- Flagged: [[Conflict — Operational-Intelligence-Layer-Mandate and transactional-memory]]
+- Flagged: [[Conflict — Operational-Intelligence-Layer-Mandate and Anthropic-Long-Running-Agent-Harnesses]]
+- Flagged: [[Conflict — Operational-Intelligence-Layer-Mandate and Cross-Harness-Pattern-Extraction]]
+- Flagged: [[Conflict — Operational-Intelligence-Layer-Mandate and SuperGrok-Heavy-Multi-Agent-Workflows]]
+- Flagged: [[Conflict — Operational-Intelligence-Layer-Mandate and 0001 - Project Kickoff]]
+- Flagged: [[Conflict — Operational-Intelligence-Layer-Mandate and 0002 - Lighter Pragmatic AI-First Approach for Korg]]
+- Flagged: [[Conflict — Korg and SuperGrok-Heavy-Multi-Agent-Workflows]]
+- Flagged: [[Conflict — Korg and 0001 - Project Kickoff]]
+- Flagged: [[Conflict — Korg and 0002 - Lighter Pragmatic AI-First Approach for Korg]]
+- Flagged: [[Conflict — state-primitives and Evaluation-Guardrail-Layer]]
+- Flagged: [[Conflict — state-primitives and SuperGrok-Heavy-Multi-Agent-Workflows]]
+- Flagged: [[Conflict — isolation-routing and Evaluation-Guardrail-Layer]]
+- Flagged: [[Conflict — isolation-routing and Anthropic-Long-Running-Agent-Harnesses]]
+- Flagged: [[Conflict — isolation-routing and SuperGrok-Heavy-Multi-Agent-Workflows]]
+- Flagged: [[Conflict — transactional-memory and Anthropic-Long-Running-Agent-Harnesses]]
+- Flagged: [[Conflict — transactional-memory and Cross-Harness-Pattern-Extraction]]
+- Flagged: [[Conflict — transactional-memory and 0001 - Project Kickoff]]
+- Flagged: [[Conflict — transactional-memory and 0002 - Lighter Pragmatic AI-First Approach for Korg]]
+- Flagged: [[Conflict — Evaluation-Guardrail-Layer and SuperGrok-Heavy-Multi-Agent-Workflows]]
+- Flagged: [[Conflict — Anthropic-Long-Running-Agent-Harnesses and Cross-Harness-Pattern-Extraction]]
+- Flagged: [[Conflict — Anthropic-Long-Running-Agent-Harnesses and 0001 - Project Kickoff]]
+- Flagged: [[Conflict — Anthropic-Long-Running-Agent-Harnesses and 0002 - Lighter Pragmatic AI-First Approach for Korg]]
+- Flagged: [[Conflict — SuperGrok-Heavy-Multi-Agent-Workflows and 0001 - Project Kickoff]]
+- Flagged: [[Conflict — 0001 - Project Kickoff and 0002 - Lighter Pragmatic AI-First Approach for Korg]]
+
+
+## 2026-05-21 — Yvaeh Mode Synthesis
+
+- **Command:** `korg synthesize`
+- **Result:** Created 2 synthesis pages under `wiki/synthesis/`.
+- **Details:**
+- [[Synthesis — Contract Negotiation]] (connecting [[Korg Audit and Competitive Roadmap]], [[Live Execution Timeline and Cockpit Spec]], [[Korg]])
+- [[Synthesis — ACP Protocol]] (connecting [[Korg Audit and Competitive Roadmap]], [[Korg]])
+
