@@ -1,38 +1,62 @@
-# .gitignore for Korg project (Rust based)
-# Ignore Cargo build output
+# ── Build output ──────────────────────────────────────────────────────────────
 /target/
+Cargo.lock.bk
 
-# IDE / editor directories
+# ── IDE / editor ──────────────────────────────────────────────────────────────
 /.vscode/
 /.idea/
 /.obsidian/
-
-# Generated temporary files
-*.log
-*.tmp
-/tmp/
-.ktrans
-*.ktrans
-
-# OS generated files
-.DS_Store
-
-# Miscellaneous
 *.rs.bk
 
-# Korg runtime data (session journals, locks, cooldown state)
-# These are generated at runtime and must never be committed
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Korg runtime data (never commit session state) ────────────────────────────
 .korg/
+*.ktrans
+*.ktrans.bk
 
-# Development scratch files
+# ── Private knowledge base / research ────────────────────────────────────────
+wiki/
+sources/
+Human/
+Prompts/
+Decisions/
+Architecture/
+reference-implementations/
+
+# ── Dev scratch and temp ──────────────────────────────────────────────────────
 scratch/
-node_modules/
-package-lock.json
-package.json
+/tmp/
+*.log
+*.tmp
 
-# Tauri desktop shell (not part of core OSS release)
+# ── Internal docs (not for public repo) ──────────────────────────────────────
+ANNOUNCEMENT.md
+DOCS.md
+POLICY.md
+PRODUCT_OVERVIEW.md
+INSTALLATION_GUIDE.md
+RELEASE_NOTES.md
+USER_GUIDE.md
+_GROK.md
+Index.md
+Korg - Queries.md
+implementation_plan.md
+log.md
+llms.txt
+
+# ── Build / deploy scripts (internal) ────────────────────────────────────────
+Dockerfile
+deploy.sh
+build_wasm.sh
+packaging/
+raw/
+
+# ── Frontend / desktop (not in OSS release) ──────────────────────────────────
+frontend/
 src-tauri/
-
-# Frontend build artifacts
-frontend/node_modules/
-frontend/dist/
+node_modules/
+package.json
+package-lock.json
