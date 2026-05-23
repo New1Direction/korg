@@ -1348,56 +1348,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "grok-acp-harness"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "base64 0.22.1",
- "bytes",
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "canonical_json",
- "chrono",
- "clap",
- "crossterm",
- "directories",
- "ed25519-dalek",
- "fs2",
- "futures",
- "futures-util",
- "hex",
- "hf-hub",
- "libc",
- "lru",
- "mimalloc",
- "rand 0.8.6",
- "ratatui",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "shell-words",
- "syntect",
- "tokenizers",
- "tokio",
- "tokio-stream",
- "tokio-test",
- "tokio-util",
- "toml",
- "tower-http 0.5.2",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "tree-sitter",
- "tree-sitter-python",
- "tree-sitter-rust",
- "uuid",
-]
-
-[[package]]
 name = "h2"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1919,6 +1869,56 @@ dependencies = [
  "futures-util",
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "korg"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "canonical_json",
+ "chrono",
+ "clap",
+ "crossterm",
+ "directories",
+ "ed25519-dalek",
+ "fs2",
+ "futures",
+ "futures-util",
+ "hex",
+ "hf-hub",
+ "libc",
+ "lru",
+ "mimalloc",
+ "rand 0.8.6",
+ "ratatui",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "shell-words",
+ "syntect",
+ "tokenizers",
+ "tokio",
+ "tokio-stream",
+ "tokio-test",
+ "tokio-util",
+ "toml",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "tree-sitter",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "uuid",
 ]
 
 [[package]]

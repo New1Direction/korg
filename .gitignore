@@ -5,6 +5,7 @@
 # IDE / editor directories
 /.vscode/
 /.idea/
+/.obsidian/
 
 # Generated temporary files
 *.log
@@ -18,3 +19,20 @@
 
 # Miscellaneous
 *.rs.bk
+
+# Korg runtime data (session journals, locks, cooldown state)
+# These are generated at runtime and must never be committed
+.korg/
+
+# Development scratch files
+scratch/
+node_modules/
+package-lock.json
+package.json
+
+# Tauri desktop shell (not part of core OSS release)
+src-tauri/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/

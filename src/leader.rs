@@ -24,16 +24,9 @@ use uuid::Uuid;
 
 use crate::dag::{ExecutionDag, DagNode, NodeStatus};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CognitionMode {
-    Instant,
-    Balanced,
-    Heavy,
-    Research,
-    Recovery,
-    Autonomous,
-    HeavyConsciousness,
-}
+/// CognitionMode is defined authoritatively in the registry kernel.
+/// Re-exported here for backward compatibility with callers that import from `leader`.
+pub use crate::registry::CognitionMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorChoice {
@@ -71,7 +64,6 @@ pub struct LeaderOrchestrator {
     /// Active leaf tips of the campaign's transaction DAG (for content-addressed Merkle-DAG ledgers)
     campaign_tips: Vec<String>,
     current_round_vision_attachments: Vec<crate::acp::VisionAttachment>,
-    pub cognition_mode: Arc<Mutex<CognitionMode>>,
     pub goal_mode: bool,
     pub last_round_healed: bool,
     pub runtime_coordinator: Arc<crate::runtime::RuntimeCoordinator>,
@@ -139,7 +131,6 @@ impl LeaderOrchestrator {
             tui_rx: None,
             campaign_tips: vec![],
             current_round_vision_attachments: vec![],
-            cognition_mode: Arc::new(Mutex::new(CognitionMode::Balanced)),
             goal_mode: false,
             last_round_healed: false,
             runtime_coordinator,
@@ -153,6 +144,28 @@ impl LeaderOrchestrator {
 
     pub fn base_snapshot(&self) -> &str {
         &self.base_snapshot
+    }
+
+    // ─── Cognition Mode — single authority: the CapabilityResolver ───────────
+    // All reads and writes route through the registry. No secondary Mutex exists.
+
+    /// Read the authoritative cognition mode (async — acquires resolver lock).
+    pub async fn cognition_mode(&self) -> CognitionMode {
+        self.capability_resolver.lock().await.cognition_mode()
+    }
+
+    /// Transition the cognition mode via a ledger-logged resolver mutation (async).
+    pub async fn set_cognition_mode(&self, mode_str: &str) {
+        self.capability_resolver.lock().await.set_cognition_mode(mode_str);
+    }
+
+    /// Blocking cognition mode read for sync contexts (decompose_into_persona_packages).
+    /// Uses `try_lock` to avoid deadlocks in non-async call chains; falls back to Balanced.
+    fn cognition_mode_sync(&self) -> CognitionMode {
+        match self.capability_resolver.try_lock() {
+            Ok(r) => r.cognition_mode(),
+            Err(_) => CognitionMode::Balanced,
+        }
     }
 
     // =====================================================================
@@ -737,7 +750,7 @@ impl LeaderOrchestrator {
             .to_string();
 
         let is_instant = {
-            let m = *self.cognition_mode.lock().unwrap();
+            let m = self.cognition_mode().await;
             m == CognitionMode::Instant
         };
 
@@ -812,7 +825,7 @@ impl LeaderOrchestrator {
         let mut final_avg_similarity = 0.0f32;
 
         let max_rounds = {
-            let m = *self.cognition_mode.lock().unwrap();
+            let m = self.cognition_mode().await;
             match m {
                 CognitionMode::Heavy | CognitionMode::Autonomous | CognitionMode::HeavyConsciousness => 3,
                 _ => 1,
@@ -1219,7 +1232,7 @@ impl LeaderOrchestrator {
 
             // Dynamic Cognition Mode Custom Behaviors (Research/Recovery/HeavyConsciousness)
             {
-                let m = *self.cognition_mode.lock().unwrap();
+                let m = self.cognition_mode().await;
                 if m == CognitionMode::Research {
                     println!("{bold}{cyan}🔬 [Research Mode] Wide Divergent Exploration Activated{reset}");
                     println!("  {slate}├── [Research] Performing semantic index scanning across all crates...{reset}");
@@ -1289,7 +1302,7 @@ impl LeaderOrchestrator {
                         "[cognition-escalation] Escalating to Heavy Mode due to low confidence".to_string()
                     ));
                 }
-                *self.cognition_mode.lock().unwrap() = CognitionMode::Heavy;
+                self.set_cognition_mode("heavy").await;
                 println!("\x1b[38;2;255;215;0m[Leader] Running deep multi-agent consensus evaluation...\x1b[0m");
                 tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
                 if let Some(obj) = arena_outcome.as_object_mut() {
@@ -1952,7 +1965,7 @@ impl LeaderOrchestrator {
 
         // Dynamic Cognition Mode Custom Behaviors (Research/Recovery/HeavyConsciousness)
         {
-            let m = *self.cognition_mode.lock().unwrap();
+            let m = self.cognition_mode().await;
             let cyan = "\x1b[38;2;0;240;255m";
             let pink = "\x1b[38;2;255;0;180m";
             let slate = "\x1b[38;2;120;125;140m";
@@ -2067,7 +2080,7 @@ impl LeaderOrchestrator {
                     "[cognition-escalation] Escalating to Heavy Mode due to low confidence".to_string()
                 ));
             }
-            *self.cognition_mode.lock().unwrap() = CognitionMode::Heavy;
+            self.set_cognition_mode("heavy").await;
             println!("\x1b[38;2;255;215;0m[Leader] Running deep multi-agent consensus evaluation...\x1b[0m");
             tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
             if let Some(obj) = arena_outcome.as_object_mut() {
@@ -2162,7 +2175,7 @@ impl LeaderOrchestrator {
     }
 
     fn decompose_into_persona_packages(&self) -> serde_json::Value {
-        let mode = *self.cognition_mode.lock().unwrap();
+        let mode = self.cognition_mode_sync();
         let heavy_ctx = if mode == CognitionMode::HeavyConsciousness {
             Some(self.build_heavy_consciousness_context())
         } else {
@@ -2986,7 +2999,7 @@ mod tests {
             "Implement high-performance concurrent contract negotiation".to_string(),
             None,
         );
-        *leader.cognition_mode.lock().unwrap() = CognitionMode::Heavy;
+        leader.set_cognition_mode("heavy").await;
 
         let plan = json!({
             "root_task": "Implement high-performance concurrent contract negotiation",
@@ -3252,7 +3265,7 @@ mod tests {
             "Test speculative execution skips negotiation".to_string(),
             None,
         );
-        *leader.cognition_mode.lock().unwrap() = CognitionMode::Instant;
+        leader.set_cognition_mode("instant").await;
 
         let plan = json!({
             "root_task": "Test speculative execution skips negotiation",
@@ -3277,7 +3290,7 @@ mod tests {
             None,
         );
         // Set mode to Instant initially
-        *leader.cognition_mode.lock().unwrap() = CognitionMode::Instant;
+        leader.set_cognition_mode("instant").await;
 
         let mut results = vec![];
         let mut captain_res = crate::personas::PersonaResult::new(Persona::Captain, "pkg-captain".to_string());
@@ -3296,14 +3309,14 @@ mod tests {
 
         let confidence = arena_outcome["confidence"].as_f64().unwrap_or(0.85) as f32;
         if confidence < 0.65 {
-            *leader.cognition_mode.lock().unwrap() = CognitionMode::Heavy;
+            leader.set_cognition_mode("heavy").await;
             if let Some(obj) = arena_outcome.as_object_mut() {
                 obj.insert("confidence".to_string(), json!(0.88));
             }
         }
 
         // Verify the mode pivoted to Heavy
-        assert_eq!(*leader.cognition_mode.lock().unwrap(), CognitionMode::Heavy);
+        assert_eq!(leader.cognition_mode().await, CognitionMode::Heavy);
         // Verify confidence escalated
         assert_eq!(arena_outcome["confidence"].as_f64().unwrap(), 0.88);
     }
@@ -3363,7 +3376,7 @@ mod tests {
             "Initial task statement".to_string(),
             None,
         );
-        *leader.cognition_mode.lock().unwrap() = CognitionMode::Instant;
+        leader.set_cognition_mode("instant").await;
 
         let (feedback_tx, feedback_rx) = tokio::sync::mpsc::channel(100);
 
