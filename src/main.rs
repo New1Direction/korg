@@ -1,19 +1,15 @@
-//! korg — Korg Heavy-Tier Agent Harness
+//! korg — The first deterministic cognitive runtime
 //!
-//! Global CLI reference implementation of the Grok 4.20 Heavy / Korg architecture.
+//! Every decision your AI agent makes is logged, causally ordered, and reversible.
+//! Like Git, but for cognition.
 //!
-//! Install once with `cargo install --path . --force` (binary name: korg).
+//! Quick start:
+//!   korg run "Fix the authentication bug in src/auth.rs"
+//!   korg campaign --tui --prompt "Optimize the database connection pool"
+//!   korg goal "Write a full test suite for src/parser.rs"
+//!   korg rewind --seq 4
 //!
-//! Then run from anywhere:
-//!   korg campaign
-//!   korg leader --demo
-//!   korg leader --replay latest
-//!
-//! This crate closely follows the pseudocode in:
-//!   wiki/reference-harness/Minimal-ACP-Client-Pseudocode.md
-//!
-//! Run as a worker (when invoked via the korg binary):
-//!   korg worker --id my-worker-01
+//! See https://github.com/New1Direction/korg for full documentation.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -58,17 +54,28 @@ use leader::LeaderOrchestrator;
 #[command(name = "korg")]
 #[command(
     version,
-    about = "Korg Heavy-Tier Agent Harness (Rust reference implementation)"
+    about = "The first deterministic cognitive runtime for AI agents"
 )]
 #[command(
-    long_about = "A production-grade reference implementation of the Korg / Grok 4.20 Heavy architecture.
+    long_about = "korg — The first deterministic cognitive runtime.
 
-Features full ACP v1.17 messaging (signed, framed), multi-persona concurrent workers,
-live Evaluator guardrails with 5 adversarial rubrics + semantic entropy (Candle optional),
-multi-round Arena, human approval gates, persistent signed .ktrans, compaction + fast recovery,
-and real-time streaming.
+Every decision your AI agent makes is logged, causally ordered, and reversible
+— like Git, but for cognition.
 
-Run `korg campaign` for the full observable Heavy-Tier demo."
+Core invariants:
+  • Append-only ledger    Every cognitive event is sealed with an HLC timestamp
+  • Deterministic replay  Rebuild exact state from any point in history
+  • Speculative branches  Fork execution, preview, discard freely
+  • Execution checkpoints Snapshot and restore full runtime state in O(1)
+  • Micro-healing         Transient failures are auto-recovered at the effect layer
+
+Quick start:
+  korg \"Fix the authentication bug in src/auth.rs\"
+  korg campaign --tui --prompt \"Optimize the connection pool\"
+  korg goal \"Write a full test suite for src/parser.rs\"
+  korg rewind --seq 4
+
+https://github.com/New1Direction/korg"
 )]
 struct Cli {
     /// Optional positional prompt to immediately run a campaign using the full Heavy-Adversarial swarm
@@ -119,7 +126,7 @@ enum Commands {
         endpoint: String,
     },
 
-    /// Run the full Grok Build-style campaign with real workers, interactive approvals, and persistent blackboard
+    /// Run a full autonomous campaign with multi-agent swarm, real-time ledger, and interactive approvals
     Leader {
         #[arg(long, default_value = "stdio")]
         endpoint: String,
@@ -164,8 +171,8 @@ enum Commands {
         goal: bool,
     },
 
-    /// Fully observable end-to-end Heavy-Tier campaign (recommended for demos).
-    /// Equivalent to `leader --demo` but with extra pretty printing.
+    /// Fully observable end-to-end campaign with live TUI or web dashboard.
+    /// Recommended for first-time use. Equivalent to `leader --demo` with richer output.
     Campaign {
         /// Optional session id
         #[arg(long)]
@@ -195,14 +202,14 @@ enum Commands {
         monitor_only: bool,
     },
 
-    /// Find and resolve factual contradictions across the vault (Yvaeh mode)
+    /// Find and resolve factual contradictions across a knowledge vault
     Reconcile {
         /// Optional topic or concept to focus the reconciliation scan on
         #[arg(long)]
         topic: Option<String>,
     },
 
-    /// Scan the vault for unnamed patterns and generate synthesis connection pages (Yvaeh mode)
+    /// Scan a knowledge vault for unnamed patterns and generate synthesis connection pages
     Synthesize,
 
     /// Cryptographically verify a campaign's provenance attestation certificate
@@ -283,7 +290,7 @@ fn print_welcome_banner() {
         }
     }
     println!("  {}• Guardrails:{}     5 semantic evaluation rubrics (Trajectory, Epistemic, etc.)", slate, reset);
-    println!("  {}• Knowledge:{}     Factual Reconciliation & Semantic Synthesis (Yvaeh mode)", slate, reset);
+    println!("  {}• Knowledge:{}     Factual Reconciliation & Semantic Synthesis", slate, reset);
     println!("  {}• Persistence:{}   Signed .ktrans transactions & secure state recovery", slate, reset);
     println!("{}──────────────────────────────────────────────────────────────────────────────{}", slate, reset);
     println!("Type {}korg --help{} to see all available subcommands and flags.", bold, reset);
@@ -705,8 +712,8 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
             println!("  {}/run <command>{}            Execute a shell command locally", bold, reset);
             println!("  {}/explain <query>{}          Ask Captain to explain code/architecture", bold, reset);
             println!("  {}/goal <prompt>{}            Run an autonomous multi-persona swarm goal", bold, reset);
-            println!("  {}/reconcile{}                Run Yvaeh factual reconciliation", bold, reset);
-            println!("  {}/synthesize{}               Run Yvaeh concept synthesis", bold, reset);
+            println!("  {}/reconcile{}                Run factual contradiction reconciliation", bold, reset);
+            println!("  {}/synthesize{}               Run concept synthesis scan", bold, reset);
             println!("  {}/index{}                    Index the current workspace structurally", bold, reset);
             println!("  {}/exit{}                     Exit the shell\n", bold, reset);
             continue;

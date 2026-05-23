@@ -10,6 +10,48 @@ documentation = "https://github.com/New1Direction/korg#readme"
 keywords = ["ai", "agents", "runtime", "deterministic", "autonomous"]
 categories = ["command-line-utilities", "development-tools", "asynchronous"]
 readme = "README.md"
+exclude = [
+    # Private knowledge base / research
+    "wiki/**",
+    "sources/**",
+    "Human/**",
+    "Prompts/**",
+    "Decisions/**",
+    "Architecture/**",
+    # Dev scratch and runtime state
+    "scratch/**",
+    ".korg/**",
+    ".obsidian/**",
+    # Frontend / desktop shell (not in OSS release)
+    "frontend/**",
+    "src-tauri/**",
+    "node_modules/**",
+    # Internal docs
+    "ANNOUNCEMENT.md",
+    "DOCS.md",
+    "PRODUCT_OVERVIEW.md",
+    "INSTALLATION_GUIDE.md",
+    "RELEASE_NOTES.md",
+    "USER_GUIDE.md",
+    "POLICY.md",
+    "Index.md",
+    "_GROK.md",
+    "Korg - Queries.md",
+    # Build artifacts
+    "Dockerfile",
+    "deploy.sh",
+    "build_wasm.sh",
+    "package.json",
+    "package-lock.json",
+    "*.py",
+    # Internal planning / dev docs
+    "implementation_plan.md",
+    "log.md",
+    "llms.txt",
+    "korg.toml",
+    "packaging/**",
+    "raw/**",
+]
 
 [dependencies]
 mimalloc = "0.1"
