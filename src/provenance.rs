@@ -7,8 +7,8 @@ use anyhow::{anyhow, Result};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,9 +16,9 @@ pub struct CampaignAttestation {
     pub session_id: Uuid,
     pub root_task: String,
     pub timestamp: String,
-    pub leader_public_key: String,       // Hex-encoded Ed25519 verifying key
+    pub leader_public_key: String, // Hex-encoded Ed25519 verifying key
     pub total_rounds: usize,
-    pub trace_hash_chain_root: String,   // Accumulated SHA-256 trace hash
+    pub trace_hash_chain_root: String, // Accumulated SHA-256 trace hash
     pub transactions: Vec<AttestationTransaction>,
     pub signature: Option<crate::acp::SignatureObject>,
 }
@@ -69,7 +69,10 @@ pub async fn generate_attestation(
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     if name.ends_with(".ktrans.json") && !name.contains("provenance") {
                         let content = fs::read_to_string(&path)?;
-                        if let Ok(envelope) = serde_json::from_str::<crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>>(&content) {
+                        if let Ok(envelope) = serde_json::from_str::<
+                            crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>,
+                        >(&content)
+                        {
                             ktrans_envelopes.push(envelope);
                         }
                     }
@@ -78,7 +81,9 @@ pub async fn generate_attestation(
         }
 
         if ktrans_envelopes.is_empty() {
-            return Err(anyhow!("No transaction logs found in campaign directory to attest"));
+            return Err(anyhow!(
+                "No transaction logs found in campaign directory to attest"
+            ));
         }
 
         // Sort transactions by round to ensure deterministic hash chain
@@ -90,7 +95,7 @@ pub async fn generate_attestation(
 
         for env in &ktrans_envelopes {
             let env_hash = compute_sha256(env)?;
-            
+
             // Chain step: H_i = SHA256(H_i-1 || env_hash)
             let mut hasher = Sha256::new();
             hasher.update(hex::decode(&accumulated_hash)?);
@@ -128,7 +133,7 @@ pub async fn generate_attestation(
         // 4. Sign the attestation envelope
         let canonical = crate::acp::canonicalize(&attestation)?;
         let signature = signing_key.sign(&canonical);
-        
+
         attestation.signature = Some(crate::acp::SignatureObject {
             public_key: hex::encode(signing_key.verifying_key().to_bytes()),
             signature_bytes: hex::encode(signature.to_bytes()),
@@ -148,19 +153,21 @@ pub async fn generate_attestation(
 /// Cryptographically validates the signatures and hash chain of a CampaignAttestation
 pub fn verify_attestation(attestation: &CampaignAttestation) -> Result<bool> {
     // 1. Verify top-level signature
-    let sig_obj = attestation.signature.as_ref()
+    let sig_obj = attestation
+        .signature
+        .as_ref()
         .ok_or(anyhow!("Missing attestation signature"))?;
-    
+
     let pubkey_bytes: [u8; 32] = hex::decode(&attestation.leader_public_key)?
         .try_into()
         .map_err(|_| anyhow!("Invalid leader public key format"))?;
-    
+
     let verifying_key = VerifyingKey::from_bytes(&pubkey_bytes)?;
-    
+
     let sig_bytes: [u8; 64] = hex::decode(&sig_obj.signature_bytes)?
         .try_into()
         .map_err(|_| anyhow!("Invalid signature length"))?;
-    
+
     let signature = Signature::from_bytes(&sig_bytes);
 
     // Reconstruct attestation without signature field to verify the signed payload
@@ -168,7 +175,7 @@ pub fn verify_attestation(attestation: &CampaignAttestation) -> Result<bool> {
         signature: None,
         ..attestation.clone()
     };
-    
+
     let canonical = crate::acp::canonicalize(&unsigned_att)?;
     if verifying_key.verify_strict(&canonical, &signature).is_err() {
         return Ok(false); // Top level signature validation failed
@@ -202,9 +209,14 @@ pub fn verify_attestation(attestation: &CampaignAttestation) -> Result<bool> {
 
 /// Executes the CLI command verify-provenance and prints a beautiful monochrome audit report
 pub fn verify_cli_command(path: &Path) -> Result<()> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| anyhow!("Failed to read attestation file at {}: {}", path.display(), e))?;
-    
+    let content = fs::read_to_string(path).map_err(|e| {
+        anyhow!(
+            "Failed to read attestation file at {}: {}",
+            path.display(),
+            e
+        )
+    })?;
+
     let attestation: CampaignAttestation = serde_json::from_str(&content)
         .map_err(|e| anyhow!("Invalid attestation JSON schema: {}", e))?;
 
@@ -216,15 +228,24 @@ pub fn verify_cli_command(path: &Path) -> Result<()> {
     println!("\n{gray}────────────────────────────────────────────────────────────────────────────────{reset}");
     println!("  {bold}{white}korg cryptographic execution trace audit verifier{reset}");
     println!("{gray}────────────────────────────────────────────────────────────────────────────────{reset}");
-    println!("  session_id:      {white}{}{reset}", attestation.session_id);
+    println!(
+        "  session_id:      {white}{}{reset}",
+        attestation.session_id
+    );
     println!("  root_prompt:     {white}{}{reset}", attestation.root_task);
     println!("  timestamp:       {white}{}{reset}", attestation.timestamp);
-    println!("  leader_pubkey:   {white}{}{reset}", attestation.leader_public_key);
-    println!("  total_rounds:    {white}{}{reset}", attestation.total_rounds);
+    println!(
+        "  leader_pubkey:   {white}{}{reset}",
+        attestation.leader_public_key
+    );
+    println!(
+        "  total_rounds:    {white}{}{reset}",
+        attestation.total_rounds
+    );
     println!("{gray}────────────────────────────────────────────────────────────────────────────────{reset}");
 
     println!("  running cryptographic security validations...");
-    
+
     // 1. Validate top-level signature and hash chain
     let sig_valid = match verify_attestation(&attestation) {
         Ok(valid) => valid,
@@ -236,7 +257,10 @@ pub fn verify_cli_command(path: &Path) -> Result<()> {
 
     if sig_valid {
         println!("  ✓ {white}leader signature verification successful{reset}");
-        println!("  ✓ {white}hash-chain integrity verified ({}){reset}", attestation.trace_hash_chain_root);
+        println!(
+            "  ✓ {white}hash-chain integrity verified ({}){reset}",
+            attestation.trace_hash_chain_root
+        );
     } else {
         println!("  ❌ {bold}verification failed: signature invalid or trace tampered!{reset}");
         return Ok(());
@@ -254,7 +278,10 @@ pub fn verify_cli_command(path: &Path) -> Result<()> {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.ends_with(".ktrans.json") && !name.contains("provenance") {
                     if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                        if let Ok(envelope) = serde_json::from_str::<crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>>(&content) {
+                        if let Ok(envelope) = serde_json::from_str::<
+                            crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>,
+                        >(&content)
+                        {
                             ktrans_files.push(envelope.payload);
                         }
                     }
@@ -304,12 +331,18 @@ pub fn verify_cli_command(path: &Path) -> Result<()> {
                 match compute_sha256(&payload) {
                     Ok(computed) => {
                         if computed != ktrans.tx_hash {
-                            dag_error = Some(format!("JCS Hash mismatch for round {}: expected {}, got {}", ktrans.round, ktrans.tx_hash, computed));
+                            dag_error = Some(format!(
+                                "JCS Hash mismatch for round {}: expected {}, got {}",
+                                ktrans.round, ktrans.tx_hash, computed
+                            ));
                             break;
                         }
                     }
                     Err(e) => {
-                        dag_error = Some(format!("Failed to compute JCS hash for round {}: {}", ktrans.round, e));
+                        dag_error = Some(format!(
+                            "Failed to compute JCS hash for round {}: {}",
+                            ktrans.round, e
+                        ));
                         break;
                     }
                 }
@@ -317,7 +350,10 @@ pub fn verify_cli_command(path: &Path) -> Result<()> {
                 // Verify parent chains
                 for parent in &ktrans.parent_hashes {
                     if !seen_hashes.contains(parent) {
-                        dag_error = Some(format!("Merkle-DAG integrity broken at round {}: parent hash {} not found", ktrans.round, parent));
+                        dag_error = Some(format!(
+                            "Merkle-DAG integrity broken at round {}: parent hash {} not found",
+                            ktrans.round, parent
+                        ));
                         break;
                     }
                 }
@@ -331,7 +367,10 @@ pub fn verify_cli_command(path: &Path) -> Result<()> {
     }
 
     if let Some(err) = dag_error {
-        println!("  ❌ {bold}cryptographic verification error: Merkle-DAG validation failed:{reset} {}", err);
+        println!(
+            "  ❌ {bold}cryptographic verification error: Merkle-DAG validation failed:{reset} {}",
+            err
+        );
         return Ok(());
     } else if has_dag {
         println!("  ✓ {white}physical and logical Merkle-DAG ledger verified (zero-trust audit pass){reset}");
@@ -374,20 +413,20 @@ pub fn log_execution_event(event: ExecutionEvent) -> Result<()> {
     if !korg_dir.exists() {
         std::fs::create_dir_all(korg_dir)?;
     }
-    
+
     let journal_path = korg_dir.join("execution_journal.jsonl");
     let lock_path = korg_dir.join("execution_journal.lock");
-    
+
     // Open/create lock file
     let lock_file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .open(&lock_path)?;
-    
+
     // Exclusive advisory lock
     fs2::FileExt::lock_exclusive(&lock_file)?;
-    
+
     let mut events = Vec::new();
     if journal_path.exists() {
         let content = std::fs::read_to_string(&journal_path)?;
@@ -399,30 +438,30 @@ pub fn log_execution_event(event: ExecutionEvent) -> Result<()> {
             }
         }
     }
-    
+
     events.push(serde_json::to_value(&event)?);
-    
+
     let tmp_path = korg_dir.join("execution_journal.tmp");
     let mut tmp_file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(&tmp_path)?;
-        
+
     for ev in events {
         let line = serde_json::to_string(&ev)?;
         use std::io::Write as _;
         writeln!(tmp_file, "{}", line)?;
     }
-    
+
     tmp_file.sync_all()?;
     drop(tmp_file);
-    
+
     std::fs::rename(&tmp_path, &journal_path)?;
-    
+
     // Unlock
     fs2::FileExt::unlock(&lock_file)?;
-    
+
     Ok(())
 }
 
@@ -433,15 +472,15 @@ pub fn log_tool_invocation(
     output: &str,
 ) -> Result<()> {
     use sha2::{Digest, Sha256};
-    
+
     let mut cap_hasher = Sha256::new();
     cap_hasher.update(tool_name.as_bytes());
     let capability_hash = hex::encode(cap_hasher.finalize());
-    
+
     let mut out_hasher = Sha256::new();
     out_hasher.update(output.as_bytes());
     let output_digest = hex::encode(out_hasher.finalize());
-    
+
     let event = ExecutionEvent {
         event_id: uuid::Uuid::new_v4().to_string(),
         parent_event: None,
@@ -451,7 +490,7 @@ pub fn log_tool_invocation(
         output_digest,
         timestamp: chrono::Utc::now(),
     };
-    
+
     log_execution_event(event)
 }
 

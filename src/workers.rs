@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::task::JoinSet;
-use tokio::time::{Duration, timeout};
+use tokio::time::{timeout, Duration};
 
 /// How long a single worker is allowed to run before it is considered hung.
 /// Workers that exceed this will have their join cancelled and are treated as crashed.
@@ -459,7 +459,10 @@ pub async fn dispatch_level(
         let mut wm = coordinator.workspace_manager.lock().await;
         wm.cleanup_all_for_session(coordinator.session_id).await
     };
-    tracing::debug!(destroyed_workspaces = destroyed, "level_workspaces_cleaned_up");
+    tracing::debug!(
+        destroyed_workspaces = destroyed,
+        "level_workspaces_cleaned_up"
+    );
 
     LevelResult {
         completed,
@@ -492,37 +495,55 @@ pub async fn build_campaign_dag(
     let mut dag = ExecutionDag::new(root_task);
 
     dag.add_node(DagNode {
-        id: "pkg-captain".into(), name: "Captain Persona".into(),
-        command: "RouteWork captain".into(), dependencies: vec![],
-        status: NodeStatus::Pending, confidence: 0.92,
-        risk: "Low".into(), severity: "Low".into(),
-        blast_radius: "Scoped".into(), certainty: 0.9,
+        id: "pkg-captain".into(),
+        name: "Captain Persona".into(),
+        command: "RouteWork captain".into(),
+        dependencies: vec![],
+        status: NodeStatus::Pending,
+        confidence: 0.92,
+        risk: "Low".into(),
+        severity: "Low".into(),
+        blast_radius: "Scoped".into(),
+        certainty: 0.9,
         remediation_confidence: 0.9,
     });
     dag.add_node(DagNode {
-        id: "pkg-harper".into(), name: "Harper Persona".into(),
-        command: "RouteWork harper".into(), dependencies: vec![],
-        status: NodeStatus::Pending, confidence: 0.88,
-        risk: "Low".into(), severity: "Medium".into(),
-        blast_radius: "Scoped".into(), certainty: 0.85,
+        id: "pkg-harper".into(),
+        name: "Harper Persona".into(),
+        command: "RouteWork harper".into(),
+        dependencies: vec![],
+        status: NodeStatus::Pending,
+        confidence: 0.88,
+        risk: "Low".into(),
+        severity: "Medium".into(),
+        blast_radius: "Scoped".into(),
+        certainty: 0.85,
         remediation_confidence: 0.85,
     });
     dag.add_node(DagNode {
-        id: "pkg-benjamin".into(), name: "Benjamin Persona".into(),
+        id: "pkg-benjamin".into(),
+        name: "Benjamin Persona".into(),
         command: "RouteWork benjamin".into(),
         dependencies: vec!["pkg-captain".into(), "pkg-harper".into()],
-        status: NodeStatus::Pending, confidence: 0.78,
-        risk: "Medium".into(), severity: "High".into(),
-        blast_radius: "Module".into(), certainty: 0.80,
+        status: NodeStatus::Pending,
+        confidence: 0.78,
+        risk: "Medium".into(),
+        severity: "High".into(),
+        blast_radius: "Module".into(),
+        certainty: 0.80,
         remediation_confidence: 0.80,
     });
     dag.add_node(DagNode {
-        id: "pkg-lucas".into(), name: "Lucas Persona".into(),
+        id: "pkg-lucas".into(),
+        name: "Lucas Persona".into(),
         command: "RouteWork lucas".into(),
         dependencies: vec!["pkg-benjamin".into()],
-        status: NodeStatus::Pending, confidence: 0.85,
-        risk: "Low".into(), severity: "Low".into(),
-        blast_radius: "Scoped".into(), certainty: 0.9,
+        status: NodeStatus::Pending,
+        confidence: 0.85,
+        risk: "Low".into(),
+        severity: "Low".into(),
+        blast_radius: "Scoped".into(),
+        certainty: 0.9,
         remediation_confidence: 0.9,
     });
 
@@ -548,9 +569,9 @@ pub async fn build_campaign_dag(
         let node_id = pkg_json["id"].as_str().unwrap_or("").to_string();
         let persona = match pkg_json["personas"][0].as_str().unwrap_or("benjamin") {
             "captain" => Persona::Captain,
-            "harper"  => Persona::Harper,
-            "lucas"   => Persona::Lucas,
-            _         => Persona::Benjamin,
+            "harper" => Persona::Harper,
+            "lucas" => Persona::Lucas,
+            _ => Persona::Benjamin,
         };
         let description = pkg_json["description"].as_str().unwrap_or("").to_string();
         packages_map.insert(
@@ -638,54 +659,55 @@ pub async fn spawn_worker_process(
         event.trace(&workspace_id);
 
         match event {
-            WorkerEvent::AcpMsg { message, verified } => {
-                match message {
-                    AcpMessage::SwarmTelemetryPulse { .. } => {
-                        if let Ok(mut board) = bb.lock() {
-                            board.ingest_telemetry_pulse(&message, Some(uuid::Uuid::new_v4()));
-                        }
-                        tracing::debug!(
-                            persona = persona.name(),
-                            verified,
-                            "swarm_telemetry_ingested"
-                        );
+            WorkerEvent::AcpMsg { message, verified } => match message {
+                AcpMessage::SwarmTelemetryPulse { .. } => {
+                    if let Ok(mut board) = bb.lock() {
+                        board.ingest_telemetry_pulse(&message, Some(uuid::Uuid::new_v4()));
                     }
-                    AcpMessage::SubmitTransaction { payload: tx_payload, .. } => {
-                        tracing::debug!(persona = persona.name(), "submit_transaction_received");
-                        last_tx = Some(tx_payload);
-                    }
-                    AcpMessage::ShellExecResult(result) => {
-                        tracing::debug!(
-                            persona = persona.name(),
-                            verified,
-                            stdout = result.stdout.trim(),
-                            "shell_exec_result"
-                        );
-                    }
-                    AcpMessage::TestRunResult(result) => {
-                        tracing::info!(
-                            persona = persona.name(),
-                            verified,
-                            tests_run = result.tests_run,
-                            tests_passed = result.tests_passed,
-                            tests_failed = result.tests_failed,
-                            "test_run_result"
-                        );
-                    }
-                    AcpMessage::PatchApplyResult(_) | AcpMessage::FileReadResult(_) => {
-                        tracing::debug!(persona = persona.name(), verified, "tool_result_received");
-                    }
-                    AcpMessage::TerminationReport { exit_status, .. } => {
-                        tracing::info!(
-                            persona = persona.name(),
-                            exit_status = %exit_status,
-                            verified,
-                            "worker_terminated"
-                        );
-                    }
-                    _ => {}
+                    tracing::debug!(
+                        persona = persona.name(),
+                        verified,
+                        "swarm_telemetry_ingested"
+                    );
                 }
-            }
+                AcpMessage::SubmitTransaction {
+                    payload: tx_payload,
+                    ..
+                } => {
+                    tracing::debug!(persona = persona.name(), "submit_transaction_received");
+                    last_tx = Some(tx_payload);
+                }
+                AcpMessage::ShellExecResult(result) => {
+                    tracing::debug!(
+                        persona = persona.name(),
+                        verified,
+                        stdout = result.stdout.trim(),
+                        "shell_exec_result"
+                    );
+                }
+                AcpMessage::TestRunResult(result) => {
+                    tracing::info!(
+                        persona = persona.name(),
+                        verified,
+                        tests_run = result.tests_run,
+                        tests_passed = result.tests_passed,
+                        tests_failed = result.tests_failed,
+                        "test_run_result"
+                    );
+                }
+                AcpMessage::PatchApplyResult(_) | AcpMessage::FileReadResult(_) => {
+                    tracing::debug!(persona = persona.name(), verified, "tool_result_received");
+                }
+                AcpMessage::TerminationReport { exit_status, .. } => {
+                    tracing::info!(
+                        persona = persona.name(),
+                        exit_status = %exit_status,
+                        verified,
+                        "worker_terminated"
+                    );
+                }
+                _ => {}
+            },
             WorkerEvent::Completed { exit_code, .. } => {
                 if exit_code != 0 {
                     crashed = true;
@@ -816,19 +838,21 @@ mod tests {
             ]
         });
 
-        let (dag, levels, packages_map) = build_campaign_dag(
-            "test-root-task",
-            &packages_json,
-            None,
-        )
-        .await
-        .expect("build_campaign_dag should succeed");
+        let (dag, levels, packages_map) =
+            build_campaign_dag("test-root-task", &packages_json, None)
+                .await
+                .expect("build_campaign_dag should succeed");
 
         // The DAG has 4 nodes in 3 topological levels:
         // L1: [captain, harper] (no deps)
         // L2: [benjamin] (depends on captain + harper)
         // L3: [lucas] (depends on benjamin)
-        assert_eq!(levels.len(), 3, "expected 3 topological levels, got {}", levels.len());
+        assert_eq!(
+            levels.len(),
+            3,
+            "expected 3 topological levels, got {}",
+            levels.len()
+        );
         assert_eq!(levels[0].len(), 2, "L1 should have captain + harper");
         assert_eq!(levels[1].len(), 1, "L2 should have benjamin");
         assert_eq!(levels[2].len(), 1, "L3 should have lucas");

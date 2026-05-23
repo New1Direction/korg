@@ -1,6 +1,6 @@
+use super::plan::{MutationStep, SafetyCheck, TransitionPlan};
+use super::types::{CapabilityEffect, CapabilityNode, CapabilityState, EffectNode};
 use std::collections::HashMap;
-use super::types::{CapabilityNode, CapabilityState, CapabilityEffect, EffectNode};
-use super::plan::{TransitionPlan, MutationStep, SafetyCheck};
 
 pub struct CapabilityPlanner;
 
@@ -11,10 +11,12 @@ impl CapabilityPlanner {
         target_id: &str,
         target_state: CapabilityState,
     ) -> Result<TransitionPlan, String> {
-        let node = nodes.get(target_id)
+        let node = nodes
+            .get(target_id)
             .ok_or_else(|| format!("Unknown capability: {}", target_id))?;
 
-        let previous_state = active_states.get(target_id)
+        let previous_state = active_states
+            .get(target_id)
             .unwrap_or(&node.default_state)
             .clone();
 
@@ -45,10 +47,12 @@ impl CapabilityPlanner {
         // Generate safety checks
         plan.safety_checks.push(SafetyCheck::VerifyDag);
         for dep in &node.dependencies {
-            plan.safety_checks.push(SafetyCheck::CheckDependency(dep.clone()));
+            plan.safety_checks
+                .push(SafetyCheck::CheckDependency(dep.clone()));
         }
         for conflict in &node.conflicts {
-            plan.safety_checks.push(SafetyCheck::CheckConflict(conflict.clone()));
+            plan.safety_checks
+                .push(SafetyCheck::CheckConflict(conflict.clone()));
         }
 
         Ok(plan)

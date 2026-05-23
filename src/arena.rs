@@ -147,11 +147,11 @@ pub async fn run_arena(results: &[PersonaResult]) -> ArenaOutcome {
     let mut scores = [0.85f32; 4];
     for (worker, score) in &evaluated {
         let idx = match worker.persona {
-            Persona::Captain  => 0,
-            Persona::Harper   => 1,
+            Persona::Captain => 0,
+            Persona::Harper => 1,
             Persona::Benjamin => 2,
-            Persona::Lucas    => 3,
-            _                 => continue,
+            Persona::Lucas => 3,
+            _ => continue,
         };
         scores[idx] = *score;
     }
@@ -260,7 +260,11 @@ mod tests {
     fn test_churn_penalty_oscillating() {
         let history = VecDeque::from(vec![0.9, 0.1, 0.9, 0.1, 0.9, 0.1]);
         let penalty = update_churn_penalty(&history);
-        assert!(penalty > 0.3, "oscillating rewards should produce non-trivial penalty, got {}", penalty);
+        assert!(
+            penalty > 0.3,
+            "oscillating rewards should produce non-trivial penalty, got {}",
+            penalty
+        );
     }
 
     #[test]

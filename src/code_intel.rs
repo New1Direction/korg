@@ -90,7 +90,11 @@ impl CodeIntelEngine {
     }
 
     /// Recursively scans AST nodes searching for tree-sitter error/missing tokens.
-    fn traverse_anomalies(node: tree_sitter::Node, source: &str, anomalies: &mut Vec<SyntaxAnomaly>) {
+    fn traverse_anomalies(
+        node: tree_sitter::Node,
+        source: &str,
+        anomalies: &mut Vec<SyntaxAnomaly>,
+    ) {
         if node.is_error() {
             let start = node.start_position();
             let context = node.utf8_text(source.as_bytes()).unwrap_or("").to_string();
@@ -99,7 +103,11 @@ impl CodeIntelEngine {
                 column: start.column + 1,
                 severity: "Error".to_string(),
                 kind: "SyntaxError".to_string(),
-                context: if context.is_empty() { "Unexpected token or syntax structure".to_string() } else { context },
+                context: if context.is_empty() {
+                    "Unexpected token or syntax structure".to_string()
+                } else {
+                    context
+                },
             });
         } else if node.is_missing() {
             let start = node.start_position();
@@ -134,17 +142,21 @@ impl CodeIntelEngine {
         };
 
         let query_str = match lang {
-            KorgLanguage::Rust => r#"
+            KorgLanguage::Rust => {
+                r#"
                 (function_item name: (identifier) @name) @item
                 (struct_item name: (type_identifier) @name) @item
                 (impl_item type: (type_identifier) @name) @item
                 (trait_item name: (type_identifier) @name) @item
                 (mod_item name: (identifier) @name) @item
-            "#,
-            KorgLanguage::Python => r#"
+            "#
+            }
+            KorgLanguage::Python => {
+                r#"
                 (function_definition name: (identifier) @name) @item
                 (class_definition name: (identifier) @name) @item
-            "#,
+            "#
+            }
         };
 
         let query = match Query::new(&ts_lang, query_str) {
@@ -192,14 +204,19 @@ impl CodeIntelEngine {
     }
 
     /// Structural Search matching Lisp-style S-expressions
-    pub fn query_structure(source: &str, lang: KorgLanguage, query_str: &str) -> Result<Vec<StructuralMatch>, String> {
+    pub fn query_structure(
+        source: &str,
+        lang: KorgLanguage,
+        query_str: &str,
+    ) -> Result<Vec<StructuralMatch>, String> {
         let mut parser = Parser::new();
         let ts_lang = lang.tree_sitter_lang();
         if parser.set_language(&ts_lang).is_err() {
             return Err("Failed to configure tree-sitter language parser".to_string());
         }
 
-        let tree = parser.parse(source, None)
+        let tree = parser
+            .parse(source, None)
             .ok_or_else(|| "Failed to parse code tree".to_string())?;
 
         let query = Query::new(&ts_lang, query_str)
@@ -212,7 +229,9 @@ impl CodeIntelEngine {
         while let Some(m) = matches.next() {
             for cap in m.captures {
                 let capture_name = query.capture_names()[cap.index as usize].to_string();
-                let matched_text = cap.node.utf8_text(source.as_bytes())
+                let matched_text = cap
+                    .node
+                    .utf8_text(source.as_bytes())
                     .unwrap_or("")
                     .to_string();
                 let start_line = cap.node.start_position().row + 1;
@@ -270,9 +289,15 @@ mod tests {
         let symbols = CodeIntelEngine::extract_symbols(sample_rust, KorgLanguage::Rust);
         assert!(!symbols.is_empty());
 
-        let has_struct = symbols.iter().any(|s| s.name == "UserSession" && s.kind == "struct_item");
-        let has_impl = symbols.iter().any(|s| s.name == "UserSession" && s.kind == "impl_item");
-        let has_fn = symbols.iter().any(|s| s.name == "is_valid" && s.kind == "function_item");
+        let has_struct = symbols
+            .iter()
+            .any(|s| s.name == "UserSession" && s.kind == "struct_item");
+        let has_impl = symbols
+            .iter()
+            .any(|s| s.name == "UserSession" && s.kind == "impl_item");
+        let has_fn = symbols
+            .iter()
+            .any(|s| s.name == "is_valid" && s.kind == "function_item");
 
         assert!(has_struct);
         assert!(has_impl);
@@ -289,7 +314,8 @@ def resolve_campaign(tx_id):
         "#;
 
         let query = "(function_definition name: (identifier) @func.name)";
-        let matches = CodeIntelEngine::query_structure(sample_python, KorgLanguage::Python, query).unwrap();
+        let matches =
+            CodeIntelEngine::query_structure(sample_python, KorgLanguage::Python, query).unwrap();
         assert!(!matches.is_empty());
         assert_eq!(matches[0].capture_name, "func.name");
         assert_eq!(matches[0].matched_text, "resolve_campaign");

@@ -373,7 +373,9 @@ pub enum AcpMessage {
 
     /// First-class ACP message for campaign transactional logs (.ktrans).
     /// Allows .ktrans to be routed, framed, and verified exactly like other ACP messages.
-    CampaignKtrans { ktrans: CampaignKtrans },
+    CampaignKtrans {
+        ktrans: CampaignKtrans,
+    },
 
     // === Coding Tool Payloads (foundational for Option C) ===
     FileReadRequest(FileReadRequestPayload),
@@ -432,7 +434,7 @@ pub struct VisionAttachment {
     pub mime_type: String,
     pub data_base64: String,
     pub description: String,
-    pub verdict: String,                 // "APPROVED" | "REDACTED" | "BLOCKED" | "PENDING"
+    pub verdict: String, // "APPROVED" | "REDACTED" | "BLOCKED" | "PENDING"
     pub infraction_patterns: Vec<String>,
     pub raw_data_base64: Option<String>,
     #[serde(default)]
@@ -578,7 +580,7 @@ pub struct PatchApplyResultPayload {
 // === Test Execution Payloads (next coding capability) ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestRunRequestPayload {
-    pub command: String,           // "cargo", "uv", etc.
+    pub command: String, // "cargo", "uv", etc.
     pub args: Vec<String>,
     pub cwd: Option<String>,
     pub timeout_ms: Option<u64>,
@@ -595,7 +597,7 @@ pub struct TestRunResultPayload {
     pub tests_failed: u32,
     pub tests_ignored: u32,
     pub coverage_percent: Option<f32>,
-    pub failure_summaries: Vec<String>,   // first few failing test names + messages
+    pub failure_summaries: Vec<String>, // first few failing test names + messages
     pub stdout: String,
     pub stderr: String,
     pub error: Option<String>,

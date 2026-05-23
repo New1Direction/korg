@@ -74,7 +74,7 @@ pub struct LlmRequest {
     pub tools: Option<Vec<ToolDefinition>>,
     pub stop_sequences: Option<Vec<String>>,
     pub multimodal: Option<Vec<MultiModalContent>>,
-    
+
     // Provenance / policy metadata
     pub tx_id: Option<String>,
     pub session_id: Option<String>,
@@ -203,7 +203,11 @@ impl LlmProvider for MockProvider {
             resp
         } else {
             // Default mock response based on user inputs
-            let input_summary = req.messages.last().map(|m| m.content.as_str()).unwrap_or("");
+            let input_summary = req
+                .messages
+                .last()
+                .map(|m| m.content.as_str())
+                .unwrap_or("");
             let content = format!("[Mock Response to: \"{}\"]", input_summary);
             Ok(LlmResponse {
                 content,
@@ -227,9 +231,21 @@ impl LlmProvider for MockProvider {
             stream_data
         } else {
             vec![
-                LlmDelta { content: "Mock ".to_string(), tool_calls: None, finish_reason: None },
-                LlmDelta { content: "stream ".to_string(), tool_calls: None, finish_reason: None },
-                LlmDelta { content: "reply.".to_string(), tool_calls: None, finish_reason: Some(FinishReason::Stop) },
+                LlmDelta {
+                    content: "Mock ".to_string(),
+                    tool_calls: None,
+                    finish_reason: None,
+                },
+                LlmDelta {
+                    content: "stream ".to_string(),
+                    tool_calls: None,
+                    finish_reason: None,
+                },
+                LlmDelta {
+                    content: "reply.".to_string(),
+                    tool_calls: None,
+                    finish_reason: Some(FinishReason::Stop),
+                },
             ]
         };
 
@@ -378,7 +394,9 @@ impl OpenAIProvider {
             .get("choices")
             .and_then(|c| c.as_array())
             .and_then(|a| a.first())
-            .ok_or_else(|| LlmError::Parser("No choices returned in OpenAI response".to_string()))?;
+            .ok_or_else(|| {
+                LlmError::Parser("No choices returned in OpenAI response".to_string())
+            })?;
 
         let message = choice
             .get("message")
@@ -390,11 +408,14 @@ impl OpenAIProvider {
             .unwrap_or("")
             .to_string();
 
-        let tool_calls = message.get("tool_calls").and_then(|tc| {
-            serde_json::from_value::<Vec<ToolCall>>(tc.clone()).ok()
-        });
+        let tool_calls = message
+            .get("tool_calls")
+            .and_then(|tc| serde_json::from_value::<Vec<ToolCall>>(tc.clone()).ok());
 
-        let finish_reason_str = choice.get("finish_reason").and_then(|f| f.as_str()).unwrap_or("stop");
+        let finish_reason_str = choice
+            .get("finish_reason")
+            .and_then(|f| f.as_str())
+            .unwrap_or("stop");
         let finish_reason = match finish_reason_str {
             "stop" => FinishReason::Stop,
             "length" => FinishReason::Length,
@@ -403,13 +424,14 @@ impl OpenAIProvider {
             other => FinishReason::Other(other.to_string()),
         };
 
-        let usage = val.get("usage").and_then(|u| {
-            serde_json::from_value::<TokenUsage>(u.clone()).ok()
-        }).unwrap_or(TokenUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        });
+        let usage = val
+            .get("usage")
+            .and_then(|u| serde_json::from_value::<TokenUsage>(u.clone()).ok())
+            .unwrap_or(TokenUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+            });
 
         let model = val
             .get("model")
@@ -504,10 +526,14 @@ impl LlmProvider for OpenAIProvider {
                 Ok(val) => {
                     let choice = val.get("choices")?.as_array()?.first()?;
                     let delta = choice.get("delta")?;
-                    let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                    let tool_calls = delta.get("tool_calls").and_then(|tc| {
-                        serde_json::from_value::<Vec<ToolCall>>(tc.clone()).ok()
-                    });
+                    let content = delta
+                        .get("content")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let tool_calls = delta
+                        .get("tool_calls")
+                        .and_then(|tc| serde_json::from_value::<Vec<ToolCall>>(tc.clone()).ok());
                     let finish_reason_str = choice.get("finish_reason").and_then(|f| f.as_str());
                     let finish_reason = finish_reason_str.map(|fr| match fr {
                         "stop" => FinishReason::Stop,
@@ -523,7 +549,10 @@ impl LlmProvider for OpenAIProvider {
                         finish_reason,
                     }))
                 }
-                Err(e) => Some(Err(LlmError::Parser(format!("Failed to parse SSE line: {}", e)))),
+                Err(e) => Some(Err(LlmError::Parser(format!(
+                    "Failed to parse SSE line: {}",
+                    e
+                )))),
             }
         };
 
@@ -548,7 +577,8 @@ impl AnthropicProvider {
             client: reqwest::Client::new(),
             api_key,
             base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com/v1".to_string()),
-            default_model: default_model.unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string()),
+            default_model: default_model
+                .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string()),
         }
     }
 
@@ -619,7 +649,9 @@ impl AnthropicProvider {
         let content_blocks = val
             .get("content")
             .and_then(|c| c.as_array())
-            .ok_or_else(|| LlmError::Parser("No content blocks returned from Anthropic".to_string()))?;
+            .ok_or_else(|| {
+                LlmError::Parser("No content blocks returned from Anthropic".to_string())
+            })?;
 
         let mut content = String::new();
         let mut tool_calls = Vec::new();
@@ -648,7 +680,10 @@ impl AnthropicProvider {
             }
         }
 
-        let stop_reason_str = val.get("stop_reason").and_then(|s| s.as_str()).unwrap_or("end_turn");
+        let stop_reason_str = val
+            .get("stop_reason")
+            .and_then(|s| s.as_str())
+            .unwrap_or("end_turn");
         let finish_reason = match stop_reason_str {
             "end_turn" => FinishReason::Stop,
             "max_tokens" => FinishReason::Length,
@@ -658,8 +693,14 @@ impl AnthropicProvider {
 
         // Usage mapping
         let usage_val = val.get("usage");
-        let input_tokens = usage_val.and_then(|u| u.get("input_tokens")).and_then(|t| t.as_u64()).unwrap_or(0) as u32;
-        let output_tokens = usage_val.and_then(|u| u.get("output_tokens")).and_then(|t| t.as_u64()).unwrap_or(0) as u32;
+        let input_tokens = usage_val
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0) as u32;
+        let output_tokens = usage_val
+            .and_then(|u| u.get("output_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0) as u32;
         let usage = TokenUsage {
             prompt_tokens: input_tokens,
             completion_tokens: output_tokens,
@@ -672,7 +713,11 @@ impl AnthropicProvider {
             .unwrap_or(&self.default_model)
             .to_string();
 
-        let tool_calls_opt = if tool_calls.is_empty() { None } else { Some(tool_calls) };
+        let tool_calls_opt = if tool_calls.is_empty() {
+            None
+        } else {
+            Some(tool_calls)
+        };
 
         Ok(LlmResponse {
             content,
@@ -761,7 +806,11 @@ impl LlmProvider for AnthropicProvider {
             match sse_type {
                 "content_block_delta" => {
                     let delta_val = val.get("delta")?;
-                    let text = delta_val.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                    let text = delta_val
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     Some(Ok(LlmDelta {
                         content: text,
                         tool_calls: None,
@@ -902,12 +951,16 @@ fn read_persisted_cooldowns() -> std::collections::HashMap<String, chrono::DateT
         return std::collections::HashMap::new();
     }
 
-    let mut result: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>> = std::collections::HashMap::new();
+    let mut result: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>> =
+        std::collections::HashMap::new();
     if file_path.exists() {
         if let Ok(mut f) = std::fs::File::open(&file_path) {
             let mut content = String::new();
             if f.read_to_string(&mut content).is_ok() {
-                if let Ok(parsed) = serde_json::from_str::<std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>>(&content) {
+                if let Ok(parsed) = serde_json::from_str::<
+                    std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
+                >(&content)
+                {
                     result = parsed;
                 }
             }
@@ -934,7 +987,9 @@ fn read_persisted_cooldowns() -> std::collections::HashMap<String, chrono::DateT
     result
 }
 
-fn write_persisted_cooldowns(cooldowns: &std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>) {
+fn write_persisted_cooldowns(
+    cooldowns: &std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
+) {
     use fs2::FileExt;
     use std::io::Write;
 
@@ -1005,7 +1060,7 @@ impl RotatorProvider {
         let now = chrono::Utc::now();
         let _guard = get_cooldowns_mutex().lock().unwrap();
         let registry = read_persisted_cooldowns();
-        
+
         // 1. First, try to find a candidate not on cooldown.
         for (i, cand) in self.candidates.iter().enumerate() {
             match registry.get(&cand.name) {
@@ -1049,7 +1104,7 @@ impl RotatorProvider {
             let mut registry = read_persisted_cooldowns();
             registry.insert(cand.name.clone(), chrono::Utc::now() + cooldown_dur);
             write_persisted_cooldowns(&registry);
-            
+
             // Console warning in dynamic colors
             let gold = "\x1b[38;2;255;215;0m";
             let reset = "\x1b[0m";
@@ -1069,7 +1124,9 @@ impl LlmProvider for RotatorProvider {
 
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
         if self.candidates.is_empty() {
-            return Err(LlmError::Unknown("No rotator candidates configured".to_string()));
+            return Err(LlmError::Unknown(
+                "No rotator candidates configured".to_string(),
+            ));
         }
 
         let mut attempted = std::collections::HashSet::new();
@@ -1116,7 +1173,9 @@ impl LlmProvider for RotatorProvider {
             }
         }
 
-        Err(LlmError::Unknown("All rotator candidates failed".to_string()))
+        Err(LlmError::Unknown(
+            "All rotator candidates failed".to_string(),
+        ))
     }
 
     async fn complete_stream(
@@ -1124,7 +1183,9 @@ impl LlmProvider for RotatorProvider {
         req: LlmRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmDelta, LlmError>> + Send>>, LlmError> {
         if self.candidates.is_empty() {
-            return Err(LlmError::Unknown("No rotator candidates configured".to_string()));
+            return Err(LlmError::Unknown(
+                "No rotator candidates configured".to_string(),
+            ));
         }
 
         let mut attempted = std::collections::HashSet::new();
@@ -1164,7 +1225,9 @@ impl LlmProvider for RotatorProvider {
             }
         }
 
-        Err(LlmError::Unknown("All rotator candidates failed to establish stream".to_string()))
+        Err(LlmError::Unknown(
+            "All rotator candidates failed to establish stream".to_string(),
+        ))
     }
 }
 
@@ -1229,11 +1292,15 @@ pub struct SemanticLlmCache;
 
 impl SemanticLlmCache {
     fn cache_path() -> std::path::PathBuf {
-        crate::paths::project_root().join(".korg").join("semantic_llm_cache.json")
+        crate::paths::project_root()
+            .join(".korg")
+            .join("semantic_llm_cache.json")
     }
 
     fn lock_path() -> std::path::PathBuf {
-        crate::paths::project_root().join(".korg").join("semantic_cache.lock")
+        crate::paths::project_root()
+            .join(".korg")
+            .join("semantic_cache.lock")
     }
 
     pub fn get(req: &LlmRequest) -> Option<LlmResponse> {
@@ -1244,7 +1311,7 @@ impl SemanticLlmCache {
 
         let lock_path = Self::lock_path();
         let _ = std::fs::create_dir_all(lock_path.parent().unwrap());
-        
+
         let lock_file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -1254,7 +1321,8 @@ impl SemanticLlmCache {
         use fs2::FileExt;
         if lock_file.lock_shared().is_ok() {
             let cache_file_path = Self::cache_path();
-            let mut cache: std::collections::HashMap<String, LlmResponse> = std::collections::HashMap::new();
+            let mut cache: std::collections::HashMap<String, LlmResponse> =
+                std::collections::HashMap::new();
             if cache_file_path.exists() {
                 if let Ok(mut f) = std::fs::File::open(&cache_file_path) {
                     let mut content = String::new();
@@ -1295,8 +1363,9 @@ impl SemanticLlmCache {
         if lock_file.lock_exclusive().is_ok() {
             let cache_file_path = Self::cache_path();
             let tmp_path = cache_file_path.with_extension("tmp");
-            
-            let mut cache: std::collections::HashMap<String, LlmResponse> = std::collections::HashMap::new();
+
+            let mut cache: std::collections::HashMap<String, LlmResponse> =
+                std::collections::HashMap::new();
             if cache_file_path.exists() {
                 if let Ok(mut f) = std::fs::File::open(&cache_file_path) {
                     let mut content = String::new();
@@ -1352,8 +1421,10 @@ impl SemanticLlmCache {
 pub static CAMPAIGN_TOKENS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 pub static ROTATOR_HITS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 pub static HEALS_RESOLVED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-pub static COMPLETIONS_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-pub static TOTAL_LATENCY_MS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub static COMPLETIONS_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+pub static TOTAL_LATENCY_MS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 pub struct ResilientLlmProvider {
     pub inner: Arc<dyn LlmProvider>,
@@ -1404,8 +1475,7 @@ impl LlmProvider for ResilientLlmProvider {
             eprintln!("{gold}⚠️  [security-tokens] Campaign budget limit of {} exceeded (currently {}). Halting further operations.{reset}", config.security_tokens.max_campaign_tokens, current_campaign_tokens);
             return Err(LlmError::RateLimit(format!(
                 "Campaign token limit of {} exceeded (currently {})",
-                config.security_tokens.max_campaign_tokens,
-                current_campaign_tokens
+                config.security_tokens.max_campaign_tokens, current_campaign_tokens
             )));
         }
 
@@ -1430,7 +1500,7 @@ impl LlmProvider for ResilientLlmProvider {
                     if config.resilience.enable_semantic_cache {
                         SemanticLlmCache::insert(&req, &resp);
                     }
-                    
+
                     let usage_total = resp.usage.total_tokens;
                     if usage_total > config.security_tokens.max_request_tokens {
                         let gold = "\x1b[38;2;255;215;0m";
@@ -1438,12 +1508,12 @@ impl LlmProvider for ResilientLlmProvider {
                         eprintln!("{gold}⚠️  [security-tokens] Single request token limit of {} exceeded (got {}).{reset}", config.security_tokens.max_request_tokens, usage_total);
                         return Err(LlmError::RateLimit(format!(
                             "Request token limit of {} exceeded (got {})",
-                            config.security_tokens.max_request_tokens,
-                            usage_total
+                            config.security_tokens.max_request_tokens, usage_total
                         )));
                     }
 
-                    let prev = CAMPAIGN_TOKENS.fetch_add(usage_total as usize, std::sync::atomic::Ordering::Relaxed);
+                    let prev = CAMPAIGN_TOKENS
+                        .fetch_add(usage_total as usize, std::sync::atomic::Ordering::Relaxed);
                     let new_total = prev + usage_total as usize;
                     let limit = config.security_tokens.max_campaign_tokens as usize;
                     if new_total >= (limit * 8 / 10) && prev < (limit * 8 / 10) {
@@ -1458,8 +1528,7 @@ impl LlmProvider for ResilientLlmProvider {
                         eprintln!("{gold}⚠️  [security-tokens] Campaign budget limit of {} exceeded (currently {}). Halting further operations.{reset}", limit, new_total);
                         return Err(LlmError::RateLimit(format!(
                             "Campaign token limit of {} exceeded (currently {})",
-                            limit,
-                            new_total
+                            limit, new_total
                         )));
                     }
 
@@ -1696,7 +1765,6 @@ pub struct TomlConfig {
     pub resilience: Option<TomlResilienceSection>,
 }
 
-
 /// Per-persona LLM overrides.
 ///
 /// Example korg.toml:
@@ -1795,8 +1863,11 @@ impl KorgConfig {
             security_paths: PathsPolicyConfig::default(),
             security_network: NetworkPolicyConfig::default(),
             security_tokens: TokensPolicyConfig::default(),
-            allow_unsafe_commands: std::env::var("KORG_ALLOW_UNSAFE_COMMANDS").map(|v| v == "true").unwrap_or(false),
-            sandbox_mode: std::env::var("KORG_SANDBOX_MODE").unwrap_or_else(|_| "strict".to_string()),
+            allow_unsafe_commands: std::env::var("KORG_ALLOW_UNSAFE_COMMANDS")
+                .map(|v| v == "true")
+                .unwrap_or(false),
+            sandbox_mode: std::env::var("KORG_SANDBOX_MODE")
+                .unwrap_or_else(|_| "strict".to_string()),
             persona_overrides: std::collections::HashMap::new(),
             rotator_candidates: Vec::new(),
             resilience: ResilienceConfig::default(),
@@ -1817,7 +1888,9 @@ impl KorgConfig {
         let mut security_paths = PathsPolicyConfig::default();
         let mut security_network = NetworkPolicyConfig::default();
         let mut security_tokens = TokensPolicyConfig::default();
-        let mut allow_unsafe_commands = std::env::var("KORG_ALLOW_UNSAFE_COMMANDS").map(|v| v == "true").ok();
+        let mut allow_unsafe_commands = std::env::var("KORG_ALLOW_UNSAFE_COMMANDS")
+            .map(|v| v == "true")
+            .ok();
         let mut sandbox_mode = std::env::var("KORG_SANDBOX_MODE").ok();
 
         let mut persona_overrides = std::collections::HashMap::new();
@@ -1847,19 +1920,33 @@ impl KorgConfig {
                     default_model = parsed.default_model;
                 }
                 if let Some(sec) = parsed.openai {
-                    if openai_api_key.is_none() { openai_api_key = sec.api_key; }
-                    if openai_base_url.is_none() { openai_base_url = sec.base_url; }
+                    if openai_api_key.is_none() {
+                        openai_api_key = sec.api_key;
+                    }
+                    if openai_base_url.is_none() {
+                        openai_base_url = sec.base_url;
+                    }
                 }
                 if let Some(sec) = parsed.anthropic {
-                    if anthropic_api_key.is_none() { anthropic_api_key = sec.api_key; }
-                    if anthropic_base_url.is_none() { anthropic_base_url = sec.base_url; }
+                    if anthropic_api_key.is_none() {
+                        anthropic_api_key = sec.api_key;
+                    }
+                    if anthropic_base_url.is_none() {
+                        anthropic_base_url = sec.base_url;
+                    }
                 }
                 if let Some(sec) = parsed.grok {
-                    if grok_api_key.is_none() { grok_api_key = sec.api_key; }
-                    if grok_base_url.is_none() { grok_base_url = sec.base_url; }
+                    if grok_api_key.is_none() {
+                        grok_api_key = sec.api_key;
+                    }
+                    if grok_base_url.is_none() {
+                        grok_base_url = sec.base_url;
+                    }
                 }
                 if let Some(sec) = parsed.ollama {
-                    if ollama_base_url.is_none() { ollama_base_url = sec.base_url; }
+                    if ollama_base_url.is_none() {
+                        ollama_base_url = sec.base_url;
+                    }
                 }
                 // Parse per-persona overrides
                 if let Some(personas) = parsed.personas {
@@ -1872,15 +1959,18 @@ impl KorgConfig {
                     ];
                     for (name, maybe_override) in pairs {
                         if let Some(ov) = maybe_override {
-                            persona_overrides.insert(name.to_string(), PersonaLlmOverride {
-                                provider: ov.provider,
-                                model: ov.model,
-                                temperature: ov.temperature,
-                                top_p: ov.top_p,
-                                presence_penalty: ov.presence_penalty,
-                                frequency_penalty: ov.frequency_penalty,
-                                max_tokens: ov.max_tokens,
-                            });
+                            persona_overrides.insert(
+                                name.to_string(),
+                                PersonaLlmOverride {
+                                    provider: ov.provider,
+                                    model: ov.model,
+                                    temperature: ov.temperature,
+                                    top_p: ov.top_p,
+                                    presence_penalty: ov.presence_penalty,
+                                    frequency_penalty: ov.frequency_penalty,
+                                    max_tokens: ov.max_tokens,
+                                },
+                            );
                         }
                     }
                 }
@@ -1987,66 +2077,116 @@ pub fn build_provider(config: &KorgConfig) -> Arc<dyn LlmProvider> {
 /// Build a provider for a specific persona, using per-persona overrides if configured.
 ///
 /// Falls back to the default provider if no override is set for the persona.
-pub fn build_provider_for_persona(config: &KorgConfig, persona_name: &str) -> (Arc<dyn LlmProvider>, Option<f32>) {
+pub fn build_provider_for_persona(
+    config: &KorgConfig,
+    persona_name: &str,
+) -> (Arc<dyn LlmProvider>, Option<f32>) {
     let key = persona_name.to_lowercase();
     if let Some(ov) = config.persona_overrides.get(&key) {
         let provider_name = ov.provider.as_deref().unwrap_or(&config.default_llm);
         let model = ov.model.as_deref().or(config.default_model.as_deref());
-        (build_provider_with(config, provider_name, model), ov.temperature)
+        (
+            build_provider_with(config, provider_name, model),
+            ov.temperature,
+        )
     } else {
         (build_provider(config), None)
     }
 }
 
 /// Internal: build a provider given explicit provider name and model.
-fn build_provider_with(config: &KorgConfig, provider_name: &str, model: Option<&str>) -> Arc<dyn LlmProvider> {
+fn build_provider_with(
+    config: &KorgConfig,
+    provider_name: &str,
+    model: Option<&str>,
+) -> Arc<dyn LlmProvider> {
     let model_owned = model.map(|m| m.to_string());
     let raw_provider: Arc<dyn LlmProvider> = match provider_name {
         "openai" => {
-            let key = config.openai_api_key.clone().unwrap_or_else(|| "mock-key".to_string());
-            Arc::new(OpenAIProvider::new(key, config.openai_base_url.clone(), model_owned))
+            let key = config
+                .openai_api_key
+                .clone()
+                .unwrap_or_else(|| "mock-key".to_string());
+            Arc::new(OpenAIProvider::new(
+                key,
+                config.openai_base_url.clone(),
+                model_owned,
+            ))
         }
         "anthropic" => {
-            let key = config.anthropic_api_key.clone().unwrap_or_else(|| "mock-key".to_string());
-            Arc::new(AnthropicProvider::new(key, config.anthropic_base_url.clone(), model_owned))
+            let key = config
+                .anthropic_api_key
+                .clone()
+                .unwrap_or_else(|| "mock-key".to_string());
+            Arc::new(AnthropicProvider::new(
+                key,
+                config.anthropic_base_url.clone(),
+                model_owned,
+            ))
         }
         "grok" => {
-            let key = config.grok_api_key.clone().unwrap_or_else(|| "mock-key".to_string());
-            Arc::new(GrokProvider::new(key, config.grok_base_url.clone(), model_owned))
+            let key = config
+                .grok_api_key
+                .clone()
+                .unwrap_or_else(|| "mock-key".to_string());
+            Arc::new(GrokProvider::new(
+                key,
+                config.grok_base_url.clone(),
+                model_owned,
+            ))
         }
-        "ollama" => {
-            Arc::new(LocalOllamaProvider::new(config.ollama_base_url.clone(), model_owned))
-        }
+        "ollama" => Arc::new(LocalOllamaProvider::new(
+            config.ollama_base_url.clone(),
+            model_owned,
+        )),
         "rotator" => {
             let mut candidates = Vec::new();
             for cand in &config.rotator_candidates {
                 let inner_provider: Arc<dyn LlmProvider> = match cand.provider.as_str() {
                     "openai" => {
-                        let key = cand.api_key.clone()
+                        let key = cand
+                            .api_key
+                            .clone()
                             .or_else(|| config.openai_api_key.clone())
                             .unwrap_or_else(|| "mock-key".to_string());
-                        let base_url = cand.base_url.clone().or_else(|| config.openai_base_url.clone());
+                        let base_url = cand
+                            .base_url
+                            .clone()
+                            .or_else(|| config.openai_base_url.clone());
                         let model = cand.model.clone().or_else(|| model_owned.clone());
                         Arc::new(OpenAIProvider::new(key, base_url, model))
                     }
                     "anthropic" => {
-                        let key = cand.api_key.clone()
+                        let key = cand
+                            .api_key
+                            .clone()
                             .or_else(|| config.anthropic_api_key.clone())
                             .unwrap_or_else(|| "mock-key".to_string());
-                        let base_url = cand.base_url.clone().or_else(|| config.anthropic_base_url.clone());
+                        let base_url = cand
+                            .base_url
+                            .clone()
+                            .or_else(|| config.anthropic_base_url.clone());
                         let model = cand.model.clone().or_else(|| model_owned.clone());
                         Arc::new(AnthropicProvider::new(key, base_url, model))
                     }
                     "grok" => {
-                        let key = cand.api_key.clone()
+                        let key = cand
+                            .api_key
+                            .clone()
                             .or_else(|| config.grok_api_key.clone())
                             .unwrap_or_else(|| "mock-key".to_string());
-                        let base_url = cand.base_url.clone().or_else(|| config.grok_base_url.clone());
+                        let base_url = cand
+                            .base_url
+                            .clone()
+                            .or_else(|| config.grok_base_url.clone());
                         let model = cand.model.clone().or_else(|| model_owned.clone());
                         Arc::new(GrokProvider::new(key, base_url, model))
                     }
                     "ollama" => {
-                        let base_url = cand.base_url.clone().or_else(|| config.ollama_base_url.clone());
+                        let base_url = cand
+                            .base_url
+                            .clone()
+                            .or_else(|| config.ollama_base_url.clone());
                         let model = cand.model.clone().or_else(|| model_owned.clone());
                         Arc::new(LocalOllamaProvider::new(base_url, model))
                     }
@@ -2099,7 +2239,9 @@ mod tests {
         };
 
         let response = provider.complete(request).await.unwrap();
-        assert!(response.content.contains("Evaluate transaction authenticity"));
+        assert!(response
+            .content
+            .contains("Evaluate transaction authenticity"));
         assert_eq!(response.model, "mock-model-v1");
     }
 
@@ -2211,7 +2353,7 @@ mod tests {
         assert_eq!(payload["max_tokens"], 1024);
         assert_eq!(payload["system"], "Act as an evaluator persona");
         assert_eq!(payload["stop_sequences"], serde_json::json!(vec!["DONE"]));
-        
+
         // Assert system prompt was extracted and only 1 user message remains in messages array
         let messages = payload["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 1);
@@ -2284,13 +2426,18 @@ mod tests {
         assert_eq!(parsed.default_model.unwrap(), "grok-2");
         assert_eq!(parsed.grok.unwrap().api_key.unwrap(), "grok-special-key");
         assert_eq!(parsed.openai.unwrap().api_key.unwrap(), "openai-key");
-        assert_eq!(parsed.ollama.unwrap().base_url.unwrap(), "http://localhost:11434/v1");
+        assert_eq!(
+            parsed.ollama.unwrap().base_url.unwrap(),
+            "http://localhost:11434/v1"
+        );
     }
 
     #[tokio::test]
     async fn test_rotator_failover_on_429() {
         let mock_fail = Arc::new(MockProvider::new());
-        mock_fail.set_response(Err(LlmError::RateLimit("429 Too Many Requests".to_string())));
+        mock_fail.set_response(Err(LlmError::RateLimit(
+            "429 Too Many Requests".to_string(),
+        )));
 
         let mock_success = Arc::new(MockProvider::new());
         mock_success.set_response(Ok(LlmResponse {
@@ -2348,7 +2495,10 @@ mod tests {
         // Place candidate-1 on a manual cooldown
         {
             let mut cooldowns = read_persisted_cooldowns();
-            cooldowns.insert("candidate-cooldown-1".to_string(), chrono::Utc::now() + chrono::Duration::seconds(60));
+            cooldowns.insert(
+                "candidate-cooldown-1".to_string(),
+                chrono::Utc::now() + chrono::Duration::seconds(60),
+            );
             write_persisted_cooldowns(&cooldowns);
         }
 
@@ -2407,11 +2557,11 @@ mod tests {
     fn test_semantic_llm_cache_insert_and_get() {
         let cache_file = SemanticLlmCache::cache_path();
         let backup_file = cache_file.with_extension("backup_test");
-        
+
         if cache_file.exists() {
             let _ = std::fs::rename(&cache_file, &backup_file);
         }
-        
+
         let request = LlmRequest {
             messages: vec![Message {
                 role: Role::User,
@@ -2431,7 +2581,7 @@ mod tests {
             presence_penalty: Some(0.12),
             frequency_penalty: Some(0.34),
         };
-        
+
         let response = LlmResponse {
             content: "Cached response content".to_string(),
             usage: TokenUsage {
@@ -2443,21 +2593,21 @@ mod tests {
             finish_reason: FinishReason::Stop,
             tool_calls: None,
         };
-        
+
         // Assert empty cache get returns None
         let get_before = SemanticLlmCache::get(&request);
         assert!(get_before.is_none());
-        
+
         // Insert response
         SemanticLlmCache::insert(&request, &response);
-        
+
         // Get response and assert equality
         let get_after = SemanticLlmCache::get(&request);
         assert!(get_after.is_some());
         let get_after_resp = get_after.unwrap();
         assert_eq!(get_after_resp.content, "Cached response content");
         assert_eq!(get_after_resp.model, "cache-test-model");
-        
+
         // Cleanup test cache file and restore backup
         let _ = std::fs::remove_file(&cache_file);
         let _ = std::fs::remove_file(SemanticLlmCache::lock_path());
@@ -2468,11 +2618,8 @@ mod tests {
 
     #[test]
     fn test_custom_overrides_serialization() {
-        let provider = OpenAIProvider::new(
-            "test_key".to_string(),
-            None,
-            Some("gpt-4o".to_string()),
-        );
+        let provider =
+            OpenAIProvider::new("test_key".to_string(), None, Some("gpt-4o".to_string()));
 
         let request = LlmRequest {
             messages: vec![],
@@ -2495,4 +2642,3 @@ mod tests {
         assert!((payload["frequency_penalty"].as_f64().unwrap() - 0.65).abs() < 1e-5);
     }
 }
-

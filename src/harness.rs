@@ -30,7 +30,10 @@ impl SingleWorkerHarness {
 
     /// Main worker loop (legacy stub path).
     pub async fn run(&mut self, client: &mut AcpClient) -> Result<()> {
-        println!("[Harness] Worker {} entering main loop (legacy client path)", self.worker_id);
+        println!(
+            "[Harness] Worker {} entering main loop (legacy client path)",
+            self.worker_id
+        );
 
         if let Ok(msg) = client.receive().await {
             match msg {
@@ -42,9 +45,19 @@ impl SingleWorkerHarness {
                     permissions,
                     ..
                 } => {
-                    println!("[Harness] Received RouteWork with base_snapshot: {}", base_snapshot);
-                    self.handle_route_work(client, routing_id, payload, base_snapshot, codebase_merkle_root, permissions)
-                        .await?;
+                    println!(
+                        "[Harness] Received RouteWork with base_snapshot: {}",
+                        base_snapshot
+                    );
+                    self.handle_route_work(
+                        client,
+                        routing_id,
+                        payload,
+                        base_snapshot,
+                        codebase_merkle_root,
+                        permissions,
+                    )
+                    .await?;
                 }
                 _ => {
                     println!("[Harness] Received unhandled message: {:?}", msg);
@@ -62,7 +75,10 @@ impl SingleWorkerHarness {
     pub async fn run_as_stdio_worker(worker_id: String) -> Result<()> {
         use tokio::io::{stdin, BufReader};
 
-        eprintln!("[Harness] Worker {} starting in stdio framed ACP mode (waiting for signed RouteWork)", worker_id);
+        eprintln!(
+            "[Harness] Worker {} starting in stdio framed ACP mode (waiting for signed RouteWork)",
+            worker_id
+        );
 
         let mut reader = BufReader::new(stdin());
 
@@ -85,7 +101,10 @@ impl SingleWorkerHarness {
                         permissions,
                         ..
                     } => {
-                        eprintln!("[Harness] Processing RouteWork {} (base_snapshot={})", routing_id, base_snapshot);
+                        eprintln!(
+                            "[Harness] Processing RouteWork {} (base_snapshot={})",
+                            routing_id, base_snapshot
+                        );
 
                         let mut harness = SingleWorkerHarness::new(worker_id.clone());
 
@@ -93,16 +112,28 @@ impl SingleWorkerHarness {
                         let mut real_client = AcpClient::new_stdio(&worker_id, worker_signing_key);
 
                         harness
-                            .handle_route_work(&mut real_client, routing_id, payload, base_snapshot, codebase_merkle_root, permissions)
+                            .handle_route_work(
+                                &mut real_client,
+                                routing_id,
+                                payload,
+                                base_snapshot,
+                                codebase_merkle_root,
+                                permissions,
+                            )
                             .await?;
 
                         // === Polished demo: Handle one extra signed tool request after RouteWork ===
                         // Uses the existing reader so ordering is correct.
                         if let Ok(extra_env) = crate::acp::read_acp_envelope(&mut reader).await {
                             let verified = crate::acp::verify_envelope(&extra_env).unwrap_or(false);
-                            eprintln!("[Harness] Received post-work tool request (verified={})", verified);
+                            eprintln!(
+                                "[Harness] Received post-work tool request (verified={})",
+                                verified
+                            );
 
-                            if let Some(result_msg) = crate::tools::dispatch_tool(extra_env.payload, &worker_id).await {
+                            if let Some(result_msg) =
+                                crate::tools::dispatch_tool(extra_env.payload, &worker_id).await
+                            {
                                 let _ = real_client.send(&result_msg).await;
                                 eprintln!("[Harness] Sent signed tool result back to leader");
                             }
@@ -120,19 +151,27 @@ impl SingleWorkerHarness {
                         let worker_signing_key = SigningKey::generate(&mut OsRng);
                         let mut real_client = AcpClient::new_stdio(&worker_id, worker_signing_key);
 
-                        if let Some(result_msg) = crate::tools::dispatch_tool(tool, &worker_id).await {
+                        if let Some(result_msg) =
+                            crate::tools::dispatch_tool(tool, &worker_id).await
+                        {
                             let _ = real_client.send(&result_msg).await;
                             eprintln!("[Harness] Sent signed tool result");
                         }
                     }
 
                     other => {
-                        eprintln!("[Harness] First message was not a RouteWork or tool request: {:?}", other);
+                        eprintln!(
+                            "[Harness] First message was not a RouteWork or tool request: {:?}",
+                            other
+                        );
                     }
                 }
             }
             Err(e) => {
-                eprintln!("[Harness] Worker {} failed to read incoming ACP envelope: {}", worker_id, e);
+                eprintln!(
+                    "[Harness] Worker {} failed to read incoming ACP envelope: {}",
+                    worker_id, e
+                );
                 // Still try to do useful work if possible, or just exit cleanly
             }
         }
@@ -154,12 +193,13 @@ impl SingleWorkerHarness {
 
         // Save original working directory to restore it during cleanup
         let original_dir = std::env::current_dir()?;
-        eprintln!("[Harness] Parent repository working directory: {:?}", original_dir);
+        eprintln!(
+            "[Harness] Parent repository working directory: {:?}",
+            original_dir
+        );
 
         // 1. Create isolated worktree (see isolation-routing.md)
-        let worktree_path = crate::paths::worktree_dir_harness(
-            &self.worker_id, &routing_id,
-        );
+        let worktree_path = crate::paths::worktree_dir_harness(&self.worker_id, &routing_id);
         self.current_worktree = Some(worktree_path.clone());
 
         // Ensure parent and target worktree directory are completely clean
@@ -173,7 +213,10 @@ impl SingleWorkerHarness {
         // Verify if base_snapshot is a valid git reference/commit.
         // If not valid or empty/genesis/latest, default to HEAD.
         let mut snapshot_ref = "HEAD".to_string();
-        if !base_snapshot.is_empty() && base_snapshot != "genesis" && base_snapshot != "latest-from-blackboard" {
+        if !base_snapshot.is_empty()
+            && base_snapshot != "genesis"
+            && base_snapshot != "latest-from-blackboard"
+        {
             let verify_status = tokio::process::Command::new("git")
                 .args(&["rev-parse", "--verify", &base_snapshot])
                 .output()
@@ -222,11 +265,16 @@ impl SingleWorkerHarness {
 
         // Switch process working directory into the sandboxed worktree
         std::env::set_current_dir(&worktree_path)?;
-        eprintln!("[Harness] Sandboxed worker process CWD to {:?}", worktree_path);
+        eprintln!(
+            "[Harness] Sandboxed worker process CWD to {:?}",
+            worktree_path
+        );
 
         // Zero-Trust Sandbox Containment check:
         // Run git write-tree inside the sandbox and compare it to the expected codebase_merkle_root.
-        if !codebase_merkle_root.is_empty() && !codebase_merkle_root.starts_with("sha256:codebase-fallback") {
+        if !codebase_merkle_root.is_empty()
+            && !codebase_merkle_root.starts_with("sha256:codebase-fallback")
+        {
             let write_tree_output = tokio::process::Command::new("git")
                 .arg("write-tree")
                 .output()
@@ -234,17 +282,27 @@ impl SingleWorkerHarness {
             match write_tree_output {
                 Ok(output) if output.status.success() => {
                     let actual_tree = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    eprintln!("[Harness] Zero-Trust Verification: expected={}, actual={}", codebase_merkle_root, actual_tree);
+                    eprintln!(
+                        "[Harness] Zero-Trust Verification: expected={}, actual={}",
+                        codebase_merkle_root, actual_tree
+                    );
                     if actual_tree != codebase_merkle_root {
                         eprintln!("[Harness] ERROR: Codebase Merkle Root Mismatch! Zero-Trust Containment violation.");
                         let _ = std::env::set_current_dir(&original_dir);
-                        anyhow::bail!("Codebase Merkle Root Mismatch: expected {}, got {}", codebase_merkle_root, actual_tree);
+                        anyhow::bail!(
+                            "Codebase Merkle Root Mismatch: expected {}, got {}",
+                            codebase_merkle_root,
+                            actual_tree
+                        );
                     }
                     eprintln!("[Harness] Zero-Trust Verification successful: tree hash matches.");
                 }
                 Ok(output) => {
                     let err = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("[Harness] ERROR: git write-tree failed during zero-trust verification: {}", err);
+                    eprintln!(
+                        "[Harness] ERROR: git write-tree failed during zero-trust verification: {}",
+                        err
+                    );
                     let _ = std::env::set_current_dir(&original_dir);
                     anyhow::bail!("git write-tree verification failed: {}", err);
                 }
@@ -298,7 +356,10 @@ impl SingleWorkerHarness {
         let _ = emitter_handle.await;
 
         if payload.contains("simulate-crash") {
-            eprintln!("[Harness] Worker {} detected simulate-crash directive. Writing partial .ktrans...", self.worker_id);
+            eprintln!(
+                "[Harness] Worker {} detected simulate-crash directive. Writing partial .ktrans...",
+                self.worker_id
+            );
             let partial_mutations = vec![serde_json::json!({
                 "target_path": "src/auth.rs",
                 "payload": "partial code before worker panic (resilience test)"
@@ -311,7 +372,10 @@ impl SingleWorkerHarness {
                 &vec!["partial-provenance-before-crash".to_string()],
                 false,
             );
-            eprintln!("[Harness] Worker {} SIMULATING WORKER CRASH/PANIC (exiting with 101)!", self.worker_id);
+            eprintln!(
+                "[Harness] Worker {} SIMULATING WORKER CRASH/PANIC (exiting with 101)!",
+                self.worker_id
+            );
             std::process::exit(101);
         }
 
@@ -386,9 +450,15 @@ impl SingleWorkerHarness {
         );
 
         // Restore parent working directory to release lock on worktree path
-        eprintln!("[Harness] Restoring parent working directory to {:?}", original_dir);
+        eprintln!(
+            "[Harness] Restoring parent working directory to {:?}",
+            original_dir
+        );
         if let Err(e) = std::env::set_current_dir(&original_dir) {
-            eprintln!("[Harness] WARNING: failed to restore original directory: {}", e);
+            eprintln!(
+                "[Harness] WARNING: failed to restore original directory: {}",
+                e
+            );
         }
 
         // Clean up worktree (or leave for forensics on failure)
@@ -415,7 +485,10 @@ impl SingleWorkerHarness {
                 }
             }
             Err(e) => {
-                eprintln!("[Harness] WARNING: failed to spawn git worktree remove: {}", e);
+                eprintln!(
+                    "[Harness] WARNING: failed to spawn git worktree remove: {}",
+                    e
+                );
             }
         }
 
@@ -598,29 +671,29 @@ mod tests {
     async fn test_git_worktree_isolation() {
         let worker_id = "benjamin-test-worktree".to_string();
         let routing_id = "test-route-123".to_string();
-        
+
         let mut harness = SingleWorkerHarness::new(worker_id.clone());
-        
+
         let worker_signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
         let mut client = AcpClient::new_stdio(&worker_id, worker_signing_key);
 
         let payload = "Write a mock implementation plan".to_string();
-        
-        let res = harness.handle_route_work(
-            &mut client,
-            routing_id.clone(),
-            payload,
-            "HEAD".to_string(),
-            "".to_string(),
-            vec![]
-        ).await;
+
+        let res = harness
+            .handle_route_work(
+                &mut client,
+                routing_id.clone(),
+                payload,
+                "HEAD".to_string(),
+                "".to_string(),
+                vec![],
+            )
+            .await;
 
         assert!(res.is_ok());
 
         // Verify that the worktree directory is removed and cleaned up after successful completion
-        let worktree_path = crate::paths::worktree_dir_harness(
-            &worker_id, &routing_id,
-        );
+        let worktree_path = crate::paths::worktree_dir_harness(&worker_id, &routing_id);
         assert!(!worktree_path.exists());
     }
 }

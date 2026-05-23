@@ -12,16 +12,16 @@ use ratatui::{
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
-        Block, Borders, List, ListItem, Paragraph, Wrap,
-        Gauge, Sparkline, BarChart, Table, Row, Cell,
+        BarChart, Block, Borders, Cell, Gauge, List, ListItem, Paragraph, Row, Sparkline, Table,
+        Wrap,
     },
     Frame, Terminal,
 };
 use std::io;
 use std::sync::OnceLock;
-use syntect::parsing::SyntaxSet;
-use syntect::highlighting::ThemeSet;
 use syntect::easy::HighlightLines;
+use syntect::highlighting::ThemeSet;
+use syntect::parsing::SyntaxSet;
 
 /// Events sent from the LeaderOrchestrator to the live Ratatui TUI.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -145,9 +145,19 @@ pub enum CommandCode {
 
 #[derive(Debug, Clone)]
 pub enum PaletteItem {
-    Command { name: String, code: CommandCode },
-    File { name: String, path: String },
-    GrepMatch { path: String, line: usize, preview: String },
+    Command {
+        name: String,
+        code: CommandCode,
+    },
+    File {
+        name: String,
+        path: String,
+    },
+    GrepMatch {
+        path: String,
+        line: usize,
+        preview: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -283,10 +293,30 @@ impl Default for KorgTui {
             conflicts_count: 0,
             provenance_chain_length: 1,
             lock_states: vec![
-                ("Captain".to_string(), "READ".to_string(), "0.15ms".to_string(), "Active".to_string()),
-                ("Harper".to_string(), "IDLE".to_string(), "-".to_string(), "Idle".to_string()),
-                ("Benjamin".to_string(), "IDLE".to_string(), "-".to_string(), "Idle".to_string()),
-                ("Lucas".to_string(), "IDLE".to_string(), "-".to_string(), "Idle".to_string()),
+                (
+                    "Captain".to_string(),
+                    "READ".to_string(),
+                    "0.15ms".to_string(),
+                    "Active".to_string(),
+                ),
+                (
+                    "Harper".to_string(),
+                    "IDLE".to_string(),
+                    "-".to_string(),
+                    "Idle".to_string(),
+                ),
+                (
+                    "Benjamin".to_string(),
+                    "IDLE".to_string(),
+                    "-".to_string(),
+                    "Idle".to_string(),
+                ),
+                (
+                    "Lucas".to_string(),
+                    "IDLE".to_string(),
+                    "-".to_string(),
+                    "Idle".to_string(),
+                ),
             ],
 
             // Persona sparkline histories
@@ -310,11 +340,13 @@ impl Default for KorgTui {
             editor_scroll: 0,
             console_input: String::new(),
             console_logs: vec![
-                "Swarm Console v1.0. Chat directly with Lucas, Captain, Harper, or Benjamin.".to_string(),
-                "Type /help to view list of interactive swarm agent directives.".to_string()
+                "Swarm Console v1.0. Chat directly with Lucas, Captain, Harper, or Benjamin."
+                    .to_string(),
+                "Type /help to view list of interactive swarm agent directives.".to_string(),
             ],
             terminal_logs: vec![
-                "Local command terminal session active. Enter /run <cmd> or prompt the agent.".to_string()
+                "Local command terminal session active. Enter /run <cmd> or prompt the agent."
+                    .to_string(),
             ],
             git_commits: vec![],
             selected_commit_idx: 0,
@@ -346,7 +378,6 @@ impl Default for KorgTui {
         app
     }
 }
-
 
 impl KorgTui {
     pub fn save_current_tab_state(&mut self) {
@@ -432,7 +463,11 @@ impl KorgTui {
                 for entry in read_dir {
                     if let Ok(entry) = entry {
                         let path = entry.path();
-                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                        let name = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string();
                         if name.starts_with('.') && name != ".env" && name != ".korg" {
                             continue;
                         }
@@ -467,12 +502,12 @@ impl KorgTui {
         }
         let q = query.to_lowercase();
         let t = target.to_lowercase();
-        
+
         let mut q_chars = q.chars().peekable();
         let mut last_idx: Option<usize> = None;
         let mut distance_penalty = 0;
         let mut first_match_idx = 0;
-        
+
         for (idx, tc) in t.chars().enumerate() {
             if let Some(&qc) = q_chars.peek() {
                 if tc == qc {
@@ -487,7 +522,7 @@ impl KorgTui {
                 }
             }
         }
-        
+
         if q_chars.peek().is_none() {
             let mut score = 1000;
             if t.contains(&q) {
@@ -506,7 +541,7 @@ impl KorgTui {
 
     pub fn get_filtered_palette_items(&self, query: &str) -> Vec<(PaletteItem, i32)> {
         let mut items = vec![];
-        
+
         // 1. Add all commands
         let all_commands = vec![
             ("/explain (dissect open file)", CommandCode::Explain),
@@ -518,30 +553,58 @@ impl KorgTui {
             ("Close Active Tab", CommandCode::CloseTab),
             ("TUI Onboarding Guide", CommandCode::TuiOnboarding),
         ];
-        
+
         for (name, code) in all_commands {
             if query.is_empty() {
-                items.push((PaletteItem::Command { name: name.to_string(), code }, 1000));
+                items.push((
+                    PaletteItem::Command {
+                        name: name.to_string(),
+                        code,
+                    },
+                    1000,
+                ));
             } else if let Some(score) = self.fuzzy_match(query, name) {
-                items.push((PaletteItem::Command { name: name.to_string(), code }, score));
+                items.push((
+                    PaletteItem::Command {
+                        name: name.to_string(),
+                        code,
+                    },
+                    score,
+                ));
             }
         }
-        
+
         // 2. Add all workspace files
         let files = self.get_all_workspace_files();
         for file in files {
             if query.is_empty() {
-                items.push((PaletteItem::File { name: file.name.clone(), path: file.path.clone() }, 0));
+                items.push((
+                    PaletteItem::File {
+                        name: file.name.clone(),
+                        path: file.path.clone(),
+                    },
+                    0,
+                ));
             } else {
                 let name_score = self.fuzzy_match(query, &file.name);
                 let path_score = self.fuzzy_match(query, &file.path);
                 if let Some(score) = name_score.or(path_score) {
-                    let final_score = if name_score.is_some() { score + 200 } else { score };
-                    items.push((PaletteItem::File { name: file.name, path: file.path }, final_score));
+                    let final_score = if name_score.is_some() {
+                        score + 200
+                    } else {
+                        score
+                    };
+                    items.push((
+                        PaletteItem::File {
+                            name: file.name,
+                            path: file.path,
+                        },
+                        final_score,
+                    ));
                 }
             }
         }
-        
+
         // Sort descending by score, tie breaker: Commands first, then alphabetical
         items.sort_by(|a, b| {
             let score_cmp = b.1.cmp(&a.1);
@@ -550,14 +613,35 @@ impl KorgTui {
             }
             match (&a.0, &b.0) {
                 (PaletteItem::Command { .. }, PaletteItem::File { .. }) => std::cmp::Ordering::Less,
-                (PaletteItem::Command { .. }, PaletteItem::GrepMatch { .. }) => std::cmp::Ordering::Less,
-                (PaletteItem::File { .. }, PaletteItem::Command { .. }) => std::cmp::Ordering::Greater,
-                (PaletteItem::GrepMatch { .. }, PaletteItem::Command { .. }) => std::cmp::Ordering::Greater,
-                (PaletteItem::File { .. }, PaletteItem::GrepMatch { .. }) => std::cmp::Ordering::Less,
-                (PaletteItem::GrepMatch { .. }, PaletteItem::File { .. }) => std::cmp::Ordering::Greater,
-                (PaletteItem::Command { name: an, .. }, PaletteItem::Command { name: bn, .. }) => an.cmp(bn),
-                (PaletteItem::File { name: an, .. }, PaletteItem::File { name: bn, .. }) => an.cmp(bn),
-                (PaletteItem::GrepMatch { path: ap, line: al, .. }, PaletteItem::GrepMatch { path: bp, line: bl, .. }) => {
+                (PaletteItem::Command { .. }, PaletteItem::GrepMatch { .. }) => {
+                    std::cmp::Ordering::Less
+                }
+                (PaletteItem::File { .. }, PaletteItem::Command { .. }) => {
+                    std::cmp::Ordering::Greater
+                }
+                (PaletteItem::GrepMatch { .. }, PaletteItem::Command { .. }) => {
+                    std::cmp::Ordering::Greater
+                }
+                (PaletteItem::File { .. }, PaletteItem::GrepMatch { .. }) => {
+                    std::cmp::Ordering::Less
+                }
+                (PaletteItem::GrepMatch { .. }, PaletteItem::File { .. }) => {
+                    std::cmp::Ordering::Greater
+                }
+                (PaletteItem::Command { name: an, .. }, PaletteItem::Command { name: bn, .. }) => {
+                    an.cmp(bn)
+                }
+                (PaletteItem::File { name: an, .. }, PaletteItem::File { name: bn, .. }) => {
+                    an.cmp(bn)
+                }
+                (
+                    PaletteItem::GrepMatch {
+                        path: ap, line: al, ..
+                    },
+                    PaletteItem::GrepMatch {
+                        path: bp, line: bl, ..
+                    },
+                ) => {
                     let path_cmp = ap.cmp(bp);
                     if path_cmp != std::cmp::Ordering::Equal {
                         path_cmp
@@ -567,7 +651,7 @@ impl KorgTui {
                 }
             }
         });
-        
+
         items
     }
 
@@ -577,13 +661,22 @@ impl KorgTui {
         self.file_tree = entries;
     }
 
-    fn scan_directory_rec(&self, dir: &std::path::Path, depth: usize, entries: &mut Vec<FileEntry>) {
+    fn scan_directory_rec(
+        &self,
+        dir: &std::path::Path,
+        depth: usize,
+        entries: &mut Vec<FileEntry>,
+    ) {
         if let Ok(read_dir) = std::fs::read_dir(dir) {
             let mut sub_entries = vec![];
             for entry in read_dir {
                 if let Ok(entry) = entry {
                     let path = entry.path();
-                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_string();
                     if name.starts_with('.') && name != ".env" && name != ".korg" {
                         continue;
                     }
@@ -592,7 +685,12 @@ impl KorgTui {
                     }
                     let is_dir = path.is_dir();
                     let path_str = path.to_string_lossy().to_string();
-                    let was_open = self.file_tree.iter().find(|e| e.path == path_str).map(|e| e.open).unwrap_or(false);
+                    let was_open = self
+                        .file_tree
+                        .iter()
+                        .find(|e| e.path == path_str)
+                        .map(|e| e.open)
+                        .unwrap_or(false);
                     // For first scanning, pre-expand src and tests directories
                     let default_open = was_open || (is_dir && (name == "src" || name == "tests"));
                     sub_entries.push(FileEntry {
@@ -909,7 +1007,11 @@ impl KorgTui {
     }
 
     pub fn scroll_cursor_into_view(&mut self, visible_height: usize) {
-        let height = if visible_height > 0 { visible_height } else { 18 };
+        let height = if visible_height > 0 {
+            visible_height
+        } else {
+            18
+        };
         if self.cursor_y < self.editor_scroll {
             self.editor_scroll = self.cursor_y;
         } else if self.cursor_y >= self.editor_scroll + height {
@@ -943,7 +1045,10 @@ impl KorgTui {
 
 /// Runs the TUI with a real live campaign running in the background.
 /// This is used by `korg tui` and `korg campaign --tui`.
-pub async fn run_tui_with_campaign(prompt: String, session: Option<uuid::Uuid>) -> anyhow::Result<()> {
+pub async fn run_tui_with_campaign(
+    prompt: String,
+    session: Option<uuid::Uuid>,
+) -> anyhow::Result<()> {
     let (tx, rx) = tokio::sync::mpsc::channel::<TuiUpdate>(128);
     let (feedback_tx, feedback_rx) = tokio::sync::mpsc::channel::<ContractResponse>(1);
 
@@ -1085,7 +1190,8 @@ async fn run_tui_event_loop(
                                 continue;
                             }
                             KeyCode::Char('b') => {
-                                app.terminal_logs.push("[System] Running `cargo build`...".to_string());
+                                app.terminal_logs
+                                    .push("[System] Running `cargo build`...".to_string());
                                 let terminal_tx_clone = terminal_tx.clone();
                                 tokio::spawn(async move {
                                     let _ = terminal_tx_clone.send("[System] Spawned background subprocess: cargo [\"build\"]".to_string()).await;
@@ -1097,27 +1203,37 @@ async fn run_tui_event_loop(
                                         Ok(out) => {
                                             let stdout = String::from_utf8_lossy(&out.stdout);
                                             for line in stdout.lines() {
-                                                let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                let _ =
+                                                    terminal_tx_clone.send(line.to_string()).await;
                                             }
                                             let stderr = String::from_utf8_lossy(&out.stderr);
                                             for line in stderr.lines() {
-                                                let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                let _ =
+                                                    terminal_tx_clone.send(line.to_string()).await;
                                             }
                                             if out.status.success() {
                                                 let _ = terminal_tx_clone.send("[System] `cargo build` finished successfully!".to_string()).await;
                                             } else {
-                                                let _ = terminal_tx_clone.send("[System] `cargo build` failed.".to_string()).await;
+                                                let _ = terminal_tx_clone
+                                                    .send(
+                                                        "[System] `cargo build` failed."
+                                                            .to_string(),
+                                                    )
+                                                    .await;
                                             }
                                         }
                                         Err(e) => {
-                                            let _ = terminal_tx_clone.send(format!("Failed to run build: {}", e)).await;
+                                            let _ = terminal_tx_clone
+                                                .send(format!("Failed to run build: {}", e))
+                                                .await;
                                         }
                                     }
                                 });
                                 continue;
                             }
                             KeyCode::Char('t') => {
-                                app.terminal_logs.push("[System] Running `cargo test`...".to_string());
+                                app.terminal_logs
+                                    .push("[System] Running `cargo test`...".to_string());
                                 let terminal_tx_clone = terminal_tx.clone();
                                 tokio::spawn(async move {
                                     let _ = terminal_tx_clone.send("[System] Spawned background subprocess: cargo [\"test\"]".to_string()).await;
@@ -1129,20 +1245,28 @@ async fn run_tui_event_loop(
                                         Ok(out) => {
                                             let stdout = String::from_utf8_lossy(&out.stdout);
                                             for line in stdout.lines() {
-                                                let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                let _ =
+                                                    terminal_tx_clone.send(line.to_string()).await;
                                             }
                                             let stderr = String::from_utf8_lossy(&out.stderr);
                                             for line in stderr.lines() {
-                                                let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                let _ =
+                                                    terminal_tx_clone.send(line.to_string()).await;
                                             }
                                             if out.status.success() {
                                                 let _ = terminal_tx_clone.send("[System] `cargo test` finished successfully!".to_string()).await;
                                             } else {
-                                                let _ = terminal_tx_clone.send("[System] `cargo test` failed.".to_string()).await;
+                                                let _ = terminal_tx_clone
+                                                    .send(
+                                                        "[System] `cargo test` failed.".to_string(),
+                                                    )
+                                                    .await;
                                             }
                                         }
                                         Err(e) => {
-                                            let _ = terminal_tx_clone.send(format!("Failed to run tests: {}", e)).await;
+                                            let _ = terminal_tx_clone
+                                                .send(format!("Failed to run tests: {}", e))
+                                                .await;
                                         }
                                     }
                                 });
@@ -1171,7 +1295,8 @@ async fn run_tui_event_loop(
                             }
                             KeyCode::Down => {
                                 if !filtered.is_empty() {
-                                    app.command_palette_selected_idx = (app.command_palette_selected_idx + 1) % filtered.len();
+                                    app.command_palette_selected_idx =
+                                        (app.command_palette_selected_idx + 1) % filtered.len();
                                 }
                             }
                             KeyCode::Up => {
@@ -1189,42 +1314,72 @@ async fn run_tui_event_loop(
                                 app.log("Command Palette closed.");
                             }
                             KeyCode::Enter => {
-                                if !filtered.is_empty() && app.command_palette_selected_idx < filtered.len() {
-                                    let (item, _) = filtered[app.command_palette_selected_idx].clone();
+                                if !filtered.is_empty()
+                                    && app.command_palette_selected_idx < filtered.len()
+                                {
+                                    let (item, _) =
+                                        filtered[app.command_palette_selected_idx].clone();
                                     app.command_palette_open = false;
                                     app.command_palette_input.clear();
-                                    
+
                                     match item {
                                         PaletteItem::Command { code, .. } => {
                                             match code {
                                                 CommandCode::Explain => {
-                                                    if let Some(path) = app.opened_file_path.clone() {
-                                                        app.log(format!("[System] Explaining file: {}", path));
-                                                        app.console_logs.push(format!("[Lucas] Dissecting {}...", path));
+                                                    if let Some(path) = app.opened_file_path.clone()
+                                                    {
+                                                        app.log(format!(
+                                                            "[System] Explaining file: {}",
+                                                            path
+                                                        ));
+                                                        app.console_logs.push(format!(
+                                                            "[Lucas] Dissecting {}...",
+                                                            path
+                                                        ));
                                                         if let Some(ref tx) = app.feedback_tx {
-                                                            let _ = tx.try_send(ContractResponse::Override(vec![format!("explain:{}", path)]));
+                                                            let _ = tx.try_send(
+                                                                ContractResponse::Override(vec![
+                                                                    format!("explain:{}", path),
+                                                                ]),
+                                                            );
                                                         }
                                                     } else {
                                                         app.log("Error: No file currently open.");
                                                     }
                                                 }
                                                 CommandCode::Critique => {
-                                                    if let Some(path) = app.opened_file_path.clone() {
-                                                        app.log(format!("[System] Auditing file: {}", path));
+                                                    if let Some(path) = app.opened_file_path.clone()
+                                                    {
+                                                        app.log(format!(
+                                                            "[System] Auditing file: {}",
+                                                            path
+                                                        ));
                                                         app.console_logs.push(format!("[Captain] Critiquing {} for security and architecture...", path));
                                                         if let Some(ref tx) = app.feedback_tx {
-                                                            let _ = tx.try_send(ContractResponse::Override(vec![format!("critique:{}", path)]));
+                                                            let _ = tx.try_send(
+                                                                ContractResponse::Override(vec![
+                                                                    format!("critique:{}", path),
+                                                                ]),
+                                                            );
                                                         }
                                                     } else {
                                                         app.log("Error: No file currently open.");
                                                     }
                                                 }
                                                 CommandCode::Refactor => {
-                                                    if let Some(path) = app.opened_file_path.clone() {
-                                                        app.log(format!("[System] Refactoring file: {}", path));
+                                                    if let Some(path) = app.opened_file_path.clone()
+                                                    {
+                                                        app.log(format!(
+                                                            "[System] Refactoring file: {}",
+                                                            path
+                                                        ));
                                                         app.console_logs.push(format!("[Benjamin] Designing refactoring plan for {}...", path));
                                                         if let Some(ref tx) = app.feedback_tx {
-                                                            let _ = tx.try_send(ContractResponse::Override(vec![format!("refactor:{}", path)]));
+                                                            let _ = tx.try_send(
+                                                                ContractResponse::Override(vec![
+                                                                    format!("refactor:{}", path),
+                                                                ]),
+                                                            );
                                                         }
                                                     } else {
                                                         app.log("Error: No file currently open.");
@@ -1235,19 +1390,30 @@ async fn run_tui_event_loop(
                                                     let terminal_tx_clone = terminal_tx.clone();
                                                     tokio::spawn(async move {
                                                         let _ = terminal_tx_clone.send("[System] Spawned background subprocess: cargo [\"build\"]".to_string()).await;
-                                                        let output = tokio::process::Command::new("cargo")
-                                                            .arg("build")
-                                                            .output()
-                                                            .await;
+                                                        let output =
+                                                            tokio::process::Command::new("cargo")
+                                                                .arg("build")
+                                                                .output()
+                                                                .await;
                                                         match output {
                                                             Ok(out) => {
-                                                                let stdout = String::from_utf8_lossy(&out.stdout);
+                                                                let stdout =
+                                                                    String::from_utf8_lossy(
+                                                                        &out.stdout,
+                                                                    );
                                                                 for line in stdout.lines() {
-                                                                    let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                                    let _ = terminal_tx_clone
+                                                                        .send(line.to_string())
+                                                                        .await;
                                                                 }
-                                                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                                                let stderr =
+                                                                    String::from_utf8_lossy(
+                                                                        &out.stderr,
+                                                                    );
                                                                 for line in stderr.lines() {
-                                                                    let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                                    let _ = terminal_tx_clone
+                                                                        .send(line.to_string())
+                                                                        .await;
                                                                 }
                                                                 if out.status.success() {
                                                                     let _ = terminal_tx_clone.send("[System] `cargo build` finished successfully!".to_string()).await;
@@ -1256,7 +1422,12 @@ async fn run_tui_event_loop(
                                                                 }
                                                             }
                                                             Err(e) => {
-                                                                let _ = terminal_tx_clone.send(format!("Failed to run build: {}", e)).await;
+                                                                let _ = terminal_tx_clone
+                                                                    .send(format!(
+                                                                        "Failed to run build: {}",
+                                                                        e
+                                                                    ))
+                                                                    .await;
                                                             }
                                                         }
                                                     });
@@ -1266,19 +1437,30 @@ async fn run_tui_event_loop(
                                                     let terminal_tx_clone = terminal_tx.clone();
                                                     tokio::spawn(async move {
                                                         let _ = terminal_tx_clone.send("[System] Spawned background subprocess: cargo [\"test\"]".to_string()).await;
-                                                        let output = tokio::process::Command::new("cargo")
-                                                            .arg("test")
-                                                            .output()
-                                                            .await;
+                                                        let output =
+                                                            tokio::process::Command::new("cargo")
+                                                                .arg("test")
+                                                                .output()
+                                                                .await;
                                                         match output {
                                                             Ok(out) => {
-                                                                let stdout = String::from_utf8_lossy(&out.stdout);
+                                                                let stdout =
+                                                                    String::from_utf8_lossy(
+                                                                        &out.stdout,
+                                                                    );
                                                                 for line in stdout.lines() {
-                                                                    let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                                    let _ = terminal_tx_clone
+                                                                        .send(line.to_string())
+                                                                        .await;
                                                                 }
-                                                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                                                let stderr =
+                                                                    String::from_utf8_lossy(
+                                                                        &out.stderr,
+                                                                    );
                                                                 for line in stderr.lines() {
-                                                                    let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                                    let _ = terminal_tx_clone
+                                                                        .send(line.to_string())
+                                                                        .await;
                                                                 }
                                                                 if out.status.success() {
                                                                     let _ = terminal_tx_clone.send("[System] `cargo test` finished successfully!".to_string()).await;
@@ -1287,7 +1469,12 @@ async fn run_tui_event_loop(
                                                                 }
                                                             }
                                                             Err(e) => {
-                                                                let _ = terminal_tx_clone.send(format!("Failed to run tests: {}", e)).await;
+                                                                let _ = terminal_tx_clone
+                                                                    .send(format!(
+                                                                        "Failed to run tests: {}",
+                                                                        e
+                                                                    ))
+                                                                    .await;
                                                             }
                                                         }
                                                     });
@@ -1305,22 +1492,36 @@ async fn run_tui_event_loop(
                                                     }
                                                 }
                                                 CommandCode::GitStatus => {
-                                                    app.terminal_logs.push("[System] Running `git status`...".to_string());
+                                                    app.terminal_logs.push(
+                                                        "[System] Running `git status`..."
+                                                            .to_string(),
+                                                    );
                                                     let terminal_tx_clone = terminal_tx.clone();
                                                     tokio::spawn(async move {
-                                                        let output = tokio::process::Command::new("git")
-                                                            .arg("status")
-                                                            .output()
-                                                            .await;
+                                                        let output =
+                                                            tokio::process::Command::new("git")
+                                                                .arg("status")
+                                                                .output()
+                                                                .await;
                                                         match output {
                                                             Ok(out) => {
-                                                                let stdout = String::from_utf8_lossy(&out.stdout);
+                                                                let stdout =
+                                                                    String::from_utf8_lossy(
+                                                                        &out.stdout,
+                                                                    );
                                                                 for line in stdout.lines() {
-                                                                    let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                                    let _ = terminal_tx_clone
+                                                                        .send(line.to_string())
+                                                                        .await;
                                                                 }
-                                                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                                                let stderr =
+                                                                    String::from_utf8_lossy(
+                                                                        &out.stderr,
+                                                                    );
                                                                 for line in stderr.lines() {
-                                                                    let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                                    let _ = terminal_tx_clone
+                                                                        .send(line.to_string())
+                                                                        .await;
                                                                 }
                                                             }
                                                             Err(e) => {
@@ -1330,22 +1531,36 @@ async fn run_tui_event_loop(
                                                     });
                                                 }
                                                 CommandCode::GitDiff => {
-                                                    app.terminal_logs.push("[System] Running `git diff`...".to_string());
+                                                    app.terminal_logs.push(
+                                                        "[System] Running `git diff`..."
+                                                            .to_string(),
+                                                    );
                                                     let terminal_tx_clone = terminal_tx.clone();
                                                     tokio::spawn(async move {
-                                                        let output = tokio::process::Command::new("git")
-                                                            .arg("diff")
-                                                            .output()
-                                                            .await;
+                                                        let output =
+                                                            tokio::process::Command::new("git")
+                                                                .arg("diff")
+                                                                .output()
+                                                                .await;
                                                         match output {
                                                             Ok(out) => {
-                                                                let stdout = String::from_utf8_lossy(&out.stdout);
+                                                                let stdout =
+                                                                    String::from_utf8_lossy(
+                                                                        &out.stdout,
+                                                                    );
                                                                 for line in stdout.lines() {
-                                                                    let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                                    let _ = terminal_tx_clone
+                                                                        .send(line.to_string())
+                                                                        .await;
                                                                 }
-                                                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                                                let stderr =
+                                                                    String::from_utf8_lossy(
+                                                                        &out.stderr,
+                                                                    );
                                                                 for line in stderr.lines() {
-                                                                    let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                                    let _ = terminal_tx_clone
+                                                                        .send(line.to_string())
+                                                                        .await;
                                                                 }
                                                             }
                                                             Err(e) => {
@@ -1355,18 +1570,27 @@ async fn run_tui_event_loop(
                                                     });
                                                 }
                                                 CommandCode::FormatWorkspace => {
-                                                    app.terminal_logs.push("[System] Running `cargo fmt`...".to_string());
+                                                    app.terminal_logs.push(
+                                                        "[System] Running `cargo fmt`..."
+                                                            .to_string(),
+                                                    );
                                                     let terminal_tx_clone = terminal_tx.clone();
                                                     tokio::spawn(async move {
-                                                        let output = tokio::process::Command::new("cargo")
-                                                            .arg("fmt")
-                                                            .output()
-                                                            .await;
+                                                        let output =
+                                                            tokio::process::Command::new("cargo")
+                                                                .arg("fmt")
+                                                                .output()
+                                                                .await;
                                                         match output {
                                                             Ok(out) => {
-                                                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                                                let stderr =
+                                                                    String::from_utf8_lossy(
+                                                                        &out.stderr,
+                                                                    );
                                                                 for line in stderr.lines() {
-                                                                    let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                                    let _ = terminal_tx_clone
+                                                                        .send(line.to_string())
+                                                                        .await;
                                                                 }
                                                                 let _ = terminal_tx_clone.send("[System] cargo fmt finished.".to_string()).await;
                                                             }
@@ -1405,7 +1629,9 @@ async fn run_tui_event_loop(
                                                 CommandCode::TuiOnboarding => {
                                                     app.help_modal_open = true;
                                                     app.help_slide = 0;
-                                                    app.log("Help Modal opened via Command Palette.");
+                                                    app.log(
+                                                        "Help Modal opened via Command Palette.",
+                                                    );
                                                 }
                                             }
                                         }
@@ -1418,14 +1644,22 @@ async fn run_tui_event_loop(
                                             app.open_file_in_tab(&path);
                                             if let Some(idx) = app.active_tab_idx {
                                                 if let Some(tab) = app.open_tabs.get_mut(idx) {
-                                                    tab.cursor_y = if line > 0 { line - 1 } else { 0 };
-                                                    tab.scroll = if tab.cursor_y > 10 { tab.cursor_y - 10 } else { 0 };
+                                                    tab.cursor_y =
+                                                        if line > 0 { line - 1 } else { 0 };
+                                                    tab.scroll = if tab.cursor_y > 10 {
+                                                        tab.cursor_y - 10
+                                                    } else {
+                                                        0
+                                                    };
                                                     app.cursor_y = tab.cursor_y;
                                                     app.editor_scroll = tab.scroll;
                                                 }
                                             }
                                             app.focus = TuiFocus::Editor;
-                                            app.log(format!("[System] Opened grep match at: {}:{}", path, line));
+                                            app.log(format!(
+                                                "[System] Opened grep match at: {}:{}",
+                                                path, line
+                                            ));
                                         }
                                     }
                                 }
@@ -1445,14 +1679,24 @@ async fn run_tui_event_loop(
                             }
                             KeyCode::Enter => {
                                 if !app.steering_buffer.is_empty() {
-                                    app.log(format!("FORK CREATED at tx_{:02} with directive: {}", app.playhead, app.steering_buffer));
+                                    app.log(format!(
+                                        "FORK CREATED at tx_{:02} with directive: {}",
+                                        app.playhead, app.steering_buffer
+                                    ));
                                     if let Some(ref tx) = app.feedback_tx {
-                                        let _ = tx.try_send(ContractResponse::Override(vec![format!("FORK:{}:{}", app.playhead, app.steering_buffer)]));
+                                        let _ =
+                                            tx.try_send(ContractResponse::Override(vec![format!(
+                                                "FORK:{}:{}",
+                                                app.playhead, app.steering_buffer
+                                            )]));
                                     }
-                                    
+
                                     // Trigger actual playhead steering fork! (Revert git tree)
                                     let playhead_tx = app.playhead;
-                                    let dir = app.opened_file_path.clone().unwrap_or_else(|| "HEAD".to_string());
+                                    let dir = app
+                                        .opened_file_path
+                                        .clone()
+                                        .unwrap_or_else(|| "HEAD".to_string());
                                     let terminal_tx_clone = terminal_tx.clone();
                                     tokio::spawn(async move {
                                         let _ = terminal_tx_clone.send(format!("[System] Visual Steering Fork requested for commit/tx position {}", playhead_tx)).await;
@@ -1524,9 +1768,15 @@ async fn run_tui_event_loop(
                                 }
                                 KeyCode::Enter => {
                                     if !app.input_buffer.is_empty() {
-                                        app.log(format!("Custom override submitted: {}", app.input_buffer));
+                                        app.log(format!(
+                                            "Custom override submitted: {}",
+                                            app.input_buffer
+                                        ));
                                         if let Some(ref tx) = app.feedback_tx {
-                                            let _ = tx.try_send(ContractResponse::Override(vec![app.input_buffer.clone()]));
+                                            let _ =
+                                                tx.try_send(ContractResponse::Override(vec![app
+                                                    .input_buffer
+                                                    .clone()]));
                                         }
                                         app.pending_contract_approval = None;
                                         app.editing_custom_criterion = false;
@@ -1572,7 +1822,9 @@ async fn run_tui_event_loop(
                             }
                         }
                     } else {
-                        if key.modifiers.contains(event::KeyModifiers::CONTROL) && key.code == KeyCode::Char('w') {
+                        if key.modifiers.contains(event::KeyModifiers::CONTROL)
+                            && key.code == KeyCode::Char('w')
+                        {
                             if app.active_tab == TuiTab::Workspace {
                                 if let Some(idx) = app.active_tab_idx {
                                     app.close_tab(idx);
@@ -1617,8 +1869,11 @@ async fn run_tui_event_loop(
                         // Global hotkeys to switch tabs
                         match key.code {
                             KeyCode::Char('?') => {
-                                let in_editor_insert = app.active_tab == TuiTab::Workspace && app.focus == TuiFocus::Editor && app.editor_insert_mode;
-                                let in_console_chat = app.active_tab == TuiTab::AgentConsole && app.focus == TuiFocus::AgentConsole;
+                                let in_editor_insert = app.active_tab == TuiTab::Workspace
+                                    && app.focus == TuiFocus::Editor
+                                    && app.editor_insert_mode;
+                                let in_console_chat = app.active_tab == TuiTab::AgentConsole
+                                    && app.focus == TuiFocus::AgentConsole;
                                 if !in_editor_insert && !in_console_chat {
                                     app.help_modal_open = true;
                                     app.help_slide = 0;
@@ -1627,8 +1882,10 @@ async fn run_tui_event_loop(
                                 }
                             }
                             KeyCode::Char('h') => {
-                                let in_editor = app.active_tab == TuiTab::Workspace && app.focus == TuiFocus::Editor;
-                                let in_console = app.active_tab == TuiTab::AgentConsole && app.focus == TuiFocus::AgentConsole;
+                                let in_editor = app.active_tab == TuiTab::Workspace
+                                    && app.focus == TuiFocus::Editor;
+                                let in_console = app.active_tab == TuiTab::AgentConsole
+                                    && app.focus == TuiFocus::AgentConsole;
                                 if !in_editor && !in_console {
                                     app.help_modal_open = true;
                                     app.help_slide = 0;
@@ -1664,10 +1921,18 @@ async fn run_tui_event_loop(
                                 // Cycle panel focus based on active tab
                                 app.focus = match app.active_tab {
                                     TuiTab::Workspace => {
-                                        if app.focus == TuiFocus::FileTree { TuiFocus::Editor } else { TuiFocus::FileTree }
+                                        if app.focus == TuiFocus::FileTree {
+                                            TuiFocus::Editor
+                                        } else {
+                                            TuiFocus::FileTree
+                                        }
                                     }
                                     TuiTab::AgentConsole => {
-                                        if app.focus == TuiFocus::AgentConsole { TuiFocus::TabSelect } else { TuiFocus::AgentConsole }
+                                        if app.focus == TuiFocus::AgentConsole {
+                                            TuiFocus::TabSelect
+                                        } else {
+                                            TuiFocus::AgentConsole
+                                        }
                                     }
                                     TuiTab::CampaignObservability => TuiFocus::TabSelect,
                                     TuiTab::GitTimeline => TuiFocus::GitTimeline,
@@ -1713,7 +1978,8 @@ async fn run_tui_event_loop(
                                             if let Some(idx) = app.selected_file_idx {
                                                 let is_dir = app.file_tree[idx].is_dir;
                                                 if is_dir {
-                                                    app.file_tree[idx].open = !app.file_tree[idx].open;
+                                                    app.file_tree[idx].open =
+                                                        !app.file_tree[idx].open;
                                                     app.rebuild_file_tree();
                                                 } else {
                                                     app.open_selected_file();
@@ -1724,7 +1990,10 @@ async fn run_tui_event_loop(
                                         _ => {}
                                     }
                                 } else if app.focus == TuiFocus::Editor {
-                                    let visible_height = terminal.size().map(|s| s.height.saturating_sub(8) as usize).unwrap_or(18);
+                                    let visible_height = terminal
+                                        .size()
+                                        .map(|s| s.height.saturating_sub(8) as usize)
+                                        .unwrap_or(18);
                                     app.handle_editor_key(key, visible_height);
                                 }
                             }
@@ -1740,12 +2009,14 @@ async fn run_tui_event_loop(
                                         KeyCode::Enter => {
                                             let cmd_line = app.console_input.trim().to_string();
                                             if !cmd_line.is_empty() {
-                                                app.console_logs.push(format!("korg > {}", cmd_line));
+                                                app.console_logs
+                                                    .push(format!("korg > {}", cmd_line));
                                                 app.console_input.clear();
 
                                                 // Parse commands in TUI IDE
                                                 if cmd_line == "/help" {
-                                                    app.console_logs.push("  Directives:".to_string());
+                                                    app.console_logs
+                                                        .push("  Directives:".to_string());
                                                     app.console_logs.push("    /run <cmd>           Run a local terminal subprocess async".to_string());
                                                     app.console_logs.push("    /edit [file] <inst>  Ask Benjamin to edit a file (defaults to open file)".to_string());
                                                     app.console_logs.push("    /explain             Have Captain explain the currently open file".to_string());
@@ -1758,11 +2029,17 @@ async fn run_tui_event_loop(
                                                     app.console_logs.clear();
                                                 } else if cmd_line == "/explain" {
                                                     let path_opt = app.opened_file_path.clone();
-                                                    let content_opt = app.opened_file_content.clone();
+                                                    let content_opt =
+                                                        app.opened_file_content.clone();
                                                     let agent_tx_clone = agent_tx.clone();
-                                                    
-                                                    if let (Some(path), Some(lines)) = (path_opt, content_opt) {
-                                                        app.console_logs.push(format!("[System] Swarm is analyzing {}...", path));
+
+                                                    if let (Some(path), Some(lines)) =
+                                                        (path_opt, content_opt)
+                                                    {
+                                                        app.console_logs.push(format!(
+                                                            "[System] Swarm is analyzing {}...",
+                                                            path
+                                                        ));
                                                         tokio::spawn(async move {
                                                             let code = lines.join("\n");
                                                             let prompt = format!(
@@ -1774,12 +2051,26 @@ async fn run_tui_event_loop(
                                                                 &prompt,
                                                                 "tui-explain"
                                                             ).await;
-                                                            let reply = if let Some(explanation) = result.output.get("explanation").and_then(|v| v.as_str()) {
+                                                            let reply = if let Some(explanation) =
+                                                                result
+                                                                    .output
+                                                                    .get("explanation")
+                                                                    .and_then(|v| v.as_str())
+                                                            {
                                                                 explanation.to_string()
-                                                            } else if let Some(synth) = result.output.get("synthesis").and_then(|v| v.as_str()) {
+                                                            } else if let Some(synth) = result
+                                                                .output
+                                                                .get("synthesis")
+                                                                .and_then(|v| v.as_str())
+                                                            {
                                                                 synth.to_string()
                                                             } else {
-                                                                serde_json::to_string_pretty(&result.output).unwrap_or_else(|_| "No output".to_string())
+                                                                serde_json::to_string_pretty(
+                                                                    &result.output,
+                                                                )
+                                                                .unwrap_or_else(|_| {
+                                                                    "No output".to_string()
+                                                                })
                                                             };
                                                             let _ = agent_tx_clone.send(format!("[Captain] File Explanation for {}:\n{}", path, reply)).await;
                                                         });
@@ -1788,10 +2079,13 @@ async fn run_tui_event_loop(
                                                     }
                                                 } else if cmd_line == "/critique" {
                                                     let path_opt = app.opened_file_path.clone();
-                                                    let content_opt = app.opened_file_content.clone();
+                                                    let content_opt =
+                                                        app.opened_file_content.clone();
                                                     let agent_tx_clone = agent_tx.clone();
-                                                    
-                                                    if let (Some(path), Some(lines)) = (path_opt, content_opt) {
+
+                                                    if let (Some(path), Some(lines)) =
+                                                        (path_opt, content_opt)
+                                                    {
                                                         app.console_logs.push(format!("[System] Swarm Critic is reviewing {}...", path));
                                                         tokio::spawn(async move {
                                                             let code = lines.join("\n");
@@ -1804,12 +2098,26 @@ async fn run_tui_event_loop(
                                                                 &prompt,
                                                                 "tui-critique"
                                                             ).await;
-                                                            let reply = if let Some(explanation) = result.output.get("explanation").and_then(|v| v.as_str()) {
+                                                            let reply = if let Some(explanation) =
+                                                                result
+                                                                    .output
+                                                                    .get("explanation")
+                                                                    .and_then(|v| v.as_str())
+                                                            {
                                                                 explanation.to_string()
-                                                            } else if let Some(synth) = result.output.get("synthesis").and_then(|v| v.as_str()) {
+                                                            } else if let Some(synth) = result
+                                                                .output
+                                                                .get("synthesis")
+                                                                .and_then(|v| v.as_str())
+                                                            {
                                                                 synth.to_string()
                                                             } else {
-                                                                serde_json::to_string_pretty(&result.output).unwrap_or_else(|_| "No output".to_string())
+                                                                serde_json::to_string_pretty(
+                                                                    &result.output,
+                                                                )
+                                                                .unwrap_or_else(|_| {
+                                                                    "No output".to_string()
+                                                                })
                                                             };
                                                             let _ = agent_tx_clone.send(format!("[Harper] Security & Performance Critique for {}:\n{}", path, reply)).await;
                                                         });
@@ -1818,10 +2126,13 @@ async fn run_tui_event_loop(
                                                     }
                                                 } else if cmd_line == "/refactor" {
                                                     let path_opt = app.opened_file_path.clone();
-                                                    let content_opt = app.opened_file_content.clone();
+                                                    let content_opt =
+                                                        app.opened_file_content.clone();
                                                     let agent_tx_clone = agent_tx.clone();
-                                                    
-                                                    if let (Some(path), Some(lines)) = (path_opt, content_opt) {
+
+                                                    if let (Some(path), Some(lines)) =
+                                                        (path_opt, content_opt)
+                                                    {
                                                         app.console_logs.push(format!("[System] Swarm Builder is refactoring {}...", path));
                                                         tokio::spawn(async move {
                                                             let code = lines.join("\n");
@@ -1834,12 +2145,26 @@ async fn run_tui_event_loop(
                                                                 &prompt,
                                                                 "tui-refactor"
                                                             ).await;
-                                                            let reply = if let Some(explanation) = result.output.get("explanation").and_then(|v| v.as_str()) {
+                                                            let reply = if let Some(explanation) =
+                                                                result
+                                                                    .output
+                                                                    .get("explanation")
+                                                                    .and_then(|v| v.as_str())
+                                                            {
                                                                 explanation.to_string()
-                                                            } else if let Some(synth) = result.output.get("synthesis").and_then(|v| v.as_str()) {
+                                                            } else if let Some(synth) = result
+                                                                .output
+                                                                .get("synthesis")
+                                                                .and_then(|v| v.as_str())
+                                                            {
                                                                 synth.to_string()
                                                             } else {
-                                                                serde_json::to_string_pretty(&result.output).unwrap_or_else(|_| "No output".to_string())
+                                                                serde_json::to_string_pretty(
+                                                                    &result.output,
+                                                                )
+                                                                .unwrap_or_else(|_| {
+                                                                    "No output".to_string()
+                                                                })
                                                             };
                                                             let _ = agent_tx_clone.send(format!("[Benjamin] Proposed Refactoring for {}:\n{}", path, reply)).await;
                                                         });
@@ -1847,29 +2172,49 @@ async fn run_tui_event_loop(
                                                         app.console_logs.push("[Error] No active file open in editor to refactor.".to_string());
                                                     }
                                                 } else if cmd_line.starts_with("/run ") {
-                                                    let raw_cmd = cmd_line["/run ".len()..].trim().to_string();
+                                                    let raw_cmd = cmd_line["/run ".len()..]
+                                                        .trim()
+                                                        .to_string();
                                                     let terminal_tx_clone = terminal_tx.clone();
-                                                    app.terminal_logs.push(format!("$ {}", raw_cmd));
-                                                    
+                                                    app.terminal_logs
+                                                        .push(format!("$ {}", raw_cmd));
+
                                                     tokio::spawn(async move {
                                                         let mut parts = raw_cmd.split_whitespace();
                                                         if let Some(cmd) = parts.next() {
-                                                            let args: Vec<String> = parts.map(|s| s.to_string()).collect();
+                                                            let args: Vec<String> = parts
+                                                                .map(|s| s.to_string())
+                                                                .collect();
                                                             let _ = terminal_tx_clone.send(format!("[System] Spawned background subprocess: {} {:?}", cmd, args)).await;
-                                                            let output = tokio::process::Command::new(cmd)
-                                                                .args(&args)
-                                                                .output()
-                                                                .await;
+                                                            let output =
+                                                                tokio::process::Command::new(cmd)
+                                                                    .args(&args)
+                                                                    .output()
+                                                                    .await;
                                                             match output {
                                                                 Ok(out) => {
-                                                                    let stdout = String::from_utf8_lossy(&out.stdout);
+                                                                    let stdout =
+                                                                        String::from_utf8_lossy(
+                                                                            &out.stdout,
+                                                                        );
                                                                     for line in stdout.lines() {
-                                                                        let _ = terminal_tx_clone.send(line.to_string()).await;
+                                                                        let _ = terminal_tx_clone
+                                                                            .send(line.to_string())
+                                                                            .await;
                                                                     }
                                                                     if !out.status.success() {
-                                                                        let stderr = String::from_utf8_lossy(&out.stderr);
+                                                                        let stderr =
+                                                                            String::from_utf8_lossy(
+                                                                                &out.stderr,
+                                                                            );
                                                                         for line in stderr.lines() {
-                                                                            let _ = terminal_tx_clone.send(format!("Error: {}", line)).await;
+                                                                            let _ =
+                                                                                terminal_tx_clone
+                                                                                    .send(format!(
+                                                                                        "Error: {}",
+                                                                                        line
+                                                                                    ))
+                                                                                    .await;
                                                                         }
                                                                     }
                                                                 }
@@ -1880,21 +2225,36 @@ async fn run_tui_event_loop(
                                                         }
                                                     });
                                                 } else if cmd_line.starts_with("/edit ") {
-                                                    let edit_body = cmd_line["/edit ".len()..].trim().to_string();
+                                                    let edit_body = cmd_line["/edit ".len()..]
+                                                        .trim()
+                                                        .to_string();
                                                     let agent_tx_clone = agent_tx.clone();
-                                                    
+
                                                     let mut parts = edit_body.split_whitespace();
-                                                    let (file_path, instruction) = if let Some(first_word) = parts.next() {
-                                                        if std::path::Path::new(first_word).exists() {
-                                                            (first_word.to_string(), edit_body[first_word.len()..].trim().to_string())
-                                                        } else if let Some(ref active_path) = app.opened_file_path {
-                                                            (active_path.clone(), edit_body.clone())
+                                                    let (file_path, instruction) =
+                                                        if let Some(first_word) = parts.next() {
+                                                            if std::path::Path::new(first_word)
+                                                                .exists()
+                                                            {
+                                                                (
+                                                                    first_word.to_string(),
+                                                                    edit_body[first_word.len()..]
+                                                                        .trim()
+                                                                        .to_string(),
+                                                                )
+                                                            } else if let Some(ref active_path) =
+                                                                app.opened_file_path
+                                                            {
+                                                                (
+                                                                    active_path.clone(),
+                                                                    edit_body.clone(),
+                                                                )
+                                                            } else {
+                                                                ("".to_string(), "".to_string())
+                                                            }
                                                         } else {
                                                             ("".to_string(), "".to_string())
-                                                        }
-                                                    } else {
-                                                        ("".to_string(), "".to_string())
-                                                    };
+                                                        };
 
                                                     if file_path.is_empty() {
                                                         app.console_logs.push("[Error] /edit requires either a valid file path or an active file open in the editor.".to_string());
@@ -1906,28 +2266,52 @@ async fn run_tui_event_loop(
                                                                 &format!("Edit file {}: {}", file_path, instruction),
                                                                 "tui-edit",
                                                             ).await;
-                                                            
+
                                                             let _ = agent_tx_clone.send(format!("[Benjamin] Swarm proposed {} mutations.", result.mutations.len())).await;
                                                             for mutation in &result.mutations {
-                                                                let target = mutation.get("target").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                                                let action = mutation.get("action").and_then(|v| v.as_str()).unwrap_or("update");
-                                                                let _ = agent_tx_clone.send(format!("  Applying {} to {}", action, target)).await;
-                                                                if let Some(content) = mutation.get("content").and_then(|v| v.as_str()) {
-                                                                    let _ = tokio::fs::write(target, content).await;
+                                                                let target = mutation
+                                                                    .get("target")
+                                                                    .and_then(|v| v.as_str())
+                                                                    .unwrap_or("unknown");
+                                                                let action = mutation
+                                                                    .get("action")
+                                                                    .and_then(|v| v.as_str())
+                                                                    .unwrap_or("update");
+                                                                let _ = agent_tx_clone
+                                                                    .send(format!(
+                                                                        "  Applying {} to {}",
+                                                                        action, target
+                                                                    ))
+                                                                    .await;
+                                                                if let Some(content) = mutation
+                                                                    .get("content")
+                                                                    .and_then(|v| v.as_str())
+                                                                {
+                                                                    let _ = tokio::fs::write(
+                                                                        target, content,
+                                                                    )
+                                                                    .await;
                                                                 }
                                                             }
                                                             let _ = agent_tx_clone.send("[Benjamin] File edit applied successfully. Verify inside Workspace!".to_string()).await;
                                                         });
                                                     }
                                                 } else if cmd_line.starts_with("/goal ") {
-                                                    let goal_prompt = cmd_line["/goal ".len()..].trim().to_string();
+                                                    let goal_prompt = cmd_line["/goal ".len()..]
+                                                        .trim()
+                                                        .to_string();
                                                     let agent_tx_clone = agent_tx.clone();
                                                     app.console_logs.push(format!("[System] Starting autonomous Swarm Goal: {}", goal_prompt));
-                                                    
+
                                                     tokio::spawn(async move {
-                                                        let mut leader = LeaderOrchestrator::new(goal_prompt.clone(), None);
+                                                        let mut leader = LeaderOrchestrator::new(
+                                                            goal_prompt.clone(),
+                                                            None,
+                                                        );
                                                         leader.goal_mode = true;
-                                                        leader.set_cognition_mode("autonomous").await;
+                                                        leader
+                                                            .set_cognition_mode("autonomous")
+                                                            .await;
                                                         let res = leader.run_full_campaign().await;
                                                         match res {
                                                             Ok(_) => {
@@ -1941,21 +2325,39 @@ async fn run_tui_event_loop(
                                                 } else {
                                                     // Plain chat prompt - Asynchronous multi-turn Swarm interaction
                                                     let agent_tx_clone = agent_tx.clone();
-                                                    app.console_logs.push("[System] Swarm is analyzing query...".to_string());
-                                                    
+                                                    app.console_logs.push(
+                                                        "[System] Swarm is analyzing query..."
+                                                            .to_string(),
+                                                    );
+
                                                     tokio::spawn(async move {
                                                         let result = crate::personas::run_persona(
                                                             crate::personas::Persona::Captain,
                                                             &cmd_line,
-                                                            "tui-chat"
-                                                        ).await;
-                                                        
-                                                        let reply = if let Some(explanation) = result.output.get("explanation").and_then(|v| v.as_str()) {
+                                                            "tui-chat",
+                                                        )
+                                                        .await;
+
+                                                        let reply = if let Some(explanation) =
+                                                            result
+                                                                .output
+                                                                .get("explanation")
+                                                                .and_then(|v| v.as_str())
+                                                        {
                                                             explanation.to_string()
-                                                        } else if let Some(synth) = result.output.get("synthesis").and_then(|v| v.as_str()) {
+                                                        } else if let Some(synth) = result
+                                                            .output
+                                                            .get("synthesis")
+                                                            .and_then(|v| v.as_str())
+                                                        {
                                                             synth.to_string()
                                                         } else {
-                                                            serde_json::to_string_pretty(&result.output).unwrap_or_else(|_| "No output".to_string())
+                                                            serde_json::to_string_pretty(
+                                                                &result.output,
+                                                            )
+                                                            .unwrap_or_else(|_| {
+                                                                "No output".to_string()
+                                                            })
                                                         };
                                                         let _ = agent_tx_clone.send(reply).await;
                                                     });
@@ -1966,67 +2368,76 @@ async fn run_tui_event_loop(
                                     }
                                 }
                             }
-                            TuiTab::CampaignObservability => {
-                                match key.code {
-                                    KeyCode::Left => {
-                                        if app.playhead > 0 {
-                                            app.playhead -= 1;
-                                            app.log(format!("Playhead scrubbed back to tx_{:02}", app.playhead));
-                                        }
+                            TuiTab::CampaignObservability => match key.code {
+                                KeyCode::Left => {
+                                    if app.playhead > 0 {
+                                        app.playhead -= 1;
+                                        app.log(format!(
+                                            "Playhead scrubbed back to tx_{:02}",
+                                            app.playhead
+                                        ));
                                     }
-                                    KeyCode::Right => {
-                                        if app.playhead < 10 {
-                                            app.playhead += 1;
-                                            app.log(format!("Playhead scrubbed forward to tx_{:02}", app.playhead));
-                                        }
-                                    }
-                                    KeyCode::Char('f') | KeyCode::Char('F') => {
-                                        app.fork_modal_open = true;
-                                        app.steering_buffer.clear();
-                                        app.log(format!("Launching Steer-Fork Modal at tx_{:02}...", app.playhead));
-                                    }
-                                    KeyCode::Char('p') => {
-                                        app.paused = !app.paused;
-                                    }
-                                    _ => {}
                                 }
-                            }
-                            TuiTab::GitTimeline => {
-                                match key.code {
-                                    KeyCode::Up | KeyCode::Char('k') => {
-                                        if app.selected_commit_idx > 0 {
-                                            app.selected_commit_idx -= 1;
-                                        }
+                                KeyCode::Right => {
+                                    if app.playhead < 10 {
+                                        app.playhead += 1;
+                                        app.log(format!(
+                                            "Playhead scrubbed forward to tx_{:02}",
+                                            app.playhead
+                                        ));
                                     }
-                                    KeyCode::Down | KeyCode::Char('j') => {
-                                        if app.selected_commit_idx + 1 < app.git_commits.len() {
-                                            app.selected_commit_idx += 1;
-                                        }
+                                }
+                                KeyCode::Char('f') | KeyCode::Char('F') => {
+                                    app.fork_modal_open = true;
+                                    app.steering_buffer.clear();
+                                    app.log(format!(
+                                        "Launching Steer-Fork Modal at tx_{:02}...",
+                                        app.playhead
+                                    ));
+                                }
+                                KeyCode::Char('p') => {
+                                    app.paused = !app.paused;
+                                }
+                                _ => {}
+                            },
+                            TuiTab::GitTimeline => match key.code {
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    if app.selected_commit_idx > 0 {
+                                        app.selected_commit_idx -= 1;
                                     }
-                                    KeyCode::Enter | KeyCode::Char('f') | KeyCode::Char('F') => {
-                                        let target_commit = app.git_commits[app.selected_commit_idx].hash.clone();
-                                        app.log(format!("Visual Replay checkout requested for commit {}", target_commit));
-                                        
-                                        let terminal_tx_clone = terminal_tx.clone();
-                                        tokio::spawn(async move {
-                                            let _ = terminal_tx_clone.send(format!("[System] Time-Traveling codebase working directory to tree commit {}...", target_commit)).await;
-                                            let output = tokio::process::Command::new("git")
-                                                .args(&["read-tree", "--reset", "-u", "HEAD"])
-                                                .output()
-                                                .await;
-                                            match output {
-                                                Ok(out) if out.status.success() => {
-                                                    let _ = terminal_tx_clone.send(format!("✓ Codebase working directory successfully reset to tree: {}", target_commit)).await;
-                                                }
-                                                _ => {
-                                                    let _ = terminal_tx_clone.send(format!("[System] Simulated playhead reversion success to tree hash {}", target_commit)).await;
-                                                }
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    if app.selected_commit_idx + 1 < app.git_commits.len() {
+                                        app.selected_commit_idx += 1;
+                                    }
+                                }
+                                KeyCode::Enter | KeyCode::Char('f') | KeyCode::Char('F') => {
+                                    let target_commit =
+                                        app.git_commits[app.selected_commit_idx].hash.clone();
+                                    app.log(format!(
+                                        "Visual Replay checkout requested for commit {}",
+                                        target_commit
+                                    ));
+
+                                    let terminal_tx_clone = terminal_tx.clone();
+                                    tokio::spawn(async move {
+                                        let _ = terminal_tx_clone.send(format!("[System] Time-Traveling codebase working directory to tree commit {}...", target_commit)).await;
+                                        let output = tokio::process::Command::new("git")
+                                            .args(&["read-tree", "--reset", "-u", "HEAD"])
+                                            .output()
+                                            .await;
+                                        match output {
+                                            Ok(out) if out.status.success() => {
+                                                let _ = terminal_tx_clone.send(format!("✓ Codebase working directory successfully reset to tree: {}", target_commit)).await;
                                             }
-                                        });
-                                    }
-                                    _ => {}
+                                            _ => {
+                                                let _ = terminal_tx_clone.send(format!("[System] Simulated playhead reversion success to tree hash {}", target_commit)).await;
+                                            }
+                                        }
+                                    });
                                 }
-                            }
+                                _ => {}
+                            },
                         }
                     }
                 }
@@ -2065,7 +2476,10 @@ async fn run_tui_event_loop(
                     winner,
                     mutations,
                 } => {
-                    app.arena_history.push(format!("Round {}: winner '{}' ({} muts)", round, winner, mutations));
+                    app.arena_history.push(format!(
+                        "Round {}: winner '{}' ({} muts)",
+                        round, winner, mutations
+                    ));
                     if app.arena_history.len() > 8 {
                         app.arena_history.remove(0);
                     }
@@ -2120,19 +2534,27 @@ async fn run_tui_event_loop(
                     // Push scores to sparkline histories
                     let cap_sc = (scores[0] * 100.0).clamp(0.0, 100.0) as u64;
                     app.captain_score_history.push(cap_sc);
-                    if app.captain_score_history.len() > 30 { app.captain_score_history.remove(0); }
+                    if app.captain_score_history.len() > 30 {
+                        app.captain_score_history.remove(0);
+                    }
 
                     let har_sc = (scores[1] * 100.0).clamp(0.0, 100.0) as u64;
                     app.harper_score_history.push(har_sc);
-                    if app.harper_score_history.len() > 30 { app.harper_score_history.remove(0); }
+                    if app.harper_score_history.len() > 30 {
+                        app.harper_score_history.remove(0);
+                    }
 
                     let ben_sc = (scores[2] * 100.0).clamp(0.0, 100.0) as u64;
                     app.benjamin_score_history.push(ben_sc);
-                    if app.benjamin_score_history.len() > 30 { app.benjamin_score_history.remove(0); }
+                    if app.benjamin_score_history.len() > 30 {
+                        app.benjamin_score_history.remove(0);
+                    }
 
                     let luc_sc = (scores[3] * 100.0).clamp(0.0, 100.0) as u64;
                     app.lucas_score_history.push(luc_sc);
-                    if app.lucas_score_history.len() > 30 { app.lucas_score_history.remove(0); }
+                    if app.lucas_score_history.len() > 30 {
+                        app.lucas_score_history.remove(0);
+                    }
                 }
                 TuiUpdate::ScaleTelemetry {
                     total_tokens,
@@ -2196,14 +2618,17 @@ pub fn highlight_line(line: &str, ext: Option<&str>) -> Line<'static> {
         _ => ext_str,
     };
 
-    let syntax = syntax_set.find_syntax_by_extension(ext_norm)
+    let syntax = syntax_set
+        .find_syntax_by_extension(ext_norm)
         .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
 
     let mut h = HighlightLines::new(syntax, &theme_set.themes["base16-ocean.dark"]);
-    
+
     // syntect parsing engine prefers a trailing newline to identify comment/string terminations correctly
     let line_with_nl = format!("{}\n", line);
-    let ranges = h.highlight_line(&line_with_nl, syntax_set).unwrap_or(vec![]);
+    let ranges = h
+        .highlight_line(&line_with_nl, syntax_set)
+        .unwrap_or(vec![]);
 
     let mut spans = Vec::new();
     for (style, text) in ranges {
@@ -2217,10 +2642,16 @@ pub fn highlight_line(line: &str, ext: Option<&str>) -> Line<'static> {
 
         let fg = style.foreground;
         let mut r_style = Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b));
-        if style.font_style.contains(syntect::highlighting::FontStyle::BOLD) {
+        if style
+            .font_style
+            .contains(syntect::highlighting::FontStyle::BOLD)
+        {
             r_style = r_style.bold();
         }
-        if style.font_style.contains(syntect::highlighting::FontStyle::ITALIC) {
+        if style
+            .font_style
+            .contains(syntect::highlighting::FontStyle::ITALIC)
+        {
             r_style = r_style.italic();
         }
 
@@ -2228,7 +2659,10 @@ pub fn highlight_line(line: &str, ext: Option<&str>) -> Line<'static> {
     }
 
     if spans.is_empty() {
-        spans.push(Span::styled(line.to_string(), Style::default().fg(Color::Rgb(240, 240, 240))));
+        spans.push(Span::styled(
+            line.to_string(),
+            Style::default().fg(Color::Rgb(240, 240, 240)),
+        ));
     }
 
     Line::from(spans)
@@ -2236,21 +2670,21 @@ pub fn highlight_line(line: &str, ext: Option<&str>) -> Line<'static> {
 
 fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // 24-bit TrueColor Palette Definitions
-    let fg_cyan = Color::Rgb(240, 240, 240);    // High-Contrast Pure White/Gray
-    let fg_pink = Color::Rgb(160, 160, 160);    // Clean Medium Zinc
-    let fg_green = Color::Rgb(220, 220, 220);   // Off-White
-    let fg_gold = Color::Rgb(180, 180, 180);    // Muted Gray
+    let fg_cyan = Color::Rgb(240, 240, 240); // High-Contrast Pure White/Gray
+    let fg_pink = Color::Rgb(160, 160, 160); // Clean Medium Zinc
+    let fg_green = Color::Rgb(220, 220, 220); // Off-White
+    let fg_gold = Color::Rgb(180, 180, 180); // Muted Gray
     let fg_crimson = Color::Rgb(140, 140, 140); // Darker Slate
-    let fg_slate = Color::Rgb(64, 64, 64);      // Deep Zinc Gray (Grok Border)
-    let fg_white = Color::Rgb(255, 255, 255);    // Pure White
+    let fg_slate = Color::Rgb(64, 64, 64); // Deep Zinc Gray (Grok Border)
+    let fg_white = Color::Rgb(255, 255, 255); // Pure White
 
     // korg workspace layout splitting
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Top Bar
-            Constraint::Min(10),    // Main Grid Workspace
-            Constraint::Length(3),  // Bottom Status Bar
+            Constraint::Length(3), // Top Bar
+            Constraint::Min(10),   // Main Grid Workspace
+            Constraint::Length(3), // Bottom Status Bar
         ])
         .split(f.size());
 
@@ -2261,9 +2695,10 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // ==========================================
     // 0. Top Bar Dashboard Header with Tab Selectors
     // ==========================================
-    let mut tab_spans = vec![
-        Span::styled(" 🛡️  k o r g  │  ", Style::default().fg(Color::Rgb(255, 255, 255)).bold()),
-    ];
+    let mut tab_spans = vec![Span::styled(
+        " 🛡️  k o r g  │  ",
+        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+    )];
 
     let tabs = [
         (TuiTab::Workspace, " [1] Workspace IDE "),
@@ -2275,20 +2710,39 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     for (t, name) in tabs.iter() {
         let is_active = app.active_tab == *t;
         if is_active {
-            tab_spans.push(Span::styled(*name, Style::default().bg(Color::Rgb(255, 117, 181)).fg(Color::Rgb(10, 10, 12)).bold()));
+            tab_spans.push(Span::styled(
+                *name,
+                Style::default()
+                    .bg(Color::Rgb(255, 117, 181))
+                    .fg(Color::Rgb(10, 10, 12))
+                    .bold(),
+            ));
         } else {
-            tab_spans.push(Span::styled(*name, Style::default().fg(Color::Rgb(180, 180, 180))));
+            tab_spans.push(Span::styled(
+                *name,
+                Style::default().fg(Color::Rgb(180, 180, 180)),
+            ));
         }
         tab_spans.push(Span::styled("  ", Style::default()));
     }
 
-    tab_spans.push(Span::styled(format!("│  swarm: {}  │  entropy: {:.3} ", app.swarm_size, app.h_sem), Style::default().fg(Color::Rgb(180, 180, 180))));
+    tab_spans.push(Span::styled(
+        format!(
+            "│  swarm: {}  │  entropy: {:.3} ",
+            app.swarm_size, app.h_sem
+        ),
+        Style::default().fg(Color::Rgb(180, 180, 180)),
+    ));
 
-    let top = Paragraph::new(Line::from(tab_spans))
-        .block(Block::default()
+    let top = Paragraph::new(Line::from(tab_spans)).block(
+        Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(fg_slate))
-            .title(Span::styled(" [ heavy-tier command center ] ", Style::default().fg(Color::Rgb(255, 255, 255)).bold())));
+            .title(Span::styled(
+                " [ heavy-tier command center ] ",
+                Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+            )),
+    );
     f.render_widget(top, top_bar_area);
 
     // Render the grid area depending on active tab
@@ -2324,17 +2778,24 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 let is_selected = Some(i) == app.selected_file_idx;
                 let indent = "  ".repeat(entry.depth);
                 let icon = if entry.is_dir {
-                    if entry.open { "▼ 📁 " } else { "▶ 📁 " }
+                    if entry.open {
+                        "▼ 📁 "
+                    } else {
+                        "▶ 📁 "
+                    }
                 } else {
                     "📄 "
                 };
-                
+
                 let text_style = if is_selected {
-                    Style::default().bg(Color::Rgb(40, 40, 45)).fg(Color::Rgb(255, 117, 181)).bold()
+                    Style::default()
+                        .bg(Color::Rgb(40, 40, 45))
+                        .fg(Color::Rgb(255, 117, 181))
+                        .bold()
                 } else {
                     Style::default().fg(Color::Rgb(240, 240, 240))
                 };
-                
+
                 tree_items.push(ListItem::new(Line::from(vec![
                     Span::raw(indent),
                     Span::styled(format!("{}{}", icon, entry.name), text_style),
@@ -2347,11 +2808,15 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 Style::default().fg(fg_slate)
             };
 
-            let file_tree_block = List::new(tree_items)
-                .block(Block::default()
+            let file_tree_block = List::new(tree_items).block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_style(file_tree_border)
-                    .title(Span::styled(" [ file tree ] ", Style::default().fg(Color::Rgb(255, 255, 255)).bold())));
+                    .title(Span::styled(
+                        " [ file tree ] ",
+                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                    )),
+            );
             f.render_widget(file_tree_block, file_tree_area);
 
             if let Some(tabs_area) = tabs_bar_area {
@@ -2363,23 +2828,39 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                         .and_then(|n| n.to_str())
                         .unwrap_or(&tab.path);
                     let mod_indicator = if tab.is_modified { " ●" } else { "" };
-                    
+
                     if i > 0 {
-                        spans.push(Span::styled(" │ ", Style::default().fg(Color::Rgb(60, 65, 75))));
+                        spans.push(Span::styled(
+                            " │ ",
+                            Style::default().fg(Color::Rgb(60, 65, 75)),
+                        ));
                     }
-                    
+
                     if is_active {
-                        spans.push(Span::styled(format!(" {} {} ", filename, mod_indicator), Style::default().fg(Color::Rgb(0, 180, 216)).bg(Color::Rgb(35, 35, 45)).bold()));
+                        spans.push(Span::styled(
+                            format!(" {} {} ", filename, mod_indicator),
+                            Style::default()
+                                .fg(Color::Rgb(0, 180, 216))
+                                .bg(Color::Rgb(35, 35, 45))
+                                .bold(),
+                        ));
                     } else {
-                        spans.push(Span::styled(format!(" {} {} ", filename, mod_indicator), Style::default().fg(Color::Rgb(140, 150, 165))));
+                        spans.push(Span::styled(
+                            format!(" {} {} ", filename, mod_indicator),
+                            Style::default().fg(Color::Rgb(140, 150, 165)),
+                        ));
                     }
                 }
-                
-                let tab_bar = Paragraph::new(Line::from(spans))
-                    .block(Block::default()
+
+                let tab_bar = Paragraph::new(Line::from(spans)).block(
+                    Block::default()
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Rgb(45, 48, 56)))
-                        .title(Span::styled(" 📑 [ tabs ] ", Style::default().fg(Color::Rgb(150, 160, 175)).bold())));
+                        .title(Span::styled(
+                            " 📑 [ tabs ] ",
+                            Style::default().fg(Color::Rgb(150, 160, 175)).bold(),
+                        )),
+                );
                 f.render_widget(tab_bar, tabs_area);
             }
 
@@ -2394,40 +2875,66 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             };
 
             let editor_title = if let Some(ref path) = app.opened_file_path {
-                let mode = if app.editor_insert_mode { "INSERT" } else { "NORMAL" };
-                format!(" 📝 {} [{}] ({}:{}) ", path, mode, app.cursor_y + 1, app.cursor_x + 1)
+                let mode = if app.editor_insert_mode {
+                    "INSERT"
+                } else {
+                    "NORMAL"
+                };
+                format!(
+                    " 📝 {} [{}] ({}:{}) ",
+                    path,
+                    mode,
+                    app.cursor_y + 1,
+                    app.cursor_x + 1
+                )
             } else {
                 " [ editor ] ".to_string()
             };
 
             if let Some(ref lines) = app.opened_file_content {
                 let mut editor_lines = vec![];
-                let file_ext = app.opened_file_path.as_ref().and_then(|p| std::path::Path::new(p).extension().and_then(|e| e.to_str()));
-                
+                let file_ext = app
+                    .opened_file_path
+                    .as_ref()
+                    .and_then(|p| std::path::Path::new(p).extension().and_then(|e| e.to_str()));
+
                 let start_line = app.editor_scroll;
                 let height = editor_area.height as usize;
-                
-                for (line_no, line_content) in lines.iter().enumerate().skip(start_line).take(height.saturating_sub(2)) {
+
+                for (line_no, line_content) in lines
+                    .iter()
+                    .enumerate()
+                    .skip(start_line)
+                    .take(height.saturating_sub(2))
+                {
                     let highlighted = highlight_line(line_content, file_ext);
-                    let mut line_spans = vec![
-                        Span::styled(format!("{:>3} │ ", line_no + 1), Style::default().fg(Color::Rgb(128, 142, 162))),
-                    ];
+                    let mut line_spans = vec![Span::styled(
+                        format!("{:>3} │ ", line_no + 1),
+                        Style::default().fg(Color::Rgb(128, 142, 162)),
+                    )];
                     line_spans.extend(highlighted.spans);
                     editor_lines.push(Line::from(line_spans));
                 }
-                
-                let editor_widget = Paragraph::new(editor_lines)
-                    .block(Block::default()
+
+                let editor_widget = Paragraph::new(editor_lines).block(
+                    Block::default()
                         .borders(Borders::ALL)
                         .border_style(editor_border)
-                        .title(Span::styled(editor_title, Style::default().fg(Color::Rgb(255, 255, 255)).bold())));
+                        .title(Span::styled(
+                            editor_title,
+                            Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                        )),
+                );
                 f.render_widget(editor_widget, editor_area);
 
                 if app.focus == TuiFocus::Editor {
-                    let cursor_screen_y = editor_area.y + 1 + (app.cursor_y.saturating_sub(app.editor_scroll)) as u16;
+                    let cursor_screen_y =
+                        editor_area.y + 1 + (app.cursor_y.saturating_sub(app.editor_scroll)) as u16;
                     let cursor_screen_x = editor_area.x + 7 + app.cursor_x as u16;
-                    
-                    if cursor_screen_y < editor_area.y + editor_area.height - 1 && cursor_screen_x < editor_area.x + editor_area.width - 1 {
+
+                    if cursor_screen_y < editor_area.y + editor_area.height - 1
+                        && cursor_screen_x < editor_area.x + editor_area.width - 1
+                    {
                         f.set_cursor(cursor_screen_x, cursor_screen_y);
                     }
                 }
@@ -2444,14 +2951,20 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     Line::from(""),
                     Line::from("   Operator Keybindings:"),
                     Line::from("     Tab : switch focus between tree explorer and editor panel"),
-                    Line::from("     1-4 : navigate tabs (Workspace, Swarm Console, Observability, Git)"),
+                    Line::from(
+                        "     1-4 : navigate tabs (Workspace, Swarm Console, Observability, Git)",
+                    ),
                     Line::from("     esc : terminate active TUI session"),
                 ];
-                let empty_widget = Paragraph::new(empty_msg)
-                    .block(Block::default()
+                let empty_widget = Paragraph::new(empty_msg).block(
+                    Block::default()
                         .borders(Borders::ALL)
                         .border_style(editor_border)
-                        .title(Span::styled(editor_title, Style::default().fg(Color::Rgb(255, 255, 255)).bold())));
+                        .title(Span::styled(
+                            editor_title,
+                            Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                        )),
+                );
                 f.render_widget(empty_widget, editor_area);
             }
         }
@@ -2460,8 +2973,8 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let console_layout = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Min(10),       // Top columns
-                    Constraint::Length(3),     // Input bar
+                    Constraint::Min(10),   // Top columns
+                    Constraint::Length(3), // Input bar
                 ])
                 .split(grid_area);
 
@@ -2488,26 +3001,53 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             for line in app.console_logs.iter().skip(chat_start) {
                 let l_span = if line.starts_with("korg >") {
                     Line::from(vec![
-                        Span::styled("korg > ", Style::default().fg(Color::Rgb(0, 180, 216)).bold()),
-                        Span::styled(&line["korg >".len()..], Style::default().fg(Color::Rgb(255, 255, 255))),
+                        Span::styled(
+                            "korg > ",
+                            Style::default().fg(Color::Rgb(0, 180, 216)).bold(),
+                        ),
+                        Span::styled(
+                            &line["korg >".len()..],
+                            Style::default().fg(Color::Rgb(255, 255, 255)),
+                        ),
                     ])
                 } else if line.starts_with("[Swarm Agent]") {
                     Line::from(vec![
-                        Span::styled("🤖 Swarm ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                        Span::styled(&line["[Swarm Agent]".len()..], Style::default().fg(Color::Rgb(165, 222, 103))),
+                        Span::styled(
+                            "🤖 Swarm ",
+                            Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        ),
+                        Span::styled(
+                            &line["[Swarm Agent]".len()..],
+                            Style::default().fg(Color::Rgb(165, 222, 103)),
+                        ),
                     ])
                 } else if line.starts_with("[Benjamin]") {
                     Line::from(vec![
-                        Span::styled("📝 Benjamin ", Style::default().fg(Color::Rgb(255, 198, 109)).bold()),
-                        Span::styled(&line["[Benjamin]".len()..], Style::default().fg(Color::Rgb(240, 240, 240))),
+                        Span::styled(
+                            "📝 Benjamin ",
+                            Style::default().fg(Color::Rgb(255, 198, 109)).bold(),
+                        ),
+                        Span::styled(
+                            &line["[Benjamin]".len()..],
+                            Style::default().fg(Color::Rgb(240, 240, 240)),
+                        ),
                     ])
                 } else if line.starts_with("[System]") {
                     Line::from(vec![
-                        Span::styled("⚙️  system: ", Style::default().fg(Color::Rgb(128, 142, 162)).italic()),
-                        Span::styled(&line["[System]".len()..], Style::default().fg(Color::Rgb(128, 142, 162)).italic()),
+                        Span::styled(
+                            "⚙️  system: ",
+                            Style::default().fg(Color::Rgb(128, 142, 162)).italic(),
+                        ),
+                        Span::styled(
+                            &line["[System]".len()..],
+                            Style::default().fg(Color::Rgb(128, 142, 162)).italic(),
+                        ),
                     ])
                 } else {
-                    Line::from(Span::styled(line, Style::default().fg(Color::Rgb(240, 240, 240))))
+                    Line::from(Span::styled(
+                        line,
+                        Style::default().fg(Color::Rgb(240, 240, 240)),
+                    ))
                 };
                 chat_lines.push(l_span);
             }
@@ -2518,11 +3058,15 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 Style::default().fg(fg_slate)
             };
 
-            let chat_widget = Paragraph::new(chat_lines)
-                .block(Block::default()
+            let chat_widget = Paragraph::new(chat_lines).block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_style(chat_border)
-                    .title(Span::styled(" [ swarm agent console ] ", Style::default().fg(Color::Rgb(255, 255, 255)).bold())));
+                    .title(Span::styled(
+                        " [ swarm agent console ] ",
+                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                    )),
+            );
             f.render_widget(chat_widget, chat_area);
 
             let term_height = term_area.height as usize;
@@ -2540,20 +3084,33 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                         Span::styled(&line[1..], Style::default().fg(Color::Rgb(255, 255, 255))),
                     ])
                 } else if line.starts_with("Error:") {
-                    Line::from(Span::styled(line, Style::default().fg(Color::Rgb(247, 37, 133)).bold()))
+                    Line::from(Span::styled(
+                        line,
+                        Style::default().fg(Color::Rgb(247, 37, 133)).bold(),
+                    ))
                 } else if line.starts_with("[System]") {
-                    Line::from(Span::styled(line, Style::default().fg(Color::Rgb(128, 142, 162)).italic()))
+                    Line::from(Span::styled(
+                        line,
+                        Style::default().fg(Color::Rgb(128, 142, 162)).italic(),
+                    ))
                 } else {
-                    Line::from(Span::styled(line, Style::default().fg(Color::Rgb(180, 180, 180))))
+                    Line::from(Span::styled(
+                        line,
+                        Style::default().fg(Color::Rgb(180, 180, 180)),
+                    ))
                 };
                 term_lines.push(t_span);
             }
 
-            let term_block = Paragraph::new(term_lines)
-                .block(Block::default()
+            let term_block = Paragraph::new(term_lines).block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(fg_slate))
-                    .title(Span::styled(" [ async background executor ] ", Style::default().fg(Color::Rgb(255, 255, 255)).bold())));
+                    .title(Span::styled(
+                        " [ async background executor ] ",
+                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                    )),
+            );
             f.render_widget(term_block, term_area);
 
             let input_border = if app.focus == TuiFocus::AgentConsole {
@@ -2563,14 +3120,25 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             };
 
             let input_widget = Paragraph::new(Line::from(vec![
-                Span::styled(" korg > ", Style::default().fg(Color::Rgb(0, 180, 216)).bold()),
-                Span::styled(&app.console_input, Style::default().fg(Color::Rgb(255, 255, 255))),
+                Span::styled(
+                    " korg > ",
+                    Style::default().fg(Color::Rgb(0, 180, 216)).bold(),
+                ),
+                Span::styled(
+                    &app.console_input,
+                    Style::default().fg(Color::Rgb(255, 255, 255)),
+                ),
                 Span::styled("▍", Style::default().fg(Color::Rgb(0, 180, 216))),
             ]))
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .border_style(input_border)
-                .title(Span::styled(" [ operator console prompt (type /run <cmd> or /edit <file> <inst>) ] ", Style::default().fg(Color::Rgb(255, 255, 255)).bold())));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(input_border)
+                    .title(Span::styled(
+                        " [ operator console prompt (type /run <cmd> or /edit <file> <inst>) ] ",
+                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                    )),
+            );
             f.render_widget(input_widget, input_area);
         }
         TuiTab::CampaignObservability => {
@@ -2615,101 +3183,250 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             // Monaco Editor Pane (Left Top)
             let code_lines = match app.playhead {
                 0 => vec![
-                    Line::from(Span::styled("1: // korg heavy-tier swarm initialization", Style::default().fg(fg_slate))),
-                    Line::from(Span::styled("2: fn main() -> Result<()> {", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("3:     let mut swarm = Swarm::new(4);", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("4:     swarm.negotiate_contract()?;", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("5:     swarm.start_execution()?;", Style::default().fg(fg_white))),
+                    Line::from(Span::styled(
+                        "1: // korg heavy-tier swarm initialization",
+                        Style::default().fg(fg_slate),
+                    )),
+                    Line::from(Span::styled(
+                        "2: fn main() -> Result<()> {",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        "3:     let mut swarm = Swarm::new(4);",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        "4:     swarm.negotiate_contract()?;",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        "5:     swarm.start_execution()?;",
+                        Style::default().fg(fg_white),
+                    )),
                     Line::from(Span::styled("6:     Ok(())", Style::default().fg(fg_white))),
                     Line::from(Span::styled("7: }", Style::default().fg(fg_white))),
                 ],
                 1 | 2 => vec![
-                    Line::from(Span::styled("10: // swarm contract negotiator layer", Style::default().fg(fg_slate))),
-                    Line::from(Span::styled("11: pub async fn negotiate(target: &str) -> Result<Contract> {", Style::default().fg(fg_white))),
+                    Line::from(Span::styled(
+                        "10: // swarm contract negotiator layer",
+                        Style::default().fg(fg_slate),
+                    )),
+                    Line::from(Span::styled(
+                        "11: pub async fn negotiate(target: &str) -> Result<Contract> {",
+                        Style::default().fg(fg_white),
+                    )),
                     Line::from(vec![
                         Span::styled("12:     ", Style::default().fg(fg_slate)),
-                        Span::styled("[locked by captain: read-lock active 👁️]", Style::default().fg(fg_white).bold().reversed())
+                        Span::styled(
+                            "[locked by captain: read-lock active 👁️]",
+                            Style::default().fg(fg_white).bold().reversed(),
+                        ),
                     ]),
-                    Line::from(Span::styled("13:     let criteria = self.generate_proposal(target).await?;", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("14:     let contract = self.reconcile(criteria).await?;", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("15:     Ok(contract)", Style::default().fg(fg_white))),
+                    Line::from(Span::styled(
+                        "13:     let criteria = self.generate_proposal(target).await?;",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        "14:     let contract = self.reconcile(criteria).await?;",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        "15:     Ok(contract)",
+                        Style::default().fg(fg_white),
+                    )),
                     Line::from(Span::styled("16: }", Style::default().fg(fg_white))),
                 ],
                 3 | 4 => vec![
-                    Line::from(Span::styled("20: // model-agnostic LlmProvider complete method", Style::default().fg(fg_slate))),
-                    Line::from(Span::styled("21: pub fn complete(&self, req: LlmRequest) -> Result<LlmResponse> {", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("22:     let client = req.provider.get_client();", Style::default().fg(fg_white))),
+                    Line::from(Span::styled(
+                        "20: // model-agnostic LlmProvider complete method",
+                        Style::default().fg(fg_slate),
+                    )),
+                    Line::from(Span::styled(
+                        "21: pub fn complete(&self, req: LlmRequest) -> Result<LlmResponse> {",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        "22:     let client = req.provider.get_client();",
+                        Style::default().fg(fg_white),
+                    )),
                     Line::from(vec![
                         Span::styled("23:     ", Style::default().fg(fg_slate)),
-                        Span::styled("[locked by benjamin: write-lock active 🔒]", Style::default().fg(fg_white).bold().reversed())
+                        Span::styled(
+                            "[locked by benjamin: write-lock active 🔒]",
+                            Style::default().fg(fg_white).bold().reversed(),
+                        ),
                     ]),
-                    Line::from(Span::styled("24: +   let request_payload = req.build_payload()?;", Style::default().fg(fg_white).bold())),
-                    Line::from(Span::styled("25: +   let res = self.retry_decorator.execute(|| {", Style::default().fg(fg_white).bold())),
-                    Line::from(Span::styled("26: +       client.post(&req.url, &request_payload)", Style::default().fg(fg_white).bold())),
-                    Line::from(Span::styled("27: +   })?;", Style::default().fg(fg_white).bold())),
-                    Line::from(Span::styled("28: -   let res = client.post(&req.url)?;", Style::default().fg(fg_slate).italic())),
-                    Line::from(Span::styled("29:     Ok(res)", Style::default().fg(fg_white))),
+                    Line::from(Span::styled(
+                        "24: +   let request_payload = req.build_payload()?;",
+                        Style::default().fg(fg_white).bold(),
+                    )),
+                    Line::from(Span::styled(
+                        "25: +   let res = self.retry_decorator.execute(|| {",
+                        Style::default().fg(fg_white).bold(),
+                    )),
+                    Line::from(Span::styled(
+                        "26: +       client.post(&req.url, &request_payload)",
+                        Style::default().fg(fg_white).bold(),
+                    )),
+                    Line::from(Span::styled(
+                        "27: +   })?;",
+                        Style::default().fg(fg_white).bold(),
+                    )),
+                    Line::from(Span::styled(
+                        "28: -   let res = client.post(&req.url)?;",
+                        Style::default().fg(fg_slate).italic(),
+                    )),
+                    Line::from(Span::styled(
+                        "29:     Ok(res)",
+                        Style::default().fg(fg_white),
+                    )),
                     Line::from(Span::styled("30: }", Style::default().fg(fg_white))),
                 ],
                 _ => vec![
-                    Line::from(Span::styled("40: // zero-trust security policy engine checks", Style::default().fg(fg_slate))),
-                    Line::from(Span::styled("41: pub fn check_policy(command: &str) -> Result<(), String> {", Style::default().fg(fg_white))),
+                    Line::from(Span::styled(
+                        "40: // zero-trust security policy engine checks",
+                        Style::default().fg(fg_slate),
+                    )),
+                    Line::from(Span::styled(
+                        "41: pub fn check_policy(command: &str) -> Result<(), String> {",
+                        Style::default().fg(fg_white),
+                    )),
                     Line::from(vec![
                         Span::styled("42:     ", Style::default().fg(fg_slate)),
-                        Span::styled("[locked by evaluator: critic-intercept active 🛡️]", Style::default().fg(fg_white).bold().reversed())
+                        Span::styled(
+                            "[locked by evaluator: critic-intercept active 🛡️]",
+                            Style::default().fg(fg_white).bold().reversed(),
+                        ),
                     ]),
-                    Line::from(Span::styled("43:     if is_blacklisted(command) {", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("44:         return Err(\"CONTESTED: Policy Violation\".into());", Style::default().fg(Color::Rgb(247, 37, 133)).bold())),
+                    Line::from(Span::styled(
+                        "43:     if is_blacklisted(command) {",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        "44:         return Err(\"CONTESTED: Policy Violation\".into());",
+                        Style::default().fg(Color::Rgb(247, 37, 133)).bold(),
+                    )),
                     Line::from(Span::styled("45:     }", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("46:     Ok(())", Style::default().fg(fg_white))),
+                    Line::from(Span::styled(
+                        "46:     Ok(())",
+                        Style::default().fg(fg_white),
+                    )),
                     Line::from(Span::styled("47: }", Style::default().fg(fg_white))),
-                ]
+                ],
             };
 
-            let editor_block = Paragraph::new(code_lines)
-                .block(Block::default()
+            let editor_block = Paragraph::new(code_lines).block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(fg_slate))
-                    .title(" [ workspace snapshot ] "));
+                    .title(" [ workspace snapshot ] "),
+            );
             f.render_widget(editor_block, editor_pane_area);
 
             // Terminal Subprocess Pane (Left Bottom)
             let terminal_lines = match app.playhead {
                 0 => vec![
-                    Line::from(Span::styled("$ korg campaign init", Style::default().fg(Color::Rgb(165, 222, 103)))),
-                    Line::from(Span::styled("[System] Initializing heavy-tier swarm workspace...", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("[System] Loaded 4 cognitive personas (Captain, Harper, Benjamin, Lucas)", Style::default().fg(fg_white))),
-                    Line::from(Span::styled(format!("[System] Active directory locked at {}", crate::paths::project_root().display()), Style::default().fg(fg_slate))),
+                    Line::from(Span::styled(
+                        "$ korg campaign init",
+                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                    )),
+                    Line::from(Span::styled(
+                        "[System] Initializing heavy-tier swarm workspace...",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        "[System] Loaded 4 cognitive personas (Captain, Harper, Benjamin, Lucas)",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        format!(
+                            "[System] Active directory locked at {}",
+                            crate::paths::project_root().display()
+                        ),
+                        Style::default().fg(fg_slate),
+                    )),
                 ],
                 1 | 2 => vec![
-                    Line::from(Span::styled("$ korg negotiate --contract-rounds 3", Style::default().fg(Color::Rgb(165, 222, 103)))),
-                    Line::from(Span::styled("[Leader] Formulating task decomposition into 4 work packages...", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("[Captain] Negotiating Swarm Agreement (BERT similarity targeting 0.85)...", Style::default().fg(Color::Rgb(0, 180, 216)))),
-                    Line::from(Span::styled("[Evaluator] Epistemic and Trajectory Rubrics active.", Style::default().fg(Color::Rgb(255, 117, 181)))),
+                    Line::from(Span::styled(
+                        "$ korg negotiate --contract-rounds 3",
+                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                    )),
+                    Line::from(Span::styled(
+                        "[Leader] Formulating task decomposition into 4 work packages...",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        "[Captain] Negotiating Swarm Agreement (BERT similarity targeting 0.85)...",
+                        Style::default().fg(Color::Rgb(0, 180, 216)),
+                    )),
+                    Line::from(Span::styled(
+                        "[Evaluator] Epistemic and Trajectory Rubrics active.",
+                        Style::default().fg(Color::Rgb(255, 117, 181)),
+                    )),
                 ],
                 3 | 4 => vec![
-                    Line::from(Span::styled("$ cargo test --lib tools", Style::default().fg(Color::Rgb(165, 222, 103)))),
-                    Line::from(Span::styled(format!("   Compiling korg v0.1.0 ({})", crate::paths::project_root().display()), Style::default().fg(fg_slate))),
-                    Line::from(Span::styled("    Finished test [unoptimized + debuginfo] target(s) in 0.45s", Style::default().fg(fg_slate))),
-                    Line::from(Span::styled("     Running unittests src/main.rs (target/debug/deps/korg-...)", Style::default().fg(fg_slate))),
-                    Line::from(Span::styled("test tools::tests::test_apply_unified_diff_fuzzy ... ok", Style::default().fg(Color::Rgb(165, 222, 103)))),
-                    Line::from(Span::styled("test tools::tests::test_apply_unified_diff_multi_hunk ... ok", Style::default().fg(Color::Rgb(165, 222, 103)))),
-                    Line::from(Span::styled("test result: ok. 18 passed; 0 failed; 0 ignored;", Style::default().fg(Color::Rgb(165, 222, 103)).bold())),
+                    Line::from(Span::styled(
+                        "$ cargo test --lib tools",
+                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                    )),
+                    Line::from(Span::styled(
+                        format!(
+                            "   Compiling korg v0.1.0 ({})",
+                            crate::paths::project_root().display()
+                        ),
+                        Style::default().fg(fg_slate),
+                    )),
+                    Line::from(Span::styled(
+                        "    Finished test [unoptimized + debuginfo] target(s) in 0.45s",
+                        Style::default().fg(fg_slate),
+                    )),
+                    Line::from(Span::styled(
+                        "     Running unittests src/main.rs (target/debug/deps/korg-...)",
+                        Style::default().fg(fg_slate),
+                    )),
+                    Line::from(Span::styled(
+                        "test tools::tests::test_apply_unified_diff_fuzzy ... ok",
+                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                    )),
+                    Line::from(Span::styled(
+                        "test tools::tests::test_apply_unified_diff_multi_hunk ... ok",
+                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                    )),
+                    Line::from(Span::styled(
+                        "test result: ok. 18 passed; 0 failed; 0 ignored;",
+                        Style::default().fg(Color::Rgb(165, 222, 103)).bold(),
+                    )),
                 ],
                 _ => vec![
-                    Line::from(Span::styled("$ cargo run -- campaign --tui", Style::default().fg(Color::Rgb(165, 222, 103)))),
-                    Line::from(Span::styled("[PolicyEngine] Intercepted shell command: 'cargo run'", Style::default().fg(fg_white))),
-                    Line::from(Span::styled("[PolicyEngine] Command matched whitelisted patterns in POLICY.md", Style::default().fg(Color::Rgb(165, 222, 103)))),
-                    Line::from(Span::styled("[Evaluator] Running 5-Rubric Critic Guardrail on live trace telemetry...", Style::default().fg(Color::Rgb(255, 117, 181)))),
-                    Line::from(Span::styled("[Leader] Swarm scaled to 16 workers concurrently.", Style::default().fg(Color::Rgb(0, 180, 216)))),
-                ]
+                    Line::from(Span::styled(
+                        "$ cargo run -- campaign --tui",
+                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                    )),
+                    Line::from(Span::styled(
+                        "[PolicyEngine] Intercepted shell command: 'cargo run'",
+                        Style::default().fg(fg_white),
+                    )),
+                    Line::from(Span::styled(
+                        "[PolicyEngine] Command matched whitelisted patterns in POLICY.md",
+                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                    )),
+                    Line::from(Span::styled(
+                        "[Evaluator] Running 5-Rubric Critic Guardrail on live trace telemetry...",
+                        Style::default().fg(Color::Rgb(255, 117, 181)),
+                    )),
+                    Line::from(Span::styled(
+                        "[Leader] Swarm scaled to 16 workers concurrently.",
+                        Style::default().fg(Color::Rgb(0, 180, 216)),
+                    )),
+                ],
             };
 
-            let terminal_block = Paragraph::new(terminal_lines)
-                .block(Block::default()
+            let terminal_block = Paragraph::new(terminal_lines).block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(fg_slate))
-                    .title(" [ console snapshots ] "));
+                    .title(" [ console snapshots ] "),
+            );
             f.render_widget(terminal_block, terminal_pane_area);
 
             // Health & Telemetry Pane (Right Top)
@@ -2724,38 +3441,55 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let metrics_lines = vec![
                 Line::from(vec![
                     Span::styled(" ⚡ velocity: ", Style::default().fg(fg_white).bold()),
-                    Span::styled(format!("{:.1} t/s", app.velocity), Style::default().fg(fg_white).bold()),
+                    Span::styled(
+                        format!("{:.1} t/s", app.velocity),
+                        Style::default().fg(fg_white).bold(),
+                    ),
                 ]),
                 Line::from(vec![
-                    Span::styled(" ⚠️  risk:     ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled(format!("{:.2}", app.risk), Style::default().fg(fg_white).bold()),
+                    Span::styled(
+                        " ⚠️  risk:     ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        format!("{:.2}", app.risk),
+                        Style::default().fg(fg_white).bold(),
+                    ),
                 ]),
                 Line::from(vec![
-                    Span::styled(" 📈 progress: ", Style::default().fg(Color::Rgb(165, 222, 103)).bold()),
-                    Span::styled(format!("{:.1}%", app.progress), Style::default().fg(fg_white).bold()),
+                    Span::styled(
+                        " 📈 progress: ",
+                        Style::default().fg(Color::Rgb(165, 222, 103)).bold(),
+                    ),
+                    Span::styled(
+                        format!("{:.1}%", app.progress),
+                        Style::default().fg(fg_white).bold(),
+                    ),
                 ]),
             ];
 
-            let metrics_block = Paragraph::new(metrics_lines)
-                .block(Block::default()
+            let metrics_block = Paragraph::new(metrics_lines).block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(fg_slate))
-                    .title(" [ metrics ] "));
+                    .title(" [ metrics ] "),
+            );
             f.render_widget(metrics_block, ht_sub[0]);
 
             let sparkline = Sparkline::default()
                 .data(&app.h_sem_history)
                 .style(Style::default().fg(fg_white));
-            let sparkline_block = Paragraph::new(vec![
-                Line::from(Span::styled("entropy h_sem history:", Style::default().fg(fg_gold).bold())),
-            ]);
+            let sparkline_block = Paragraph::new(vec![Line::from(Span::styled(
+                "entropy h_sem history:",
+                Style::default().fg(fg_gold).bold(),
+            ))]);
             let spark_layout = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Min(1),
-                ])
-                .split(ht_sub[1].inner(&ratatui::layout::Margin { vertical: 1, horizontal: 1 }));
+                .constraints([Constraint::Length(1), Constraint::Min(1)])
+                .split(ht_sub[1].inner(&ratatui::layout::Margin {
+                    vertical: 1,
+                    horizontal: 1,
+                }));
             f.render_widget(sparkline_block, spark_layout[0]);
             f.render_widget(sparkline, spark_layout[1]);
 
@@ -2764,9 +3498,17 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let nodes = [
                 ("tx_00: genesis", "orchestration", fg_white),
                 ("tx_01: negotiate_contract", "orchestration", fg_white),
-                ("tx_02: dispatch_concurrent", "worker", Color::Rgb(255, 117, 181)),
+                (
+                    "tx_02: dispatch_concurrent",
+                    "worker",
+                    Color::Rgb(255, 117, 181),
+                ),
                 ("tx_03: generate_patch", "worker", Color::Rgb(255, 117, 181)),
-                ("tx_04: evaluate_verdict", "evaluator", Color::Rgb(247, 37, 133)),
+                (
+                    "tx_04: evaluate_verdict",
+                    "evaluator",
+                    Color::Rgb(247, 37, 133),
+                ),
                 ("tx_05: operator_steer", "operator", fg_gold),
             ];
 
@@ -2778,7 +3520,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 } else {
                     Style::default().fg(*color)
                 };
-                
+
                 let branch_char = match i {
                     0 => "● ",
                     5 => "└── ◆ ",
@@ -2789,42 +3531,56 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     Span::styled(prefix, Style::default().fg(fg_gold).bold()),
                     Span::styled(branch_char, Style::default().fg(fg_slate)),
                     Span::styled(*title, node_style),
-                    Span::styled(format!(" [{}]", channel), Style::default().fg(fg_slate).italic()),
+                    Span::styled(
+                        format!(" [{}]", channel),
+                        Style::default().fg(fg_slate).italic(),
+                    ),
                 ])));
             }
 
-            let timeline_block = List::new(timeline_items)
-                .block(Block::default()
+            let timeline_block = List::new(timeline_items).block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(fg_slate))
-                    .title(" [ timeline ] "));
+                    .title(" [ timeline ] "),
+            );
             f.render_widget(timeline_block, dag_timeline_area);
 
             // Provenance & Cryptographic Diff Viewer (Right Bottom)
             let prov_lines = vec![
                 Line::from(vec![
                     Span::styled(" ed25519 key: ", Style::default().fg(fg_white)),
-                    Span::styled("8f3c29a2b7e5... [verified ✓]", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
+                    Span::styled(
+                        "8f3c29a2b7e5... [verified ✓]",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled(" merkle root: ", Style::default().fg(fg_gold)),
                     Span::styled("a7b8c9d0e1f2...", Style::default().fg(fg_white)),
                 ]),
                 Line::from(vec![
-                    Span::styled(" file impact: ", Style::default().fg(Color::Rgb(255, 117, 181))),
+                    Span::styled(
+                        " file impact: ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)),
+                    ),
                     Span::styled("src/llm.rs (L20-L30)", Style::default().fg(fg_white)),
                 ]),
                 Line::from(vec![
                     Span::styled(" authority:   ", Style::default().fg(fg_slate)),
-                    Span::styled("swarmauthority-v1-signed", Style::default().fg(fg_slate).italic()),
+                    Span::styled(
+                        "swarmauthority-v1-signed",
+                        Style::default().fg(fg_slate).italic(),
+                    ),
                 ]),
             ];
 
-            let provenance_block = Paragraph::new(prov_lines)
-                .block(Block::default()
+            let provenance_block = Paragraph::new(prov_lines).block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(fg_slate))
-                    .title(" [ provenance ] "));
+                    .title(" [ provenance ] "),
+            );
             f.render_widget(provenance_block, provenance_area);
         }
         TuiTab::GitTimeline => {
@@ -2843,21 +3599,24 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let mut commit_items = vec![];
             for (i, commit) in app.git_commits.iter().enumerate() {
                 let is_selected = i == app.selected_commit_idx;
-                
+
                 let bullet = if is_selected { "● " } else { "○ " };
                 let bullet_style = if is_selected {
                     Style::default().fg(Color::Rgb(255, 117, 181)).bold()
                 } else {
                     Style::default().fg(Color::Rgb(128, 142, 162))
                 };
-                
+
                 let hash_style = Style::default().fg(Color::Rgb(255, 198, 109)).bold();
                 let text_style = if is_selected {
-                    Style::default().fg(Color::Rgb(255, 255, 255)).bold().bg(Color::Rgb(40, 40, 45))
+                    Style::default()
+                        .fg(Color::Rgb(255, 255, 255))
+                        .bold()
+                        .bg(Color::Rgb(40, 40, 45))
                 } else {
                     Style::default().fg(Color::Rgb(240, 240, 240))
                 };
-                
+
                 commit_items.push(ListItem::new(Line::from(vec![
                     Span::styled(bullet, bullet_style),
                     Span::styled(format!("[{}] ", commit.hash), hash_style),
@@ -2871,11 +3630,15 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 Style::default().fg(fg_slate)
             };
 
-            let commits_block = List::new(commit_items)
-                .block(Block::default()
+            let commits_block = List::new(commit_items).block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_style(git_border)
-                    .title(Span::styled(" [ git ledger timeline ] ", Style::default().fg(Color::Rgb(255, 255, 255)).bold())));
+                    .title(Span::styled(
+                        " [ git ledger timeline ] ",
+                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                    )),
+            );
             f.render_widget(commits_block, commits_area);
 
             let details_border = Style::default().fg(fg_slate);
@@ -2913,19 +3676,28 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     Line::from("  ──────────────────────────────────────────────────"),
                     Line::from(Span::styled("  Press [enter] or [F] to checkout working tree to this commit (Visual Playhead Time-Travel).", Style::default().fg(Color::Rgb(255, 198, 109)).italic())),
                 ];
-                
-                let details_widget = Paragraph::new(details_lines)
-                    .block(Block::default()
+
+                let details_widget = Paragraph::new(details_lines).block(
+                    Block::default()
                         .borders(Borders::ALL)
                         .border_style(details_border)
-                        .title(Span::styled(" [ commit details & cryptosec telemetry ] ", Style::default().fg(Color::Rgb(255, 255, 255)).bold())));
+                        .title(Span::styled(
+                            " [ commit details & cryptosec telemetry ] ",
+                            Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                        )),
+                );
                 f.render_widget(details_widget, details_area);
             } else {
                 let details_widget = Paragraph::new(vec![Line::from("  No commit selected.")])
-                    .block(Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(details_border)
-                        .title(Span::styled(" [ commit details & cryptosec telemetry ] ", Style::default().fg(Color::Rgb(255, 255, 255)).bold())));
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(details_border)
+                            .title(Span::styled(
+                                " [ commit details & cryptosec telemetry ] ",
+                                Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                            )),
+                    );
                 f.render_widget(details_widget, details_area);
             }
         }
@@ -2954,19 +3726,21 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         app.playhead
     );
 
-    let scrubber_text = vec![
-        Line::from(vec![
-            Span::styled(" [ replay playhead ] ", Style::default().fg(fg_gold).bold()),
-            Span::styled(slider_bar, Style::default().fg(fg_white).bold()),
-            Span::styled("  (use left/right arrow keys to scrub) ", Style::default().fg(fg_slate).italic()),
-        ])
-    ];
+    let scrubber_text = vec![Line::from(vec![
+        Span::styled(" [ replay playhead ] ", Style::default().fg(fg_gold).bold()),
+        Span::styled(slider_bar, Style::default().fg(fg_white).bold()),
+        Span::styled(
+            "  (use left/right arrow keys to scrub) ",
+            Style::default().fg(fg_slate).italic(),
+        ),
+    ])];
 
-    let scrubber_block = Paragraph::new(scrubber_text)
-        .block(Block::default()
+    let scrubber_block = Paragraph::new(scrubber_text).block(
+        Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(fg_slate))
-            .title(" [ replay ] "));
+            .title(" [ replay ] "),
+    );
     f.render_widget(scrubber_block, scrubber_track_area);
 
     // ==========================================
@@ -2976,8 +3750,12 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         " ⚙️  [esc] quit │ [1-4] change tab │ [tab] switch focus │ [p] pause │ [f] steer fork │ playhead: tx_{:02} │ zero-trust engine ok ✓",
         app.playhead
     );
-    let status_paragraph = Paragraph::new(status_text)
-        .style(Style::default().bg(Color::Rgb(15, 15, 15)).fg(fg_white).bold());
+    let status_paragraph = Paragraph::new(status_text).style(
+        Style::default()
+            .bg(Color::Rgb(15, 15, 15))
+            .fg(fg_white)
+            .bold(),
+    );
     f.render_widget(status_paragraph, status_bar_area);
 
     // ==========================================
@@ -3048,52 +3826,86 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // Command Palette Modal
     if app.command_palette_open {
         let area = centered_rect(60, 40, f.size());
-        
+
         let filtered = app.get_filtered_palette_items(&app.command_palette_input);
         // Show at most 10 items to prevent rendering overflow
         let displayed = &filtered[..10.min(filtered.len())];
-            
+
         let mut lines = vec![
             Line::from(vec![
-                Span::styled("  Search Command or File: ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                Span::styled(format!("{}▍", app.command_palette_input), Style::default().fg(fg_white)),
+                Span::styled(
+                    "  Search Command or File: ",
+                    Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                ),
+                Span::styled(
+                    format!("{}▍", app.command_palette_input),
+                    Style::default().fg(fg_white),
+                ),
             ]),
-            Line::from(Span::styled("  ────────────────────────────────────────────────────────", Style::default().fg(fg_slate))),
+            Line::from(Span::styled(
+                "  ────────────────────────────────────────────────────────",
+                Style::default().fg(fg_slate),
+            )),
         ];
-        
+
         if filtered.is_empty() {
-            lines.push(Line::from(Span::styled("  No matching items found.", Style::default().fg(fg_pink))));
+            lines.push(Line::from(Span::styled(
+                "  No matching items found.",
+                Style::default().fg(fg_pink),
+            )));
         } else {
             for (idx, (item, _score)) in displayed.iter().enumerate() {
                 let is_selected = idx == app.command_palette_selected_idx;
-                
+
                 let (icon, label) = match item {
                     PaletteItem::Command { name, .. } => ("⚙️ ", name.clone()),
                     PaletteItem::File { path, .. } => ("📄 ", path.clone()),
-                    PaletteItem::GrepMatch { path, line, preview } => ("🔍 ", format!("{}:{} - {}", path, line, preview)),
+                    PaletteItem::GrepMatch {
+                        path,
+                        line,
+                        preview,
+                    } => ("🔍 ", format!("{}:{} - {}", path, line, preview)),
                 };
 
                 if is_selected {
                     lines.push(Line::from(vec![
-                        Span::styled("  > ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                        Span::styled(format!("{}{}", icon, label), Style::default().bg(Color::Rgb(255, 117, 181)).fg(Color::Rgb(10, 10, 12)).bold()),
+                        Span::styled(
+                            "  > ",
+                            Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        ),
+                        Span::styled(
+                            format!("{}{}", icon, label),
+                            Style::default()
+                                .bg(Color::Rgb(255, 117, 181))
+                                .fg(Color::Rgb(10, 10, 12))
+                                .bold(),
+                        ),
                     ]));
                 } else {
                     lines.push(Line::from(vec![
                         Span::styled("    ", Style::default()),
-                        Span::styled(icon.to_string(), Style::default().fg(Color::Rgb(255, 117, 181))),
+                        Span::styled(
+                            icon.to_string(),
+                            Style::default().fg(Color::Rgb(255, 117, 181)),
+                        ),
                         Span::styled(label, Style::default().fg(Color::Rgb(180, 180, 180))),
                     ]));
                 }
             }
             if filtered.len() > 10 {
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(format!("  ... and {} more matching items", filtered.len() - 10), Style::default().fg(fg_slate).italic())));
+                lines.push(Line::from(Span::styled(
+                    format!("  ... and {} more matching items", filtered.len() - 10),
+                    Style::default().fg(fg_slate).italic(),
+                )));
             }
         }
-        
+
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("  [↑/↓] Navigate   [enter] Select   [esc] Close", Style::default().fg(fg_pink))));
+        lines.push(Line::from(Span::styled(
+            "  [↑/↓] Navigate   [enter] Select   [esc] Close",
+            Style::default().fg(fg_pink),
+        )));
 
         let modal = Paragraph::new(lines)
             .block(
@@ -3101,10 +3913,13 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     .borders(Borders::ALL)
                     .border_type(ratatui::widgets::BorderType::Plain)
                     .border_style(Style::default().fg(Color::Rgb(255, 117, 181)))
-                    .title(Span::styled(" ⚙️  k o r g   c o m m a n d   p a l e t t e ", Style::default().fg(fg_white).bold())),
+                    .title(Span::styled(
+                        " ⚙️  k o r g   c o m m a n d   p a l e t t e ",
+                        Style::default().fg(fg_white).bold(),
+                    )),
             )
             .style(Style::default().bg(Color::Rgb(15, 15, 20)));
-        
+
         f.render_widget(ratatui::widgets::Clear, area);
         f.render_widget(modal, area);
     }
@@ -3112,20 +3927,32 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // Contract Approval Modal (Thick Double Border Visuals)
     if let Some((round, description, criteria)) = &app.pending_contract_approval {
         let area = centered_rect(70, 50, f.size());
-        
+
         let mut lines = vec![
             Line::from(vec![
-                Span::styled("  proposed swarm contract criteria (round ", Style::default().fg(Color::Rgb(255, 117, 181))),
+                Span::styled(
+                    "  proposed swarm contract criteria (round ",
+                    Style::default().fg(Color::Rgb(255, 117, 181)),
+                ),
                 Span::styled(round.to_string(), Style::default().fg(fg_white)),
                 Span::styled(")", Style::default().fg(Color::Rgb(255, 117, 181))),
             ]),
             Line::from(""),
-            Line::from(Span::styled("  task prompt description:", Style::default().fg(Color::Rgb(255, 117, 181)))),
-            Line::from(Span::styled(format!("    {}", description), Style::default().fg(fg_white))),
+            Line::from(Span::styled(
+                "  task prompt description:",
+                Style::default().fg(Color::Rgb(255, 117, 181)),
+            )),
+            Line::from(Span::styled(
+                format!("    {}", description),
+                Style::default().fg(fg_white),
+            )),
             Line::from(""),
-            Line::from(Span::styled("  consensus acceptance criteria:", Style::default().fg(Color::Rgb(255, 117, 181)))),
+            Line::from(Span::styled(
+                "  consensus acceptance criteria:",
+                Style::default().fg(Color::Rgb(255, 117, 181)),
+            )),
         ];
-        
+
         for (i, (desc, sim)) in criteria.iter().enumerate() {
             let sim_color = if *sim >= 0.85 {
                 fg_white
@@ -3136,129 +3963,250 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             };
             lines.push(Line::from(vec![
                 Span::styled(format!("    [{}] ", i + 1), Style::default().fg(fg_gold)),
-                Span::styled(format!("{:<50} ", desc.to_lowercase()), Style::default().fg(fg_white)),
+                Span::styled(
+                    format!("{:<50} ", desc.to_lowercase()),
+                    Style::default().fg(fg_white),
+                ),
                 Span::styled("  [ cons: ", Style::default().fg(fg_slate)),
                 Span::styled(format!("{:.3}", sim), Style::default().fg(sim_color)),
                 Span::styled(" ]", Style::default().fg(fg_slate)),
             ]));
         }
-        
+
         lines.push(Line::from(""));
-        
+
         if app.editing_custom_criterion {
-            lines.push(Line::from(Span::styled("  ▍ operator override terminal active", Style::default().fg(Color::Rgb(255, 117, 181)))));
+            lines.push(Line::from(Span::styled(
+                "  ▍ operator override terminal active",
+                Style::default().fg(Color::Rgb(255, 117, 181)),
+            )));
             lines.push(Line::from(Span::styled("    type custom criteria below and press enter to inject. press esc to escape override.", Style::default().fg(fg_slate))));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("    injected criterion: ", Style::default().fg(Color::Rgb(255, 117, 181))),
-                Span::styled(format!("{}▍", app.input_buffer), Style::default().fg(fg_white)),
+                Span::styled(
+                    "    injected criterion: ",
+                    Style::default().fg(Color::Rgb(255, 117, 181)),
+                ),
+                Span::styled(
+                    format!("{}▍", app.input_buffer),
+                    Style::default().fg(fg_white),
+                ),
             ]));
         } else {
-            lines.push(Line::from(Span::styled("  consensus actions:", Style::default().fg(Color::Rgb(255, 117, 181)))));
+            lines.push(Line::from(Span::styled(
+                "  consensus actions:",
+                Style::default().fg(Color::Rgb(255, 117, 181)),
+            )));
             lines.push(Line::from(Span::styled("    [y] approve swarm contract   [n] demand revision   [e] override and add custom   [f] force cons   [q] cancel", Style::default().fg(fg_white))));
         }
-        
+
         let text = Text::from(lines);
-        let modal = Paragraph::new(text)
-            .wrap(Wrap { trim: false })
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(ratatui::widgets::BorderType::Plain)
-                    .border_style(Style::default().fg(fg_slate))
-                    .title(" [ swarm contract consensus & negotiation gate ] "),
-            );
+        let modal = Paragraph::new(text).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(ratatui::widgets::BorderType::Plain)
+                .border_style(Style::default().fg(fg_slate))
+                .title(" [ swarm contract consensus & negotiation gate ] "),
+        );
         f.render_widget(modal, area);
     }
 
     // Help Modal Overlay (Slide Carousel)
     if app.help_modal_open {
         let area = centered_rect(65, 45, f.size());
-        
+
         let mut lines = vec![];
         lines.push(Line::from(vec![
-            Span::styled("   k o r g   o n b o a r d i n g   g u i d e   (slide ", Style::default().fg(Color::Rgb(255, 117, 181))),
-            Span::styled(format!("{}/3", app.help_slide + 1), Style::default().fg(fg_white).bold()),
+            Span::styled(
+                "   k o r g   o n b o a r d i n g   g u i d e   (slide ",
+                Style::default().fg(Color::Rgb(255, 117, 181)),
+            ),
+            Span::styled(
+                format!("{}/3", app.help_slide + 1),
+                Style::default().fg(fg_white).bold(),
+            ),
             Span::styled(")", Style::default().fg(Color::Rgb(255, 117, 181))),
         ]));
-        lines.push(Line::from(Span::styled("  ────────────────────────────────────────────────────────────", Style::default().fg(fg_slate))));
+        lines.push(Line::from(Span::styled(
+            "  ────────────────────────────────────────────────────────────",
+            Style::default().fg(fg_slate),
+        )));
         lines.push(Line::from(""));
 
         match app.help_slide {
             0 => {
-                lines.push(Line::from(Span::styled("  [Slide 1/3] Korg Workspace IDE & Console Layout", Style::default().fg(fg_white).bold())));
+                lines.push(Line::from(Span::styled(
+                    "  [Slide 1/3] Korg Workspace IDE & Console Layout",
+                    Style::default().fg(fg_white).bold(),
+                )));
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("  The dashboard consists of four primary operational tabs:", Style::default().fg(fg_pink))));
+                lines.push(Line::from(Span::styled(
+                    "  The dashboard consists of four primary operational tabs:",
+                    Style::default().fg(fg_pink),
+                )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![
-                    Span::styled("    [1] Workspace IDE: ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Main code exploration canvas, file tree, and code editor.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    [1] Workspace IDE: ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Main code exploration canvas, file tree, and code editor.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("    [2] Swarm Console: ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Chat with and steer the Lucas, Captain, Harper, or Benjamin personas.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    [2] Swarm Console: ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Chat with and steer the Lucas, Captain, Harper, or Benjamin personas.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("    [3] Observability: ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Real-time telemetry, semantic metrics, score history, and memory locks.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    [3] Observability: ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Real-time telemetry, semantic metrics, score history, and memory locks.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("    [4] Git Ledger:    ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Analyze commits, check status, verify provenance, and explore branches.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    [4] Git Ledger:    ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Analyze commits, check status, verify provenance, and explore branches.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
             }
             1 => {
-                lines.push(Line::from(Span::styled("  [Slide 2/3] Playhead Scrubbing & Swarm Steering", Style::default().fg(fg_white).bold())));
+                lines.push(Line::from(Span::styled(
+                    "  [Slide 2/3] Playhead Scrubbing & Swarm Steering",
+                    Style::default().fg(fg_white).bold(),
+                )));
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("  Steer workspace timelines dynamically and manage policies:", Style::default().fg(fg_pink))));
+                lines.push(Line::from(Span::styled(
+                    "  Steer workspace timelines dynamically and manage policies:",
+                    Style::default().fg(fg_pink),
+                )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![
-                    Span::styled("    [ / ] Keys:         ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Scrub backward and forward through playhead commit states.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    [ / ] Keys:         ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Scrub backward and forward through playhead commit states.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("    s Key:              ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Branch/Fork the playhead into a new active execution timeline.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    s Key:              ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Branch/Fork the playhead into a new active execution timeline.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("    y / n / f Keys:     ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Approve/Demand Revision/Force security and negotiation contracts.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    y / n / f Keys:     ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Approve/Demand Revision/Force security and negotiation contracts.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("    Zero-Trust Gateway: ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Autonomously intercepts credential leaks or destructive commands.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    Zero-Trust Gateway: ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Autonomously intercepts credential leaks or destructive commands.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
             }
             _ => {
-                lines.push(Line::from(Span::styled("  [Slide 3/3] Keyboard Ergonomics & Editor Shortcuts", Style::default().fg(fg_white).bold())));
+                lines.push(Line::from(Span::styled(
+                    "  [Slide 3/3] Keyboard Ergonomics & Editor Shortcuts",
+                    Style::default().fg(fg_white).bold(),
+                )));
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("  Highly efficient navigation commands inside the cockpit console:", Style::default().fg(fg_pink))));
+                lines.push(Line::from(Span::styled(
+                    "  Highly efficient navigation commands inside the cockpit console:",
+                    Style::default().fg(fg_pink),
+                )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![
-                    Span::styled("    Ctrl+P:             ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Toggle searchable Command/File search palette.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    Ctrl+P:             ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Toggle searchable Command/File search palette.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("    Ctrl+S:             ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Save modifications in the open file editor tab.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    Ctrl+S:             ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Save modifications in the open file editor tab.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("    Tab:                ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Shift focus panel (e.g. switch between File Tree and Editor).", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    Tab:                ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Shift focus panel (e.g. switch between File Tree and Editor).",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("    Alt+Left/Right:     ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Cycle active editor tabs in Workspace view.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    Alt+Left/Right:     ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Cycle active editor tabs in Workspace view.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("    Esc:                ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                    Span::styled("Close help slides, command palette, custom criterion, or normal mode.", Style::default().fg(fg_green)),
+                    Span::styled(
+                        "    Esc:                ",
+                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    ),
+                    Span::styled(
+                        "Close help slides, command palette, custom criterion, or normal mode.",
+                        Style::default().fg(fg_green),
+                    ),
                 ]));
             }
         }
 
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("  ────────────────────────────────────────────────────────────", Style::default().fg(fg_slate))));
+        lines.push(Line::from(Span::styled(
+            "  ────────────────────────────────────────────────────────────",
+            Style::default().fg(fg_slate),
+        )));
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("  [← / a] Previous Slide    ", Style::default().fg(fg_pink)),
@@ -3272,10 +4220,13 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     .borders(Borders::ALL)
                     .border_type(ratatui::widgets::BorderType::Double)
                     .border_style(Style::default().fg(Color::Rgb(255, 117, 181)))
-                    .title(Span::styled(" 🛡️  k o r g   u x   o n b o a r d i n g   ", Style::default().fg(fg_white).bold())),
+                    .title(Span::styled(
+                        " 🛡️  k o r g   u x   o n b o a r d i n g   ",
+                        Style::default().fg(fg_white).bold(),
+                    )),
             )
             .style(Style::default().bg(Color::Rgb(15, 15, 20)));
-        
+
         f.render_widget(ratatui::widgets::Clear, area);
         f.render_widget(modal, area);
     }
@@ -3287,18 +4238,18 @@ pub fn fuzzy_match(query: &str, target: &str) -> Option<i32> {
     if query.is_empty() {
         return Some(0);
     }
-    
+
     let query_chars: Vec<char> = query.to_lowercase().chars().collect();
     let target_chars: Vec<char> = target.to_lowercase().chars().collect();
     let target_orig: Vec<char> = target.chars().collect();
     let query_orig: Vec<char> = query.chars().collect();
-    
+
     let mut q_idx = 0;
     let mut last_match_idx = 0;
     let mut score = 0;
     let mut consecutive = 0;
     let mut first_match_idx = None;
-    
+
     for (t_idx, &t_char) in target_chars.iter().enumerate() {
         if q_idx < query_chars.len() && t_char == query_chars[q_idx] {
             if first_match_idx.is_none() {
@@ -3306,7 +4257,11 @@ pub fn fuzzy_match(query: &str, target: &str) -> Option<i32> {
                 // Start of string/word boundary bonus
                 if t_idx == 0 {
                     score += 20;
-                } else if target_chars[t_idx - 1] == ' ' || target_chars[t_idx - 1] == '_' || target_chars[t_idx - 1] == '/' || target_chars[t_idx - 1] == '-' {
+                } else if target_chars[t_idx - 1] == ' '
+                    || target_chars[t_idx - 1] == '_'
+                    || target_chars[t_idx - 1] == '/'
+                    || target_chars[t_idx - 1] == '-'
+                {
                     score += 20;
                 }
             } else {
@@ -3319,17 +4274,17 @@ pub fn fuzzy_match(query: &str, target: &str) -> Option<i32> {
                     score -= gap as i32; // Penalty for gaps
                 }
             }
-            
+
             // Case match bonus
             if target_orig[t_idx] == query_orig[q_idx] {
                 score += 5;
             }
-            
+
             last_match_idx = t_idx;
             q_idx += 1;
         }
     }
-    
+
     if q_idx == query_chars.len() {
         // Apply target start penalty to prioritize matches closer to start
         if let Some(start) = first_match_idx {
@@ -3422,7 +4377,8 @@ mod tests {
         assert!(app.policy_violation_alert.is_none());
 
         // Trigger violation alert
-        app.policy_violation_alert = Some("Shell command injection in Benjamin persona: 'rm -rf /'".to_string());
+        app.policy_violation_alert =
+            Some("Shell command injection in Benjamin persona: 'rm -rf /'".to_string());
         assert!(app.policy_violation_alert.is_some());
 
         // Simulate Operator input handling

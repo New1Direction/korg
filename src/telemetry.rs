@@ -23,10 +23,11 @@ use tracing_subscriber::{
 /// Must be called exactly once, at the top of `main()`, before any async tasks are spawned.
 /// Subsequent calls (e.g. in tests) are silently no-ops via `try_init`.
 pub fn init_tracing() {
-    let env_filter = EnvFilter::try_from_env("KORG_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_env("KORG_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
 
-    let use_json = std::env::var("KORG_LOG_JSON").map(|v| v == "1").unwrap_or(false);
+    let use_json = std::env::var("KORG_LOG_JSON")
+        .map(|v| v == "1")
+        .unwrap_or(false);
 
     if use_json {
         // Machine-readable JSON for log shipping / structured analysis

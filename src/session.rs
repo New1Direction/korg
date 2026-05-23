@@ -71,15 +71,9 @@ pub enum WorkerEvent {
         ts: DateTime<Utc>,
     },
     /// Raw line from the worker's stdout.
-    Stdout {
-        line: String,
-        ts: DateTime<Utc>,
-    },
+    Stdout { line: String, ts: DateTime<Utc> },
     /// Raw line from the worker's stderr.
-    Stderr {
-        line: String,
-        ts: DateTime<Utc>,
-    },
+    Stderr { line: String, ts: DateTime<Utc> },
     /// Worker is making a tool call.
     ToolCall(ToolInvocation),
     /// Worker produced a file artifact.
@@ -94,20 +88,11 @@ pub enum WorkerEvent {
         elapsed_secs: u64,
     },
     /// Non-fatal warning from the worker.
-    Warning {
-        message: String,
-        ts: DateTime<Utc>,
-    },
+    Warning { message: String, ts: DateTime<Utc> },
     /// Worker failed unrecoverably.
-    Failed {
-        reason: String,
-        ts: DateTime<Utc>,
-    },
+    Failed { reason: String, ts: DateTime<Utc> },
     /// Worker completed successfully.
-    Completed {
-        exit_code: i32,
-        ts: DateTime<Utc>,
-    },
+    Completed { exit_code: i32, ts: DateTime<Utc> },
     /// Opaque/structured verified ACP message received from the worker
     AcpMsg {
         message: crate::acp::AcpMessage,
@@ -126,15 +111,24 @@ impl WorkerEvent {
     }
 
     pub fn completed(exit_code: i32) -> Self {
-        Self::Completed { exit_code, ts: Utc::now() }
+        Self::Completed {
+            exit_code,
+            ts: Utc::now(),
+        }
     }
 
     pub fn failed(reason: impl Into<String>) -> Self {
-        Self::Failed { reason: reason.into(), ts: Utc::now() }
+        Self::Failed {
+            reason: reason.into(),
+            ts: Utc::now(),
+        }
     }
 
     pub fn heartbeat(elapsed_secs: u64) -> Self {
-        Self::Heartbeat { ts: Utc::now(), elapsed_secs }
+        Self::Heartbeat {
+            ts: Utc::now(),
+            elapsed_secs,
+        }
     }
 
     /// Returns true if this event signals the end of the worker's lifecycle.
@@ -145,7 +139,11 @@ impl WorkerEvent {
     /// Log this event to the tracing system with appropriate level.
     pub fn trace(&self, workspace_id: &WorkspaceId) {
         match self {
-            Self::Started { persona, routing_id, .. } => {
+            Self::Started {
+                persona,
+                routing_id,
+                ..
+            } => {
                 tracing::info!(
                     %workspace_id, persona = %persona,
                     routing_id = %routing_id, "worker_event_started"
@@ -288,14 +286,18 @@ impl Default for SubprocessBackend {
 impl SubprocessBackend {
     pub fn new() -> Self {
         Self {
-            active_pids: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            active_pids: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 }
 
 #[async_trait]
 impl SessionBackend for SubprocessBackend {
-    fn backend_kind(&self) -> &'static str { "subprocess" }
+    fn backend_kind(&self) -> &'static str {
+        "subprocess"
+    }
 
     async fn spawn(
         &self,
@@ -303,8 +305,8 @@ impl SessionBackend for SubprocessBackend {
         signing_key: &ed25519_dalek::SigningKey,
     ) -> Result<(SessionHandle, EventStream)> {
         use crate::acp::AcpMessage;
-        use tokio::io::{AsyncBufReadExt, BufReader};
         use std::process::Stdio;
+        use tokio::io::{AsyncBufReadExt, BufReader};
 
         let handle = SessionHandle::new(spec.workspace_id.clone(), &spec.routing_id);
         let (tx, rx) = mpsc::channel::<WorkerEvent>(256);
@@ -355,11 +357,13 @@ impl SessionBackend for SubprocessBackend {
         drop(stdin);
 
         // Emit Started event
-        let _ = tx.send(WorkerEvent::started(
-            spec.workspace_id.clone(),
-            &spec.persona,
-            &spec.routing_id,
-        )).await;
+        let _ = tx
+            .send(WorkerEvent::started(
+                spec.workspace_id.clone(),
+                &spec.persona,
+                &spec.routing_id,
+            ))
+            .await;
 
         // Stderr → WorkerEvent::Stderr in background
         let tx_err = tx.clone();
@@ -367,10 +371,12 @@ impl SessionBackend for SubprocessBackend {
             let mut line = String::new();
             while stderr.read_line(&mut line).await.unwrap_or(0) > 0 {
                 if !line.trim().is_empty() {
-                    let _ = tx_err.send(WorkerEvent::Stderr {
-                        line: line.trim().to_string(),
-                        ts: Utc::now(),
-                    }).await;
+                    let _ = tx_err
+                        .send(WorkerEvent::Stderr {
+                            line: line.trim().to_string(),
+                            ts: Utc::now(),
+                        })
+                        .await;
                 }
                 line.clear();
             }
@@ -398,10 +404,12 @@ impl SessionBackend for SubprocessBackend {
                         .unwrap_or(false);
 
                         // Yield verified structured AcpMsg event
-                        let _ = tx_out.send(WorkerEvent::AcpMsg {
-                            message: envelope.payload.clone(),
-                            verified,
-                        }).await;
+                        let _ = tx_out
+                            .send(WorkerEvent::AcpMsg {
+                                message: envelope.payload.clone(),
+                                verified,
+                            })
+                            .await;
 
                         match &envelope.payload {
                             AcpMessage::TerminationReport { exit_status, .. } => {
@@ -414,7 +422,10 @@ impl SessionBackend for SubprocessBackend {
                             | AcpMessage::PatchApplyRequest(_) => {
                                 let event = WorkerEvent::ToolCall(ToolInvocation {
                                     tool_name: format!("{:?}", envelope.payload)
-                                        .split('(').next().unwrap_or("tool").to_string(),
+                                        .split('(')
+                                        .next()
+                                        .unwrap_or("tool")
+                                        .to_string(),
                                     routing_id: envelope.message_id.to_string(),
                                     args: serde_json::Value::Null,
                                     invoked_at: Utc::now(),
@@ -424,10 +435,12 @@ impl SessionBackend for SubprocessBackend {
                             _ => {
                                 // Other ACP messages forwarded as opaque stdout
                                 if let Ok(line) = serde_json::to_string(&envelope.payload) {
-                                    let _ = tx_out.send(WorkerEvent::Stdout {
-                                        line,
-                                        ts: Utc::now(),
-                                    }).await;
+                                    let _ = tx_out
+                                        .send(WorkerEvent::Stdout {
+                                            line,
+                                            ts: Utc::now(),
+                                        })
+                                        .await;
                                 }
                             }
                         }
@@ -519,10 +532,11 @@ impl DockerBackend {
     }
 }
 
-
 #[async_trait]
 impl SessionBackend for DockerBackend {
-    fn backend_kind(&self) -> &'static str { "docker" }
+    fn backend_kind(&self) -> &'static str {
+        "docker"
+    }
 
     async fn spawn(
         &self,
@@ -551,8 +565,7 @@ impl SessionBackend for DockerBackend {
 pub fn build_backend() -> std::sync::Arc<dyn SessionBackend> {
     let config = crate::llm::KorgConfig::load();
     if config.sandbox_mode == "docker" {
-        let image = std::env::var("KORG_DOCKER_IMAGE")
-            .unwrap_or_else(|_| "korg:latest".into());
+        let image = std::env::var("KORG_DOCKER_IMAGE").unwrap_or_else(|_| "korg:latest".into());
         std::sync::Arc::new(DockerBackend::new(image))
     } else {
         std::sync::Arc::new(SubprocessBackend::new())

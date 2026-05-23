@@ -5,9 +5,8 @@
 //! AcpMessage envelopes by the existing transport.
 
 use crate::acp::{
-    AcpMessage, FileReadRequestPayload, FileReadResultPayload,
-    ShellExecRequestPayload, ShellExecResultPayload,
-    PatchApplyRequestPayload, PatchApplyResultPayload,
+    AcpMessage, FileReadRequestPayload, FileReadResultPayload, PatchApplyRequestPayload,
+    PatchApplyResultPayload, ShellExecRequestPayload, ShellExecResultPayload,
     TestRunRequestPayload, TestRunResultPayload,
 };
 use anyhow::Result;
@@ -95,9 +94,16 @@ fn extract_domains(command: &str, args: &[String]) -> Vec<String> {
         // Check for URL
         if let Some(pos) = token.find("://") {
             let rest = &token[pos + 3..];
-            let host_part = rest.split('/').next().unwrap_or(rest)
-                .split(':').next().unwrap_or(rest)
-                .split('@').next().unwrap_or(rest);
+            let host_part = rest
+                .split('/')
+                .next()
+                .unwrap_or(rest)
+                .split(':')
+                .next()
+                .unwrap_or(rest)
+                .split('@')
+                .next()
+                .unwrap_or(rest);
             if !host_part.is_empty() {
                 domains.push(host_part.to_string());
             }
@@ -116,7 +122,8 @@ fn extract_domains(command: &str, args: &[String]) -> Vec<String> {
         }
 
         // Parse general token to see if it resembles a domain name or IP
-        let cleaned: String = token.chars()
+        let cleaned: String = token
+            .chars()
             .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == ':')
             .collect();
 
@@ -127,7 +134,7 @@ fn extract_domains(command: &str, args: &[String]) -> Vec<String> {
                     let ignored_exts = [
                         "rs", "toml", "lock", "git", "sh", "png", "jpg", "jpeg", "gif", "svg",
                         "md", "txt", "json", "yml", "yaml", "css", "js", "ts", "html", "htm",
-                        "exe", "bin", "o", "a", "so", "dylib", "tar", "gz", "zip"
+                        "exe", "bin", "o", "a", "so", "dylib", "tar", "gz", "zip",
                     ];
                     ignored_exts.contains(&ext.to_lowercase().as_str())
                 } else {
@@ -148,12 +155,8 @@ pub fn check_policy(command: &str, args: &[String]) -> Result<(), String> {
 
     // 1. Load whitelist from POLICY.md if it exists
     let policy_path = std::path::Path::new("POLICY.md");
-    let mut whitelisted_commands = vec![
-        "cargo".to_string(),
-        "git".to_string(),
-        "echo".to_string(),
-    ];
-    
+    let mut whitelisted_commands = vec!["cargo".to_string(), "git".to_string(), "echo".to_string()];
+
     if let Ok(content) = std::fs::read_to_string(policy_path) {
         let mut extracted = Vec::new();
         for line in content.lines() {
@@ -177,7 +180,10 @@ pub fn check_policy(command: &str, args: &[String]) -> Result<(), String> {
         .unwrap_or(command);
 
     if !whitelisted_commands.iter().any(|c| c == base_cmd) {
-        return Err(format!("Command '{}' is not whitelisted in POLICY.md", base_cmd));
+        return Err(format!(
+            "Command '{}' is not whitelisted in POLICY.md",
+            base_cmd
+        ));
     }
 
     // 3. Block system file/credential arguments
@@ -200,8 +206,13 @@ pub fn check_policy(command: &str, args: &[String]) -> Result<(), String> {
         // Check blocked domains
         for blocked_dom in &config.security_network.blocked_domains {
             let lower_blocked = blocked_dom.to_lowercase();
-            if lower_domain == lower_blocked || lower_domain.ends_with(&format!(".{}", lower_blocked)) {
-                return Err(format!("CONTESTED: Policy Violation - Command attempts to access blocked domain '{}'", domain));
+            if lower_domain == lower_blocked
+                || lower_domain.ends_with(&format!(".{}", lower_blocked))
+            {
+                return Err(format!(
+                    "CONTESTED: Policy Violation - Command attempts to access blocked domain '{}'",
+                    domain
+                ));
             }
         }
 
@@ -210,7 +221,9 @@ pub fn check_policy(command: &str, args: &[String]) -> Result<(), String> {
             let mut allowed = false;
             for allowed_dom in &config.security_network.allowed_domains {
                 let lower_allowed = allowed_dom.to_lowercase();
-                if lower_domain == lower_allowed || lower_domain.ends_with(&format!(".{}", lower_allowed)) {
+                if lower_domain == lower_allowed
+                    || lower_domain.ends_with(&format!(".{}", lower_allowed))
+                {
                     allowed = true;
                     break;
                 }
@@ -235,7 +248,9 @@ pub fn check_path_policy(path_str: &str) -> Result<(), String> {
     for blocked_pat in &config.security_paths.blocked_paths {
         let expanded_blocked = expand_tilde(blocked_pat);
         if normalized_str.contains(&expanded_blocked) || expanded_str.contains(&expanded_blocked) {
-            return Err("Access to credentials or blacklisted system file strictly forbidden".to_string());
+            return Err(
+                "Access to credentials or blacklisted system file strictly forbidden".to_string(),
+            );
         }
     }
 
@@ -245,7 +260,9 @@ pub fn check_path_policy(path_str: &str) -> Result<(), String> {
         let abs_path = if normalized.is_absolute() {
             normalized.clone()
         } else {
-            std::env::current_dir().unwrap_or_else(|_| crate::paths::project_root()).join(&normalized)
+            std::env::current_dir()
+                .unwrap_or_else(|_| crate::paths::project_root())
+                .join(&normalized)
         };
         let abs_normalized = normalize_path(&abs_path);
 
@@ -255,10 +272,12 @@ pub fn check_path_policy(path_str: &str) -> Result<(), String> {
             let abs_allowed = if allowed_path.is_absolute() {
                 allowed_path.to_path_buf()
             } else {
-                std::env::current_dir().unwrap_or_else(|_| crate::paths::project_root()).join(allowed_path)
+                std::env::current_dir()
+                    .unwrap_or_else(|_| crate::paths::project_root())
+                    .join(allowed_path)
             };
             let abs_allowed_normalized = normalize_path(&abs_allowed);
-            
+
             if abs_normalized.starts_with(&abs_allowed_normalized) {
                 allowed = true;
                 break;
@@ -294,7 +313,11 @@ pub async fn execute_file_read(req: FileReadRequestPayload) -> FileReadResultPay
     let path = Path::new(&req.path);
 
     // Very basic sandbox: only allow relative paths or under /tmp
-    if path.is_absolute() && !path.starts_with("/tmp") && !path.starts_with(&crate::paths::project_root()) && !path.starts_with(&crate::paths::cache_dir()) {
+    if path.is_absolute()
+        && !path.starts_with("/tmp")
+        && !path.starts_with(&crate::paths::project_root())
+        && !path.starts_with(&crate::paths::cache_dir())
+    {
         return FileReadResultPayload {
             path: req.path,
             content: String::new(),
@@ -525,21 +548,31 @@ pub async fn dispatch_tool(msg: AcpMessage, agent_id: &str) -> Option<AcpMessage
             let path = payload.path.clone();
             let result = execute_file_read(payload).await;
             let output_str = format!("{:?}", result);
-            let _ = crate::provenance::log_tool_invocation(agent_id, "file_read", &path, &output_str);
+            let _ =
+                crate::provenance::log_tool_invocation(agent_id, "file_read", &path, &output_str);
             Some(AcpMessage::FileReadResult(result))
         }
         AcpMessage::ShellExecRequest(payload) => {
             let cmd = format!("{} {}", payload.command, payload.args.join(" "));
             let result = execute_shell(payload).await;
-            let output_str = format!("exit: {}, stdout: {}, stderr: {}", result.exit_code, result.stdout, result.stderr);
-            let _ = crate::provenance::log_tool_invocation(agent_id, "shell_exec", &cmd, &output_str);
+            let output_str = format!(
+                "exit: {}, stdout: {}, stderr: {}",
+                result.exit_code, result.stdout, result.stderr
+            );
+            let _ =
+                crate::provenance::log_tool_invocation(agent_id, "shell_exec", &cmd, &output_str);
             Some(AcpMessage::ShellExecResult(result))
         }
         AcpMessage::PatchApplyRequest(payload) => {
             let file_path = payload.file_path.clone();
             let result = execute_patch_apply(payload).await;
             let output_str = format!("{:?}", result);
-            let _ = crate::provenance::log_tool_invocation(agent_id, "patch_apply", &file_path, &output_str);
+            let _ = crate::provenance::log_tool_invocation(
+                agent_id,
+                "patch_apply",
+                &file_path,
+                &output_str,
+            );
             Some(AcpMessage::PatchApplyResult(result))
         }
         AcpMessage::TestRunRequest(payload) => {
@@ -551,15 +584,24 @@ pub async fn dispatch_tool(msg: AcpMessage, agent_id: &str) -> Option<AcpMessage
         }
         AcpMessage::CodeEditProposal(payload) => {
             let path = payload.file_path.clone();
-            let _ = crate::provenance::log_tool_invocation(agent_id, "code_edit_proposal", &path, "acknowledged");
-            eprintln!("[ToolExecutor] Received CodeEditProposal for {}", payload.file_path);
+            let _ = crate::provenance::log_tool_invocation(
+                agent_id,
+                "code_edit_proposal",
+                &path,
+                "acknowledged",
+            );
+            eprintln!(
+                "[ToolExecutor] Received CodeEditProposal for {}",
+                payload.file_path
+            );
             None // No direct result — the proposal is informational
         }
         AcpMessage::ScreenshotRequest(payload) => {
             let path = payload.target_name.clone();
             let result = execute_screenshot(payload).await;
             let output_str = format!("{:?}", result);
-            let _ = crate::provenance::log_tool_invocation(agent_id, "screenshot", &path, &output_str);
+            let _ =
+                crate::provenance::log_tool_invocation(agent_id, "screenshot", &path, &output_str);
             Some(AcpMessage::ScreenshotResult(result))
         }
         _ => None,
@@ -787,7 +829,11 @@ fn parse_test_output(stdout: &str, stderr: &str) -> (u32, u32, u32, u32, Vec<Str
 
         // Collect failure names
         if line.starts_with("test ") && line.contains("... FAILED") {
-            if let Some(name) = line.split("test ").nth(1).and_then(|s| s.split("...").next()) {
+            if let Some(name) = line
+                .split("test ")
+                .nth(1)
+                .and_then(|s| s.split("...").next())
+            {
                 failures.push(name.trim().to_string());
             }
         }
@@ -806,14 +852,24 @@ fn parse_test_output(stdout: &str, stderr: &str) -> (u32, u32, u32, u32, Vec<Str
         run = (passed + failed).max(1);
     }
 
-    (run, passed, failed, ignored, failures.into_iter().take(5).collect())
+    (
+        run,
+        passed,
+        failed,
+        ignored,
+        failures.into_iter().take(5).collect(),
+    )
 }
 
 fn detect_coverage(stdout: &str, stderr: &str) -> Option<f32> {
     let combined = format!("{}\n{}", stdout, stderr);
     for line in combined.lines() {
         if line.contains('%') && (line.contains("coverage") || line.contains("Coverage")) {
-            if let Some(pct_str) = line.split('%').next().and_then(|s| s.split_whitespace().last()) {
+            if let Some(pct_str) = line
+                .split('%')
+                .next()
+                .and_then(|s| s.split_whitespace().last())
+            {
                 if let Ok(p) = pct_str.trim().parse::<f32>() {
                     return Some(p);
                 }
@@ -847,7 +903,11 @@ pub async fn execute_patch_apply(req: PatchApplyRequestPayload) -> PatchApplyRes
     let target_path = Path::new(&req.file_path);
 
     // Basic sandbox: only relative paths or under current dir / /tmp
-    if target_path.is_absolute() && !target_path.starts_with("/tmp") && !target_path.starts_with(&crate::paths::project_root()) && !target_path.starts_with(&crate::paths::cache_dir()) {
+    if target_path.is_absolute()
+        && !target_path.starts_with("/tmp")
+        && !target_path.starts_with(&crate::paths::project_root())
+        && !target_path.starts_with(&crate::paths::cache_dir())
+    {
         return PatchApplyResultPayload {
             file_path: req.file_path,
             success: false,
@@ -901,12 +961,16 @@ pub async fn execute_patch_apply(req: PatchApplyRequestPayload) -> PatchApplyRes
     // Try git apply first if we're in a git repo (more robust)
     let patched = if Path::new(".git").exists() {
         match try_git_apply(&target_path, &req.patch).await {
-            Ok(_) => tokio::fs::read_to_string(&target_path).await.unwrap_or_else(|_| original.clone()), // read the git-patched content
+            Ok(_) => tokio::fs::read_to_string(&target_path)
+                .await
+                .unwrap_or_else(|_| original.clone()), // read the git-patched content
             Err(_) => {
                 // fall back to our internal applier
                 let original_clone = original.clone();
                 let patch_clone = req.patch.clone();
-                let res = tokio::task::spawn_blocking(move || apply_patch(&original_clone, &patch_clone)).await;
+                let res =
+                    tokio::task::spawn_blocking(move || apply_patch(&original_clone, &patch_clone))
+                        .await;
                 match res {
                     Ok(Ok(p)) => p,
                     Ok(Err(e)) => {
@@ -937,7 +1001,8 @@ pub async fn execute_patch_apply(req: PatchApplyRequestPayload) -> PatchApplyRes
     } else {
         let original_clone = original.clone();
         let patch_clone = req.patch.clone();
-        let res = tokio::task::spawn_blocking(move || apply_patch(&original_clone, &patch_clone)).await;
+        let res =
+            tokio::task::spawn_blocking(move || apply_patch(&original_clone, &patch_clone)).await;
         match res {
             Ok(Ok(p)) => p,
             Ok(Err(e)) => {
@@ -1017,7 +1082,12 @@ fn apply_search_replace(original: &str, patch: &str) -> Result<String, String> {
         }
 
         let search_part = parts[0].trim_start_matches('\n').trim_end();
-        let replace_part = parts[1].split(">>>>>>> REPLACE").next().unwrap_or("").trim_start_matches('\n').trim_end();
+        let replace_part = parts[1]
+            .split(">>>>>>> REPLACE")
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('\n')
+            .trim_end();
 
         if result.contains(search_part) {
             result = result.replacen(search_part, replace_part, 1);
@@ -1142,7 +1212,11 @@ fn parse_unified_diff(patch: &str) -> Vec<Hunk> {
         // Headerless raw patch!
         let mut lines = Vec::new();
         for line in patch.lines() {
-            if line.starts_with("diff ") || line.starts_with("index ") || line.starts_with("--- ") || line.starts_with("+++ ") {
+            if line.starts_with("diff ")
+                || line.starts_with("index ")
+                || line.starts_with("--- ")
+                || line.starts_with("+++ ")
+            {
                 continue;
             }
             if let Some(rest) = line.strip_prefix('-') {
@@ -1170,8 +1244,14 @@ fn parse_unified_diff(patch: &str) -> Vec<Hunk> {
             }
         }
         if !lines.is_empty() {
-            let old_count = lines.iter().filter(|l| !matches!(l.line_type, HunkLineType::Insertion)).count();
-            let new_count = lines.iter().filter(|l| !matches!(l.line_type, HunkLineType::Deletion)).count();
+            let old_count = lines
+                .iter()
+                .filter(|l| !matches!(l.line_type, HunkLineType::Insertion))
+                .count();
+            let new_count = lines
+                .iter()
+                .filter(|l| !matches!(l.line_type, HunkLineType::Deletion))
+                .count();
             hunks.push(Hunk {
                 old_start: 1,
                 old_count,
@@ -1194,7 +1274,7 @@ fn hunk_matches_stage(lines: &[String], hunk: &Hunk, idx: usize, stage: usize) -
                 if file_idx >= lines.len() {
                     return false;
                 }
-                
+
                 let matches = match stage {
                     1 => {
                         // Stage 1: Exact check except trailing whitespace and carriage returns
@@ -1206,11 +1286,12 @@ fn hunk_matches_stage(lines: &[String], hunk: &Hunk, idx: usize, stage: usize) -
                     }
                     3 => {
                         // Stage 3: Ignore leading/trailing whitespace and case-insensitive
-                        hunk_line.content.trim().to_lowercase() == lines[file_idx].trim().to_lowercase()
+                        hunk_line.content.trim().to_lowercase()
+                            == lines[file_idx].trim().to_lowercase()
                     }
                     _ => false,
                 };
-                
+
                 if !matches {
                     return false;
                 }
@@ -1236,7 +1317,7 @@ fn apply_simple_unified_diff(original: &str, patch: &str) -> Result<String, Stri
     for (hunk_idx, hunk) in hunks.iter().enumerate() {
         // Preferred target index based on original hunk position and cumulative line shift
         let preferred_idx = (hunk.old_start as isize - 1 + cumulative_line_shift).max(0) as usize;
-        
+
         // Build the search indices outward from preferred_idx
         let mut search_indices = Vec::new();
         let max_len = lines.len();
@@ -1245,7 +1326,9 @@ fn apply_simple_unified_diff(original: &str, patch: &str) -> Result<String, Stri
             search_indices.push(0);
         } else {
             let mut offset = 0;
-            while preferred_idx + offset < max_len || (preferred_idx as isize - offset as isize) >= 0 {
+            while preferred_idx + offset < max_len
+                || (preferred_idx as isize - offset as isize) >= 0
+            {
                 if offset == 0 {
                     if preferred_idx < max_len {
                         search_indices.push(preferred_idx);
@@ -1293,7 +1376,11 @@ fn apply_simple_unified_diff(original: &str, patch: &str) -> Result<String, Stri
         };
 
         // Determine how many lines are actually replaced (count deletions and context)
-        let file_offset = hunk.lines.iter().filter(|l| !matches!(l.line_type, HunkLineType::Insertion)).count();
+        let file_offset = hunk
+            .lines
+            .iter()
+            .filter(|l| !matches!(l.line_type, HunkLineType::Insertion))
+            .count();
 
         // Build the replacement lines (preserve original formatting for context, insert insertions)
         let mut replacement_lines = Vec::new();
@@ -1321,9 +1408,17 @@ fn apply_simple_unified_diff(original: &str, patch: &str) -> Result<String, Stri
         lines.splice(matched_idx..matched_idx + file_offset, replacement_lines);
 
         // Update cumulative line shift
-        let local_shift = hunk.lines.iter().filter(|l| matches!(l.line_type, HunkLineType::Insertion)).count() as isize
-            - hunk.lines.iter().filter(|l| matches!(l.line_type, HunkLineType::Deletion)).count() as isize;
-        
+        let local_shift = hunk
+            .lines
+            .iter()
+            .filter(|l| matches!(l.line_type, HunkLineType::Insertion))
+            .count() as isize
+            - hunk
+                .lines
+                .iter()
+                .filter(|l| matches!(l.line_type, HunkLineType::Deletion))
+                .count() as isize;
+
         cumulative_line_shift += local_shift;
     }
 
@@ -1431,7 +1526,6 @@ pub async fn execute_screenshot(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1462,7 +1556,8 @@ mod tests {
 +modified line 5
  line 6
 ";
-        let expected = "line 1\nline 2\nnew line 3\nnew line 3b\nline 4\nmodified line 5\nline 6\nline 7\n";
+        let expected =
+            "line 1\nline 2\nnew line 3\nnew line 3b\nline 4\nmodified line 5\nline 6\nline 7\n";
         let result = apply_simple_unified_diff(original, patch).unwrap();
         assert_eq!(result, expected);
     }

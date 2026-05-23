@@ -34,7 +34,11 @@ impl RetryBudget {
             tracing::info!(spent = self.spent, limit = self.limit, "retry_budget_spent");
             true
         } else {
-            tracing::warn!(spent = self.spent, limit = self.limit, "retry_budget_exhausted");
+            tracing::warn!(
+                spent = self.spent,
+                limit = self.limit,
+                "retry_budget_exhausted"
+            );
             false
         }
     }
@@ -200,7 +204,10 @@ impl CampaignRuntime {
     }
 
     /// Forcibly rollback mutated capabilities to their pre-campaign values.
-    pub async fn rollback_capabilities(&self, resolver: &Arc<tokio::sync::Mutex<crate::registry::CapabilityResolver>>) {
+    pub async fn rollback_capabilities(
+        &self,
+        resolver: &Arc<tokio::sync::Mutex<crate::registry::CapabilityResolver>>,
+    ) {
         tracing::warn!(session_id = %self.coordinator.session_id, "rolling_back_capabilities");
         let mut res = resolver.lock().await;
         for (node_id, state) in &self.initial_capabilities {
@@ -241,7 +248,9 @@ impl CampaignRuntime {
         // 3. Clean up and destroy all workspaces
         {
             let mut wm = self.coordinator.workspace_manager.lock().await;
-            let count = wm.cleanup_all_for_session(self.coordinator.session_id).await;
+            let count = wm
+                .cleanup_all_for_session(self.coordinator.session_id)
+                .await;
             tracing::info!(
                 session_id = %self.coordinator.session_id,
                 destroyed_workspaces = count,
@@ -313,20 +322,33 @@ mod tests {
         let mut runtime = CampaignRuntime::new(coord.clone());
 
         // 1. Setup a fake resolver with active capability states
-        let resolver = Arc::new(tokio::sync::Mutex::new(crate::registry::CapabilityResolver::default_resolver()));
+        let resolver = Arc::new(tokio::sync::Mutex::new(
+            crate::registry::CapabilityResolver::default_resolver(),
+        ));
         {
             let mut res = resolver.lock().await;
-            res.active_states.insert("cognition_mode".to_string(), crate::registry::CapabilityState::Mode("balanced".to_string()));
+            res.active_states.insert(
+                "cognition_mode".to_string(),
+                crate::registry::CapabilityState::Mode("balanced".to_string()),
+            );
         }
 
         // 2. Snapshot current capabilities
         runtime.snapshot_capabilities(&*resolver.lock().await).await;
-        assert_eq!(runtime.initial_capabilities.get("cognition_mode"), Some(&crate::registry::CapabilityState::Mode("balanced".to_string())));
+        assert_eq!(
+            runtime.initial_capabilities.get("cognition_mode"),
+            Some(&crate::registry::CapabilityState::Mode(
+                "balanced".to_string()
+            ))
+        );
 
         // 3. Mutate the active states in the resolver
         {
             let mut res = resolver.lock().await;
-            res.active_states.insert("cognition_mode".to_string(), crate::registry::CapabilityState::Mode("heavy".to_string()));
+            res.active_states.insert(
+                "cognition_mode".to_string(),
+                crate::registry::CapabilityState::Mode("heavy".to_string()),
+            );
         }
 
         // 4. Create a workspace under this session ID to test automatic cleanup
@@ -339,7 +361,7 @@ mod tests {
                 use_git_worktree: false,
             });
             wm.provision(&ws_id).await.unwrap();
-            
+
             // Verify workspace directory exists
             let path = wm.get(&ws_id).unwrap().worktree_path.clone();
             assert!(path.exists());
@@ -354,7 +376,12 @@ mod tests {
         // 7. Verify capabilities were rolled back to their initial snapshot values
         {
             let res = resolver.lock().await;
-            assert_eq!(res.active_states.get("cognition_mode"), Some(&crate::registry::CapabilityState::Mode("balanced".to_string())));
+            assert_eq!(
+                res.active_states.get("cognition_mode"),
+                Some(&crate::registry::CapabilityState::Mode(
+                    "balanced".to_string()
+                ))
+            );
         }
 
         // 8. Verify workspace was automatically cleaned up and destroyed
@@ -372,17 +399,27 @@ mod tests {
     #[tokio::test]
     async fn test_concurrency_semaphore_gating() {
         let coord = Arc::new(RuntimeCoordinator::new(Uuid::now_v7(), 2, 10, 3));
-        
+
         // Acquire both permits
-        let _p1 = coord.concurrency_semaphore.clone().acquire_owned().await.unwrap();
-        let _p2 = coord.concurrency_semaphore.clone().acquire_owned().await.unwrap();
-        
+        let _p1 = coord
+            .concurrency_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap();
+        let _p2 = coord
+            .concurrency_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap();
+
         // Third attempt should be gated (semaphore empty)
         assert_eq!(coord.concurrency_semaphore.available_permits(), 0);
-        
+
         let p3_try = coord.concurrency_semaphore.try_acquire();
         assert!(p3_try.is_err());
-        
+
         // Release one permit
         drop(_p1);
         assert_eq!(coord.concurrency_semaphore.available_permits(), 1);

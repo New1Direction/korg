@@ -1,82 +1,82 @@
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use std::collections::{HashMap, BTreeMap};
+use fs2::FileExt;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use fs2::FileExt;
 use std::sync::atomic::{AtomicBool, Ordering};
+use uuid::Uuid;
 
 pub static IS_PREVIEW_MODE: AtomicBool = AtomicBool::new(false);
 
-use super::types::CapabilityState;
 use super::plan::TransitionState;
+use super::types::CapabilityState;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "event_type")]
 pub enum CapabilityEvent {
-    CapabilityEnabled { 
-        plan_id: Uuid, 
-        id: String, 
-        timestamp: DateTime<Utc> 
+    CapabilityEnabled {
+        plan_id: Uuid,
+        id: String,
+        timestamp: DateTime<Utc>,
     },
-    CapabilityDisabled { 
-        plan_id: Uuid, 
-        id: String, 
-        timestamp: DateTime<Utc> 
+    CapabilityDisabled {
+        plan_id: Uuid,
+        id: String,
+        timestamp: DateTime<Utc>,
     },
-    CapabilityScaled { 
-        plan_id: Uuid, 
-        id: String, 
-        scale: f32, 
-        timestamp: DateTime<Utc> 
+    CapabilityScaled {
+        plan_id: Uuid,
+        id: String,
+        scale: f32,
+        timestamp: DateTime<Utc>,
     },
-    CapabilityConflictDetected { 
-        plan_id: Uuid, 
-        id: String, 
-        conflicting_with: String, 
-        timestamp: DateTime<Utc> 
+    CapabilityConflictDetected {
+        plan_id: Uuid,
+        id: String,
+        conflicting_with: String,
+        timestamp: DateTime<Utc>,
     },
-    TransitionStateChanged { 
-        plan_id: Uuid, 
-        state: TransitionState, 
-        timestamp: DateTime<Utc> 
+    TransitionStateChanged {
+        plan_id: Uuid,
+        state: TransitionState,
+        timestamp: DateTime<Utc>,
     },
-    
+
     // Live granular progress telemetry events
-    EffectStarted { 
-        plan_id: Uuid, 
-        step_target: String, 
-        effect_id: usize, 
-        timestamp: DateTime<Utc> 
+    EffectStarted {
+        plan_id: Uuid,
+        step_target: String,
+        effect_id: usize,
+        timestamp: DateTime<Utc>,
     },
-    EffectCompleted { 
-        plan_id: Uuid, 
-        step_target: String, 
-        effect_id: usize, 
-        timestamp: DateTime<Utc> 
+    EffectCompleted {
+        plan_id: Uuid,
+        step_target: String,
+        effect_id: usize,
+        timestamp: DateTime<Utc>,
     },
-    EffectFailed { 
-        plan_id: Uuid, 
-        step_target: String, 
-        effect_id: usize, 
-        reason: String, 
-        timestamp: DateTime<Utc> 
+    EffectFailed {
+        plan_id: Uuid,
+        step_target: String,
+        effect_id: usize,
+        reason: String,
+        timestamp: DateTime<Utc>,
     },
-    EffectRetrying { 
-        plan_id: Uuid, 
-        step_target: String, 
-        effect_id: usize, 
-        retry_count: usize, 
-        timestamp: DateTime<Utc> 
+    EffectRetrying {
+        plan_id: Uuid,
+        step_target: String,
+        effect_id: usize,
+        retry_count: usize,
+        timestamp: DateTime<Utc>,
     },
-    
-    TransitionRolledBack { 
-        plan_id: Uuid, 
-        target_id: String, 
-        reason: String, 
-        timestamp: DateTime<Utc> 
+
+    TransitionRolledBack {
+        plan_id: Uuid,
+        target_id: String,
+        reason: String,
+        timestamp: DateTime<Utc>,
     },
     LeaseAcquired {
         id: String,
@@ -119,19 +119,19 @@ impl CapabilityEvent {
 
     pub fn tier(&self) -> EventTier {
         match self {
-            CapabilityEvent::CapabilityEnabled { .. } |
-            CapabilityEvent::CapabilityDisabled { .. } |
-            CapabilityEvent::CapabilityScaled { .. } |
-            CapabilityEvent::CapabilityConflictDetected { .. } |
-            CapabilityEvent::TransitionStateChanged { .. } |
-            CapabilityEvent::TransitionRolledBack { .. } |
-            CapabilityEvent::LeaseAcquired { .. } |
-            CapabilityEvent::LeaseReleased { .. } => EventTier::Governance,
-            
-            CapabilityEvent::EffectStarted { .. } |
-            CapabilityEvent::EffectCompleted { .. } |
-            CapabilityEvent::EffectFailed { .. } |
-            CapabilityEvent::EffectRetrying { .. } => EventTier::Effect,
+            CapabilityEvent::CapabilityEnabled { .. }
+            | CapabilityEvent::CapabilityDisabled { .. }
+            | CapabilityEvent::CapabilityScaled { .. }
+            | CapabilityEvent::CapabilityConflictDetected { .. }
+            | CapabilityEvent::TransitionStateChanged { .. }
+            | CapabilityEvent::TransitionRolledBack { .. }
+            | CapabilityEvent::LeaseAcquired { .. }
+            | CapabilityEvent::LeaseReleased { .. } => EventTier::Governance,
+
+            CapabilityEvent::EffectStarted { .. }
+            | CapabilityEvent::EffectCompleted { .. }
+            | CapabilityEvent::EffectFailed { .. }
+            | CapabilityEvent::EffectRetrying { .. } => EventTier::Effect,
         }
     }
 }
@@ -155,7 +155,11 @@ impl Default for HlcTimestamp {
 
 impl HlcTimestamp {
     pub fn new(physical: i64, logical: u32, actor_id: u32) -> Self {
-        Self { physical, logical, actor_id }
+        Self {
+            physical,
+            logical,
+            actor_id,
+        }
     }
 
     /// Pure function for local clock ticks
@@ -176,10 +180,15 @@ impl HlcTimestamp {
     /// Pure function for merging external clock states
     pub fn merge(&self, external: &HlcTimestamp, wall_clock: i64) -> Self {
         if external.physical - wall_clock > 500 {
-            tracing::warn!("HLC clock drift limit exceeded! External physical: {}, Local wall clock: {}", external.physical, wall_clock);
+            tracing::warn!(
+                "HLC clock drift limit exceeded! External physical: {}, Local wall clock: {}",
+                external.physical,
+                wall_clock
+            );
         }
 
-        let new_physical = std::cmp::max(wall_clock, std::cmp::max(self.physical, external.physical));
+        let new_physical =
+            std::cmp::max(wall_clock, std::cmp::max(self.physical, external.physical));
         let new_logical = if new_physical == self.physical && new_physical == external.physical {
             std::cmp::max(self.logical, external.logical) + 1
         } else if new_physical == self.physical {
@@ -224,7 +233,7 @@ pub struct EventMetadata {
     pub speculative: bool,
 
     pub retry_count: u32,
-    
+
     pub tier: EventTier,
     pub span_id: Option<Uuid>,
 
@@ -260,7 +269,12 @@ pub struct CapabilityJournal {
 }
 
 impl CapabilityJournal {
-    pub fn new(journal_path: PathBuf, snapshot_path: PathBuf, snapshot_interval: usize, lock_path: PathBuf) -> Self {
+    pub fn new(
+        journal_path: PathBuf,
+        snapshot_path: PathBuf,
+        snapshot_interval: usize,
+        lock_path: PathBuf,
+    ) -> Self {
         let mut journal = Self {
             events: vec![],
             snapshots: vec![],
@@ -316,10 +330,15 @@ impl CapabilityJournal {
                     }
                 }
             }
-            
+
             // Reconstruct monotonic sequence ID and HLC clock from loaded log history
             self.last_seq_id = self.events.iter().map(|e| e.seq_id).max().unwrap_or(0);
-            self.clock = self.events.iter().map(|e| e.metadata.emitted_at).max().unwrap_or_default();
+            self.clock = self
+                .events
+                .iter()
+                .map(|e| e.metadata.emitted_at)
+                .max()
+                .unwrap_or_default();
 
             let _ = lock_file.unlock();
         }
@@ -332,7 +351,7 @@ impl CapabilityJournal {
         // Merge clock to maintain local HLC monotonicity
         let wall_clock = chrono::Utc::now().timestamp_millis();
         self.clock = self.clock.merge(&metadata.emitted_at, wall_clock);
-        
+
         let journal_event = JournalEvent {
             seq_id: self.last_seq_id,
             metadata,
@@ -347,19 +366,19 @@ impl CapabilityJournal {
         let campaign_id = event.campaign_id();
         let parent = self.events.last();
         let event_id = Uuid::new_v4();
-        
+
         let causation_id = parent.map(|e| e.metadata.event_id);
         let root_event_id = parent.map(|e| e.metadata.root_event_id).unwrap_or(event_id);
         let tier = event.tier();
-        
+
         let retry_count = match &event {
             CapabilityEvent::EffectRetrying { retry_count, .. } => *retry_count as u32,
             _ => 0,
         };
-        
+
         let wall_clock = chrono::Utc::now().timestamp_millis();
         let emitted_at = self.clock.tick(wall_clock);
-        
+
         let metadata = EventMetadata {
             event_id,
             correlation_id: campaign_id,
@@ -375,7 +394,7 @@ impl CapabilityJournal {
             span_id: None,
             tags: BTreeMap::new(),
         };
-        
+
         self.last_seq_id += 1;
         self.clock = emitted_at;
         let journal_event = JournalEvent {
@@ -394,7 +413,11 @@ impl CapabilityJournal {
     }
 
     /// Insert snapshot checkpoint
-    pub fn save_snapshot(&mut self, plan_id: Uuid, active_states: HashMap<String, CapabilityState>) {
+    pub fn save_snapshot(
+        &mut self,
+        plan_id: Uuid,
+        active_states: HashMap<String, CapabilityState>,
+    ) {
         let snapshot = CapabilitySnapshot {
             checkpoint_id: Uuid::new_v4(),
             plan_id,
@@ -413,8 +436,13 @@ impl CapabilityJournal {
 
         self.events.retain(|e| e.seq_id <= target_seq_id);
         self.last_seq_id = target_seq_id;
-        self.clock = self.events.iter().map(|e| e.metadata.emitted_at).max().unwrap_or_default();
-        
+        self.clock = self
+            .events
+            .iter()
+            .map(|e| e.metadata.emitted_at)
+            .max()
+            .unwrap_or_default();
+
         self.flush()?;
         Ok(())
     }
@@ -484,4 +512,3 @@ impl CapabilityJournal {
         self.events.is_empty()
     }
 }
-

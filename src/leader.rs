@@ -22,7 +22,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use uuid::Uuid;
 
-use crate::dag::{ExecutionDag, DagNode, NodeStatus};
+use crate::dag::{DagNode, ExecutionDag, NodeStatus};
 
 /// CognitionMode is defined authoritatively in the registry kernel.
 /// Re-exported here for backward compatibility with callers that import from `leader`.
@@ -112,7 +112,9 @@ impl LeaderOrchestrator {
         let campaign_signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
 
         let runtime_coordinator = Arc::new(crate::runtime::RuntimeCoordinator::new(sid, 4, 10, 3));
-        let capability_resolver = Arc::new(tokio::sync::Mutex::new(crate::registry::CapabilityResolver::default_resolver()));
+        let capability_resolver = Arc::new(tokio::sync::Mutex::new(
+            crate::registry::CapabilityResolver::default_resolver(),
+        ));
 
         Self {
             session_id: sid,
@@ -156,7 +158,10 @@ impl LeaderOrchestrator {
 
     /// Transition the cognition mode via a ledger-logged resolver mutation (async).
     pub async fn set_cognition_mode(&self, mode_str: &str) {
-        self.capability_resolver.lock().await.set_cognition_mode(mode_str);
+        self.capability_resolver
+            .lock()
+            .await
+            .set_cognition_mode(mode_str);
     }
 
     /// Blocking cognition mode read for sync contexts (decompose_into_persona_packages).
@@ -232,7 +237,10 @@ impl LeaderOrchestrator {
                 "revise" => 30.0,
                 _ => 15.0,
             };
-            let risk = (1.0 - (verdict.passed_rubrics as f32 / verdict.total_rubrics as f32).min(1.0)) * 0.7 + verdict.semantic_entropy * 0.3;
+            let risk = (1.0
+                - (verdict.passed_rubrics as f32 / verdict.total_rubrics as f32).min(1.0))
+                * 0.7
+                + verdict.semantic_entropy * 0.3;
             let progress = (verdict.passed_rubrics as f32 / verdict.total_rubrics as f32) * 100.0;
             let doom_prob = if verdict.doom_loop_detected {
                 0.95
@@ -358,33 +366,61 @@ impl LeaderOrchestrator {
 
         println!("\n{slate}╔════════════════════════════════════════════════════════════════════╗{reset}");
         println!("{slate}║{reset}           {bold}{pink}HEAVY-TIER EVALUATOR VERDICT SUMMARY{reset}                     {slate}║{reset}");
-        println!("{slate}╠════════════════════════════════════════════════════════════════════╣{reset}");
-        println!("{slate}║{reset} Session: {bold}{cyan}{:<56}{reset} {slate}║{reset}", self.session_id);
+        println!(
+            "{slate}╠════════════════════════════════════════════════════════════════════╣{reset}"
+        );
+        println!(
+            "{slate}║{reset} Session: {bold}{cyan}{:<56}{reset} {slate}║{reset}",
+            self.session_id
+        );
         println!(
             "{slate}║{reset} Task:    {bold}{:<56}{reset} {slate}║{reset}",
             self.root_task.chars().take(54).collect::<String>()
         );
-        println!("{slate}╠════════════════════════════════════════════════════════════════════╣{reset}");
-        
-        let overall_color = if verdict.overall == "approved" || verdict.overall == "success" { green } else { crimson };
+        println!(
+            "{slate}╠════════════════════════════════════════════════════════════════════╣{reset}"
+        );
+
+        let overall_color = if verdict.overall == "approved" || verdict.overall == "success" {
+            green
+        } else {
+            crimson
+        };
         println!("{slate}║{reset} Overall Verdict     : {bold}{overall_color}{:<42}{reset} {slate}║{reset}", verdict.overall);
-        
-        let rubric_color = if verdict.passed_rubrics == verdict.total_rubrics { green } else { gold };
-        let rubric_info = format!("{}/{} {}", 
-            verdict.passed_rubrics, 
-            verdict.total_rubrics, 
-            if verdict.passed_rubrics == verdict.total_rubrics { "(all clear)" } else { "" }
+
+        let rubric_color = if verdict.passed_rubrics == verdict.total_rubrics {
+            green
+        } else {
+            gold
+        };
+        let rubric_info = format!(
+            "{}/{} {}",
+            verdict.passed_rubrics,
+            verdict.total_rubrics,
+            if verdict.passed_rubrics == verdict.total_rubrics {
+                "(all clear)"
+            } else {
+                ""
+            }
         );
         println!(
             "{slate}║{reset} Rubrics Passed      : {bold}{rubric_color}{:<42}{reset} {slate}║{reset}",
             rubric_info
         );
 
-        let entropy_color = if verdict.doom_loop_detected { crimson } else { green };
+        let entropy_color = if verdict.doom_loop_detected {
+            crimson
+        } else {
+            green
+        };
         let entropy_info = format!(
             "{:.3}  (threshold ~0.78) {}",
             verdict.semantic_entropy,
-            if verdict.doom_loop_detected { "← DOOM-LOOP RISK" } else { "" }
+            if verdict.doom_loop_detected {
+                "← DOOM-LOOP RISK"
+            } else {
+                ""
+            }
         );
         println!(
             "{slate}║{reset} Semantic Entropy    : {bold}{entropy_color}{:<42}{reset} {slate}║{reset}",
@@ -402,18 +438,28 @@ impl LeaderOrchestrator {
             verdict.recommended_action.to_uppercase()
         );
 
-        let doom_color = if verdict.doom_loop_detected { crimson } else { green };
+        let doom_color = if verdict.doom_loop_detected {
+            crimson
+        } else {
+            green
+        };
         println!(
             "{slate}║{reset} Doom Loop Detected  : {bold}{doom_color}{:<42}{reset} {slate}║{reset}",
             verdict.doom_loop_detected.to_string().to_uppercase()
         );
 
-        let death_color = if verdict.productive_death { green } else { slate };
+        let death_color = if verdict.productive_death {
+            green
+        } else {
+            slate
+        };
         println!(
             "{slate}║{reset} Productive Death    : {bold}{death_color}{:<42}{reset} {slate}║{reset}",
             verdict.productive_death.to_string().to_uppercase()
         );
-        println!("{slate}╠════════════════════════════════════════════════════════════════════╣{reset}");
+        println!(
+            "{slate}╠════════════════════════════════════════════════════════════════════╣{reset}"
+        );
 
         // Show a few representative TraceEvents that drove the decision
         println!("{slate}║{reset} Live TraceEvents feeding the rubrics:                              {slate}║{reset}");
@@ -440,7 +486,9 @@ impl LeaderOrchestrator {
             );
         }
 
-        println!("{slate}╠════════════════════════════════════════════════════════════════════╣{reset}");
+        println!(
+            "{slate}╠════════════════════════════════════════════════════════════════════╣{reset}"
+        );
         println!("{slate}║{reset} Worker outcomes (from real subprocesses):                          {slate}║{reset}");
         for r in results.iter().take(4) {
             let outcome_info = format!(
@@ -679,15 +727,16 @@ impl LeaderOrchestrator {
                 eprintln!("[Leader] Error in background Ktrans serialization: {:?}", e);
             }
             Err(e) => {
-                eprintln!("[Leader] Join error in background Ktrans serialization: {:?}", e);
+                eprintln!(
+                    "[Leader] Join error in background Ktrans serialization: {:?}",
+                    e
+                );
             }
         }
 
         // Clear vision attachments for the next round
         self.current_round_vision_attachments.clear();
     }
-
-
 
     /// Emits a live `AcpMessage::CampaignKtrans` over the ACP channel.
     /// In the current harness this prints a JSON line on stdout (same transport workers use).
@@ -720,7 +769,8 @@ impl LeaderOrchestrator {
                 doom_loop_detected: false,
                 productive_death: false,
             },
-        ).await;
+        )
+        .await;
     }
 
     /// Explicit contract negotiation step (Planner + Evaluator).
@@ -739,7 +789,7 @@ impl LeaderOrchestrator {
         println!("\n{bold}{gold}⚡ [Leader] Starting contract negotiation (Planner + Evaluator)...{reset}");
         if let Some(tx) = &self.tui_tx {
             let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
-                "[Contract] Starting multi-round adversarial negotiation...".to_string()
+                "[Contract] Starting multi-round adversarial negotiation...".to_string(),
             ));
         }
 
@@ -758,10 +808,10 @@ impl LeaderOrchestrator {
             println!("{bold}{cyan}⚡ [Leader] Instant Mode: Bypassing synchronous negotiation. Generating optimistic contract...{reset}");
             if let Some(tx) = &self.tui_tx {
                 let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
-                    "[Contract] Instant Mode active. Generating optimistic contract...".to_string()
+                    "[Contract] Instant Mode active. Generating optimistic contract...".to_string(),
                 ));
             }
-            
+
             let contract = Contract {
                 task_id,
                 description: description.clone(),
@@ -785,7 +835,10 @@ impl LeaderOrchestrator {
             let contract_path = format!("{}/{}.contract.json", contract_dir, task_id);
             if let Ok(pretty) = serde_json::to_string_pretty(&contract) {
                 let _ = tokio::fs::write(&contract_path, pretty).await;
-                println!("{slate}💾 [Leader] Optimistic contract written to {}{reset}", contract_path);
+                println!(
+                    "{slate}💾 [Leader] Optimistic contract written to {}{reset}",
+                    contract_path
+                );
             }
             let bb_dir = &crate::paths::blackboard_dir().display().to_string();
             let _ = tokio::fs::create_dir_all(bb_dir).await;
@@ -803,7 +856,7 @@ impl LeaderOrchestrator {
                     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
                     let text = format!("[Async Oversight] Round {}: Planner/Critic analyzing architecture, scanning risks for: {}", round, description_clone);
                     println!("{slate}{}{reset}", text);
-                    
+
                     let trace = TraceEvent {
                         agent_id: "captain-async-planner".to_string(),
                         risk_score: 0.12 * round as f32,
@@ -827,7 +880,9 @@ impl LeaderOrchestrator {
         let max_rounds = {
             let m = self.cognition_mode().await;
             match m {
-                CognitionMode::Heavy | CognitionMode::Autonomous | CognitionMode::HeavyConsciousness => 3,
+                CognitionMode::Heavy
+                | CognitionMode::Autonomous
+                | CognitionMode::HeavyConsciousness => 3,
                 _ => 1,
             }
         };
@@ -836,7 +891,8 @@ impl LeaderOrchestrator {
             println!("\n{slate}─── Negotiation Round {} ───{reset}", round);
             if let Some(tx) = &self.tui_tx {
                 let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
-                    "[Contract] Round {} of negotiation...", round
+                    "[Contract] Round {} of negotiation...",
+                    round
                 )));
             }
 
@@ -859,15 +915,30 @@ impl LeaderOrchestrator {
                 ],
             };
 
-            println!("{bold}{cyan}📋 [Captain] Proposed criteria:{reset} {:?}", proposed_criteria);
+            println!(
+                "{bold}{cyan}📋 [Captain] Proposed criteria:{reset} {:?}",
+                proposed_criteria
+            );
 
             // Evaluator performs real embedding-based critique
             let mut total_sim = 0.0f32;
             for criterion in &proposed_criteria {
-                let sim = self.evaluator.score_similarity(&description, criterion).await;
+                let sim = self
+                    .evaluator
+                    .score_similarity(&description, criterion)
+                    .await;
                 total_sim += sim;
-                let sim_color = if sim >= 0.70 { green } else if sim >= 0.42 { gold } else { crimson };
-                println!("  {slate}•{reset} Similarity of '{}' -> {}{:.3}{reset}", criterion, sim_color, sim);
+                let sim_color = if sim >= 0.70 {
+                    green
+                } else if sim >= 0.42 {
+                    gold
+                } else {
+                    crimson
+                };
+                println!(
+                    "  {slate}•{reset} Similarity of '{}' -> {}{:.3}{reset}",
+                    criterion, sim_color, sim
+                );
             }
             let avg_sim = total_sim / proposed_criteria.len() as f32;
             final_avg_similarity = avg_sim;
@@ -894,7 +965,9 @@ impl LeaderOrchestrator {
                 if let Some(response) = rx.recv().await {
                     match response {
                         crate::tui::ContractResponse::Approve => {
-                            println!("{green}✓ [Leader] Operator APPROVED the contract via TUI!{reset}");
+                            println!(
+                                "{green}✓ [Leader] Operator APPROVED the contract via TUI!{reset}"
+                            );
                             operator_approved = true;
                         }
                         crate::tui::ContractResponse::Reject => {
@@ -902,7 +975,9 @@ impl LeaderOrchestrator {
                             operator_rejected = true;
                         }
                         crate::tui::ContractResponse::Force => {
-                            println!("{gold}⚡ [Leader] Operator FORCED the contract via TUI!{reset}");
+                            println!(
+                                "{gold}⚡ [Leader] Operator FORCED the contract via TUI!{reset}"
+                            );
                             operator_forced = true;
                         }
                         crate::tui::ContractResponse::Override(custom_criteria) => {
@@ -918,7 +993,11 @@ impl LeaderOrchestrator {
                 for c in &custom {
                     total_sim += self.evaluator.score_similarity(&description, c).await;
                 }
-                final_avg_similarity = if !custom.is_empty() { total_sim / custom.len() as f32 } else { 0.0 };
+                final_avg_similarity = if !custom.is_empty() {
+                    total_sim / custom.len() as f32
+                } else {
+                    0.0
+                };
                 final_criteria = custom;
                 break;
             } else if operator_approved || operator_forced {
@@ -927,7 +1006,8 @@ impl LeaderOrchestrator {
             } else if operator_rejected {
                 if let Some(tx) = &self.tui_tx {
                     let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
-                        "[Contract] Operator REJECTED Round {} draft", round
+                        "[Contract] Operator REJECTED Round {} draft",
+                        round
                     )));
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(600)).await;
@@ -940,7 +1020,8 @@ impl LeaderOrchestrator {
                     );
                     if let Some(tx) = &self.tui_tx {
                         let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
-                            "[Contract] Evaluator REJECTED Round {} draft (avg sim: {:.3})", round, avg_sim
+                            "[Contract] Evaluator REJECTED Round {} draft (avg sim: {:.3})",
+                            round, avg_sim
                         )));
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(600)).await;
@@ -951,7 +1032,8 @@ impl LeaderOrchestrator {
                     );
                     if let Some(tx) = &self.tui_tx {
                         let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
-                            "[Contract] Evaluator APPROVED Round {} draft! (avg sim: {:.3})", round, avg_sim
+                            "[Contract] Evaluator APPROVED Round {} draft! (avg sim: {:.3})",
+                            round, avg_sim
                         )));
                     }
                     final_criteria = proposed_criteria;
@@ -961,7 +1043,9 @@ impl LeaderOrchestrator {
 
             if round == 3 && final_criteria.is_empty() {
                 // Force agreement in final round
-                println!("{gold}⚡ [Leader] Forcing agreement in round 3 to avoid infinite loop.{reset}");
+                println!(
+                    "{gold}⚡ [Leader] Forcing agreement in round 3 to avoid infinite loop.{reset}"
+                );
                 final_criteria = proposed_criteria;
             }
         }
@@ -990,7 +1074,10 @@ impl LeaderOrchestrator {
         let contract_path = format!("{}/{}.contract.json", contract_dir, task_id);
         if let Ok(pretty) = serde_json::to_string_pretty(&contract) {
             let _ = tokio::fs::write(&contract_path, pretty).await;
-            println!("{slate}💾 [Leader] Contract written to {}{reset}", contract_path);
+            println!(
+                "{slate}💾 [Leader] Contract written to {}{reset}",
+                contract_path
+            );
         }
 
         // Also write as a special entry in blackboard
@@ -1012,7 +1099,7 @@ impl LeaderOrchestrator {
                 criteria: paired_criteria,
             });
             let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
-                "[Contract] Signed and active!".to_string()
+                "[Contract] Signed and active!".to_string(),
             ));
         }
 
@@ -1042,12 +1129,16 @@ impl LeaderOrchestrator {
             let config = crate::llm::KorgConfig::load();
             if config.security_vision.operator_override_allowed {
                 if let (Some(tx), Some(rx)) = (&self.tui_tx, &mut self.tui_rx) {
-                    let _ = tx.try_send(crate::tui::TuiUpdate::ApprovalRequest(infraction_reason.clone()));
+                    let _ = tx.try_send(crate::tui::TuiUpdate::ApprovalRequest(
+                        infraction_reason.clone(),
+                    ));
                     println!("⏳ [Leader] Waiting for operator decision in TUI/Web...");
                     if let Some(response) = rx.recv().await {
                         match response {
                             crate::tui::ContractResponse::Approve => {
-                                println!("✓ [Leader] Operator OVERRODE and approved raw screenshots.");
+                                println!(
+                                    "✓ [Leader] Operator OVERRODE and approved raw screenshots."
+                                );
                                 for att in &mut self.current_round_vision_attachments {
                                     if att.verdict == "REDACTED" || att.verdict == "BLOCKED" {
                                         att.verdict = "APPROVED".to_string();
@@ -1066,8 +1157,12 @@ impl LeaderOrchestrator {
                                 }
                             }
                             _ => {
-                                println!("✗ [Leader] Operator REJECTED screenshots. Swarm terminated.");
-                                return Err(anyhow::anyhow!("Campaign terminated due to visual policy violation rejection"));
+                                println!(
+                                    "✗ [Leader] Operator REJECTED screenshots. Swarm terminated."
+                                );
+                                return Err(anyhow::anyhow!(
+                                    "Campaign terminated due to visual policy violation rejection"
+                                ));
                             }
                         }
                     }
@@ -1103,7 +1198,9 @@ impl LeaderOrchestrator {
                             }
                             break;
                         } else if choice == "n" {
-                            return Err(anyhow::anyhow!("Campaign terminated due to visual policy violation rejection"));
+                            return Err(anyhow::anyhow!(
+                                "Campaign terminated due to visual policy violation rejection"
+                            ));
                         }
                     }
                 }
@@ -1141,7 +1238,8 @@ impl LeaderOrchestrator {
     }
 
     pub async fn run_observable_campaign(&mut self) -> Result<()> {
-        let mut campaign_runtime = crate::runtime::CampaignRuntime::new(self.runtime_coordinator.clone());
+        let mut campaign_runtime =
+            crate::runtime::CampaignRuntime::new(self.runtime_coordinator.clone());
 
         // 1. Acquire time-bound capability leases for all capability nodes on campaign start
         let node_ids: Vec<String> = {
@@ -1154,17 +1252,26 @@ impl LeaderOrchestrator {
             for id in &node_ids {
                 if let Err(err) = resolver.acquire_lease(id, self.session_id, 3600) {
                     tracing::error!(capability_id = %id, error = %err, "failed_to_acquire_capability_lease");
-                    return Err(anyhow::anyhow!("Failed to lease capability {}: {}", id, err));
+                    return Err(anyhow::anyhow!(
+                        "Failed to lease capability {}: {}",
+                        id,
+                        err
+                    ));
                 }
             }
         }
 
-        campaign_runtime.snapshot_capabilities(&*self.capability_resolver.lock().await).await;
+        campaign_runtime
+            .snapshot_capabilities(&*self.capability_resolver.lock().await)
+            .await;
 
         let run_result = self.run_observable_campaign_internal().await;
 
-        let is_error = run_result.is_err() || self.runtime_coordinator.cancellation_token.is_cancelled();
-        campaign_runtime.execute_cleanup_sequence(&self.capability_resolver, is_error).await;
+        let is_error =
+            run_result.is_err() || self.runtime_coordinator.cancellation_token.is_cancelled();
+        campaign_runtime
+            .execute_cleanup_sequence(&self.capability_resolver, is_error)
+            .await;
 
         // 2. Cleanly release all capability leases upon campaign success or abort termination
         {
@@ -1219,8 +1326,14 @@ impl LeaderOrchestrator {
             }
 
             println!("\n{bold}{cyan}=== ⚡ OBSERVABLE HEAVY-TIER SWARM CAMPAIGN (Attempt #{}) ⚡ ==={reset}", loop_count);
-            println!("{slate}├──{reset} Root Task: {bold}{pink}{}{reset}", self.root_task);
-            println!("{slate}├──{reset} Session ID: {bold}{cyan}{}{reset}", self.session_id);
+            println!(
+                "{slate}├──{reset} Root Task: {bold}{pink}{}{reset}",
+                self.root_task
+            );
+            println!(
+                "{slate}├──{reset} Session ID: {bold}{cyan}{}{reset}",
+                self.session_id
+            );
             println!(
                 "{slate}└──{reset} Mode:       {gold}Non-interactive benchmark with SwarmTelemetryPulse & 5-Rubric Evaluator{reset}\n"
             );
@@ -1228,7 +1341,9 @@ impl LeaderOrchestrator {
             // Phase 1: Plan (auto-accepted in demo mode)
             let plan = self.decompose_into_persona_packages();
             println!("{green}✓ [Leader] Swarm Plan Formulated (auto-accepted in demo mode){reset}");
-            println!("  {slate}• Work Packages Assigned:{reset} Captain, Harper, Benjamin, Lucas\n");
+            println!(
+                "  {slate}• Work Packages Assigned:{reset} Captain, Harper, Benjamin, Lucas\n"
+            );
 
             // Dynamic Cognition Mode Custom Behaviors (Research/Recovery/HeavyConsciousness)
             {
@@ -1240,7 +1355,8 @@ impl LeaderOrchestrator {
                     println!("  {slate}└── [Research] Divergent exploration completed. Narrowing down to best swarm strategy.{reset}\n");
                     if let Some(tx) = &self.tui_tx {
                         let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
-                            "[Research Mode] Wide divergent exploration completed successfully.".to_string()
+                            "[Research Mode] Wide divergent exploration completed successfully."
+                                .to_string(),
                         ));
                     }
                 } else if m == CognitionMode::Recovery {
@@ -1285,7 +1401,8 @@ impl LeaderOrchestrator {
 
             // Aggregate any vision attachments captured during this round
             for r in &results {
-                self.current_round_vision_attachments.extend(r.vision_attachments.clone());
+                self.current_round_vision_attachments
+                    .extend(r.vision_attachments.clone());
             }
 
             self.verify_vision_policy().await?;
@@ -1299,7 +1416,8 @@ impl LeaderOrchestrator {
                 println!("\n\x1b[38;2;255;50;80m[cognition-escalation] Winner's score {:.3} is below threshold (0.65)! Escalating to Heavy Mode for deep multi-agent evaluation...\x1b[0m", confidence);
                 if let Some(tx) = &self.tui_tx {
                     let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
-                        "[cognition-escalation] Escalating to Heavy Mode due to low confidence".to_string()
+                        "[cognition-escalation] Escalating to Heavy Mode due to low confidence"
+                            .to_string(),
                     ));
                 }
                 self.set_cognition_mode("heavy").await;
@@ -1311,7 +1429,10 @@ impl LeaderOrchestrator {
                 }
             }
 
-            let winner_name = arena_outcome["winner"].as_str().unwrap_or("Lucas").to_string();
+            let winner_name = arena_outcome["winner"]
+                .as_str()
+                .unwrap_or("Lucas")
+                .to_string();
             let scores_val = arena_outcome["scores"].as_array();
             let mut real_scores = [0.85f32; 4];
             if let Some(arr) = scores_val {
@@ -1376,7 +1497,9 @@ impl LeaderOrchestrator {
             //   - runs the full 5-rubric harsh evaluation
             //   - calls handle_verdict (which can scale, revise, or terminate in real time)
             //   - prints a compact one-line ticker so the user can watch the critic influence the swarm
-            println!("\n=== LIVE VERDICT TICKER (Evaluator reacting to the real-time stream) ===\n");
+            println!(
+                "\n=== LIVE VERDICT TICKER (Evaluator reacting to the real-time stream) ===\n"
+            );
             println!("Watching the swarm for {} rounds...\n", 10);
 
             let mut restart_with_fork: Option<(usize, String)> = None;
@@ -1395,8 +1518,11 @@ impl LeaderOrchestrator {
                                             if let Ok(tx_id) = parts[1].parse::<usize>() {
                                                 let directive = parts[2];
                                                 println!("[Leader] OPERATOR TRIGGERED PLAYHEAD FORK at tx_{:02} with directive: {}", tx_id, directive);
-                                                let _ = self.handle_operator_fork(tx_id, directive).await;
-                                                restart_with_fork = Some((tx_id, directive.to_string()));
+                                                let _ = self
+                                                    .handle_operator_fork(tx_id, directive)
+                                                    .await;
+                                                restart_with_fork =
+                                                    Some((tx_id, directive.to_string()));
                                             }
                                         }
                                     }
@@ -1419,7 +1545,8 @@ impl LeaderOrchestrator {
                     let _ = tx.try_send(crate::tui::TuiUpdate::Arena {
                         round,
                         winner: winner_name.clone(),
-                        mutations: arena_outcome["mutations"].as_u64().unwrap_or(3) as usize + (round % 2),
+                        mutations: arena_outcome["mutations"].as_u64().unwrap_or(3) as usize
+                            + (round % 2),
                     });
 
                     let _ = tx.try_send(crate::tui::TuiUpdate::PersonaTelemetry {
@@ -1434,19 +1561,87 @@ impl LeaderOrchestrator {
                         conflicts_count: (round / 3) as u32,
                         provenance_chain_length: (round + 1) as u32,
                         lock_states: vec![
-                            ("Captain".to_string(), if round % 3 == 0 { "WRITE".to_string() } else { "READ".to_string() }, format!("{:.2}ms", 0.12 + (round as f32 * 0.01)), if round % 3 == 0 { "Negotiating contract".to_string() } else { "Monitoring".to_string() }),
-                            ("Harper".to_string(), if round % 4 == 1 { "WRITE".to_string() } else if round % 4 == 0 { "READ".to_string() } else { "IDLE".to_string() }, format!("{:.2}ms", 0.18 + (round as f32 * 0.015)), if round % 4 == 1 { "Generating edits".to_string() } else { "Idle".to_string() }),
-                            ("Benjamin".to_string(), if round % 4 == 2 { "WRITE".to_string() } else if round % 4 == 0 { "READ".to_string() } else { "IDLE".to_string() }, format!("{:.2}ms", 0.15 + (round as f32 * 0.02)), if round % 4 == 2 { "Synthesizing patch".to_string() } else { "Idle".to_string() }),
-                            ("Lucas".to_string(), if round % 4 == 3 { "WRITE".to_string() } else if round % 4 == 0 { "READ".to_string() } else { "IDLE".to_string() }, format!("{:.2}ms", 0.22 + (round as f32 * 0.008)), if round % 4 == 3 { "Verifying test cases".to_string() } else { "Idle".to_string() }),
+                            (
+                                "Captain".to_string(),
+                                if round % 3 == 0 {
+                                    "WRITE".to_string()
+                                } else {
+                                    "READ".to_string()
+                                },
+                                format!("{:.2}ms", 0.12 + (round as f32 * 0.01)),
+                                if round % 3 == 0 {
+                                    "Negotiating contract".to_string()
+                                } else {
+                                    "Monitoring".to_string()
+                                },
+                            ),
+                            (
+                                "Harper".to_string(),
+                                if round % 4 == 1 {
+                                    "WRITE".to_string()
+                                } else if round % 4 == 0 {
+                                    "READ".to_string()
+                                } else {
+                                    "IDLE".to_string()
+                                },
+                                format!("{:.2}ms", 0.18 + (round as f32 * 0.015)),
+                                if round % 4 == 1 {
+                                    "Generating edits".to_string()
+                                } else {
+                                    "Idle".to_string()
+                                },
+                            ),
+                            (
+                                "Benjamin".to_string(),
+                                if round % 4 == 2 {
+                                    "WRITE".to_string()
+                                } else if round % 4 == 0 {
+                                    "READ".to_string()
+                                } else {
+                                    "IDLE".to_string()
+                                },
+                                format!("{:.2}ms", 0.15 + (round as f32 * 0.02)),
+                                if round % 4 == 2 {
+                                    "Synthesizing patch".to_string()
+                                } else {
+                                    "Idle".to_string()
+                                },
+                            ),
+                            (
+                                "Lucas".to_string(),
+                                if round % 4 == 3 {
+                                    "WRITE".to_string()
+                                } else if round % 4 == 0 {
+                                    "READ".to_string()
+                                } else {
+                                    "IDLE".to_string()
+                                },
+                                format!("{:.2}ms", 0.22 + (round as f32 * 0.008)),
+                                if round % 4 == 3 {
+                                    "Verifying test cases".to_string()
+                                } else {
+                                    "Idle".to_string()
+                                },
+                            ),
                         ],
                     });
 
-                    let total_tokens = crate::llm::CAMPAIGN_TOKENS.load(std::sync::atomic::Ordering::Relaxed);
-                    let comps = crate::llm::COMPLETIONS_COUNT.load(std::sync::atomic::Ordering::Relaxed);
-                    let tot_lat = crate::llm::TOTAL_LATENCY_MS.load(std::sync::atomic::Ordering::Relaxed);
-                    let avg_latency_ms = if comps > 0 { (tot_lat / comps) as u32 } else { 0 };
-                    let rotator_hits = crate::llm::ROTATOR_HITS.load(std::sync::atomic::Ordering::Relaxed) as u32;
-                    let heals_resolved = crate::llm::HEALS_RESOLVED.load(std::sync::atomic::Ordering::Relaxed) as u32;
+                    let total_tokens =
+                        crate::llm::CAMPAIGN_TOKENS.load(std::sync::atomic::Ordering::Relaxed);
+                    let comps =
+                        crate::llm::COMPLETIONS_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+                    let tot_lat =
+                        crate::llm::TOTAL_LATENCY_MS.load(std::sync::atomic::Ordering::Relaxed);
+                    let avg_latency_ms = if comps > 0 {
+                        (tot_lat / comps) as u32
+                    } else {
+                        0
+                    };
+                    let rotator_hits =
+                        crate::llm::ROTATOR_HITS.load(std::sync::atomic::Ordering::Relaxed) as u32;
+                    let heals_resolved = crate::llm::HEALS_RESOLVED
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                        as u32;
 
                     let _ = tx.try_send(crate::tui::TuiUpdate::ScaleTelemetry {
                         total_tokens,
@@ -1494,7 +1689,8 @@ impl LeaderOrchestrator {
                     arena_outcome["confidence"].as_f64().unwrap_or(0.87) as f32,
                     arena_outcome["mutations"].as_u64().unwrap_or(3) as usize + (round % 2),
                     &live_verdict,
-                ).await;
+                )
+                .await;
 
                 if let Some(tx) = &self.tui_tx {
                     let _ = tx.try_send(crate::tui::TuiUpdate::Ktrans(format!(
@@ -1534,17 +1730,27 @@ impl LeaderOrchestrator {
             self.persist_final_summary_ktrans().await;
 
             // Generate cryptographic campaign attestation certificate
-            let campaign_path = crate::paths::campaign_dir(&self.session_id).display().to_string();
+            let campaign_path = crate::paths::campaign_dir(&self.session_id)
+                .display()
+                .to_string();
             let _ = tokio::fs::create_dir_all(&campaign_path).await;
             if let Ok(att) = crate::provenance::generate_attestation(
                 self.session_id,
                 &self.root_task,
                 &self.campaign_signing_key,
                 std::path::Path::new(&campaign_path),
-            ).await {
+            )
+            .await
+            {
                 println!("\n[Security] Cryptographic Campaign Attestation generated successfully!");
-                println!("[Security] Provenance Certificate: {}/provenance-attestation.json", campaign_path);
-                println!("[Security] Trace Hash Root:        {}", att.trace_hash_chain_root);
+                println!(
+                    "[Security] Provenance Certificate: {}/provenance-attestation.json",
+                    campaign_path
+                );
+                println!(
+                    "[Security] Trace Hash Root:        {}",
+                    att.trace_hash_chain_root
+                );
             }
 
             // Print the campaign's public key so operators can verify signatures offline
@@ -1570,14 +1776,21 @@ impl LeaderOrchestrator {
     /// Asynchronously triggers a playhead steering fork, reverting the blackboard state,
     /// writing a snapshot, and clone-branching the workspace.
     pub async fn handle_operator_fork(&mut self, tx_id: usize, directive: &str) -> Result<()> {
-        let dir = crate::paths::campaign_dir(&self.session_id).display().to_string();
+        let dir = crate::paths::campaign_dir(&self.session_id)
+            .display()
+            .to_string();
         let mut ktrans_records = vec![];
         if let Ok(mut read_dir) = tokio::fs::read_dir(&dir).await {
             while let Ok(Some(entry)) = read_dir.next_entry().await {
                 if let Ok(content) = tokio::fs::read_to_string(entry.path()).await {
-                    if let Ok(envelope) = serde_json::from_str::<crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>>(&content) {
+                    if let Ok(envelope) = serde_json::from_str::<
+                        crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>,
+                    >(&content)
+                    {
                         ktrans_records.push(envelope.payload);
-                    } else if let Ok(ktrans) = serde_json::from_str::<crate::acp::CampaignKtrans>(&content) {
+                    } else if let Ok(ktrans) =
+                        serde_json::from_str::<crate::acp::CampaignKtrans>(&content)
+                    {
                         ktrans_records.push(ktrans);
                     }
                 }
@@ -1596,21 +1809,29 @@ impl LeaderOrchestrator {
             println!("[Leader] Restored swarm_size to {}", self.swarm_size);
 
             // 1. Rehydrate logical state (blackboard)
-            let state_blob_path = crate::paths::state_blobs_dir(&self.session_id).join(format!("{}.json", target.state_merkle_root)).display().to_string();
+            let state_blob_path = crate::paths::state_blobs_dir(&self.session_id)
+                .join(format!("{}.json", target.state_merkle_root))
+                .display()
+                .to_string();
             let bb_dir = &crate::paths::blackboard_dir().display().to_string();
             let bb_path = format!("{}/blackboard.json", bb_dir);
             let _ = tokio::fs::create_dir_all(bb_dir).await;
 
             if tokio::fs::metadata(&state_blob_path).await.is_ok() {
                 let _ = tokio::fs::copy(&state_blob_path, &bb_path).await;
-                println!("[Leader] Blackboard state successfully rehydrated from blob: {}", state_blob_path);
-                
+                println!(
+                    "[Leader] Blackboard state successfully rehydrated from blob: {}",
+                    state_blob_path
+                );
+
                 // Rehydrate the memory structure
                 if let Ok(content) = tokio::fs::read_to_string(&bb_path).await {
                     if let Ok(new_bb) = serde_json::from_str::<Blackboard>(&content) {
                         if let Ok(mut bb_guard) = self.telemetry_blackboard.lock() {
                             *bb_guard = new_bb;
-                            println!("[Leader] In-memory Blackboard structure updated successfully.");
+                            println!(
+                                "[Leader] In-memory Blackboard structure updated successfully."
+                            );
                         }
                     }
                 }
@@ -1627,29 +1848,37 @@ impl LeaderOrchestrator {
             }
 
             // 2. Revert physical codebase (git tree checkout)
-            let is_fallback_or_mock = target.codebase_merkle_root.starts_with("sha256:codebase-fallback")
-                || target.codebase_merkle_root.starts_with("sha256:codebase-mock")
+            let is_fallback_or_mock = target
+                .codebase_merkle_root
+                .starts_with("sha256:codebase-fallback")
+                || target
+                    .codebase_merkle_root
+                    .starts_with("sha256:codebase-mock")
                 || target.codebase_merkle_root.starts_with("mock-");
             if !target.codebase_merkle_root.is_empty() && !is_fallback_or_mock {
                 // Paranoid validation before cleaning/checkouts
                 let proj_root = crate::paths::project_root();
                 let has_git = proj_root.join(".git").exists();
-                let is_root_or_home = proj_root.to_string_lossy() == "/" 
-                    || proj_root.to_string_lossy() == "/root" 
+                let is_root_or_home = proj_root.to_string_lossy() == "/"
+                    || proj_root.to_string_lossy() == "/root"
                     || proj_root.to_string_lossy() == "/Users/clubpenguin"
                     || proj_root.to_string_lossy().ends_with("/clubpenguin")
                     || proj_root.to_string_lossy().ends_with("/home");
-                
+
                 if !has_git {
                     println!("[Leader] ERROR: Timeline rewind aborted. Repository root does not contain a valid .git folder: {:?}", proj_root);
                 } else if is_root_or_home {
                     println!("[Leader] ERROR: Timeline rewind aborted. Working directory matches or is subfolder of system root/home: {:?}", proj_root);
                 } else {
                     println!("[Leader] Safe validation passed for path: {:?}", proj_root);
-                    
+
                     // Create lightweight recovery snapshot/stash before rewind
                     let stash_output = tokio::process::Command::new("git")
-                        .args(&["stash", "create", "Korg auto-recovery before time-travel rewind"])
+                        .args(&[
+                            "stash",
+                            "create",
+                            "Korg auto-recovery before time-travel rewind",
+                        ])
                         .output()
                         .await;
                     if let Ok(out) = stash_output {
@@ -1661,14 +1890,20 @@ impl LeaderOrchestrator {
                         }
                     }
 
-                    println!("[Leader] Reverting working directory to codebase tree: {}", target.codebase_merkle_root);
+                    println!(
+                        "[Leader] Reverting working directory to codebase tree: {}",
+                        target.codebase_merkle_root
+                    );
                     let output = tokio::process::Command::new("git")
                         .args(&["read-tree", "--reset", "-u", &target.codebase_merkle_root])
                         .output()
                         .await;
                     match output {
                         Ok(out) if out.status.success() => {
-                            println!("[Leader] Codebase successfully reverted to tree hash: {}", target.codebase_merkle_root);
+                            println!(
+                                "[Leader] Codebase successfully reverted to tree hash: {}",
+                                target.codebase_merkle_root
+                            );
                             self.base_snapshot = target.codebase_merkle_root.clone();
 
                             // Clean up untracked/build file pollution safely with exclusions
@@ -1790,7 +2025,10 @@ impl LeaderOrchestrator {
         });
 
         if entries.is_empty() {
-            println!("  {gray}[Replay] No .ktrans artifacts found in {}{reset}", dir);
+            println!(
+                "  {gray}[Replay] No .ktrans artifacts found in {}{reset}",
+                dir
+            );
             return Ok(());
         }
 
@@ -1827,7 +2065,10 @@ impl LeaderOrchestrator {
 
                 let computed_hash = crate::provenance::compute_sha256(&payload)?;
                 if computed_hash != ktrans.tx_hash {
-                    println!("  ❌ {bold}JCS Hash Mismatch for transaction {}:{reset}", ktrans.tx_id);
+                    println!(
+                        "  ❌ {bold}JCS Hash Mismatch for transaction {}:{reset}",
+                        ktrans.tx_id
+                    );
                     println!("     Expected: {white}{}{reset}", ktrans.tx_hash);
                     println!("     Got:      {white}{}{reset}", computed_hash);
                     anyhow::bail!("Transaction content hash tampered!");
@@ -1852,7 +2093,10 @@ impl LeaderOrchestrator {
                     codebase = if ktrans.codebase_merkle_root.len() > 8 { &ktrans.codebase_merkle_root[..8] } else { &ktrans.codebase_merkle_root },
                 );
             } else {
-                println!("  ✓ {white}round {round:02} {gray}│ {reset}legacy/unsigned ktrans", round = ktrans.round);
+                println!(
+                    "  ✓ {white}round {round:02} {gray}│ {reset}legacy/unsigned ktrans",
+                    round = ktrans.round
+                );
             }
         }
 
@@ -1861,7 +2105,10 @@ impl LeaderOrchestrator {
             if ktrans.round == 999 {
                 println!("\n=== FINAL SUMMARY (from .ktrans) ===");
                 println!("  Final swarm size: {}", ktrans.new_swarm_size);
-                println!("  Total mutations (recorded): {}", ktrans.total_mutations_so_far);
+                println!(
+                    "  Total mutations (recorded): {}",
+                    ktrans.total_mutations_so_far
+                );
                 continue;
             }
 
@@ -1972,13 +2219,16 @@ impl LeaderOrchestrator {
             let bold = "\x1b[1m";
             let reset = "\x1b[0m";
             if m == CognitionMode::Research {
-                println!("{bold}{cyan}🔬 [Research Mode] Wide Divergent Exploration Activated{reset}");
+                println!(
+                    "{bold}{cyan}🔬 [Research Mode] Wide Divergent Exploration Activated{reset}"
+                );
                 println!("  {slate}├── [Research] Performing semantic index scanning across all crates...{reset}");
                 println!("  {slate}├── [Research] Generating multiple diverse hypothesis branches...{reset}");
                 println!("  {slate}└── [Research] Divergent exploration completed. Narrowing down to best swarm strategy.{reset}\n");
                 if let Some(tx) = &self.tui_tx {
                     let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
-                        "[Research Mode] Wide divergent exploration completed successfully.".to_string()
+                        "[Research Mode] Wide divergent exploration completed successfully."
+                            .to_string(),
                     ));
                 }
             } else if m == CognitionMode::Recovery {
@@ -2030,7 +2280,8 @@ impl LeaderOrchestrator {
 
         // Aggregate any vision attachments captured during this round
         for r in &results {
-            self.current_round_vision_attachments.extend(r.vision_attachments.clone());
+            self.current_round_vision_attachments
+                .extend(r.vision_attachments.clone());
         }
 
         self.verify_vision_policy().await?;
@@ -2077,7 +2328,8 @@ impl LeaderOrchestrator {
             println!("\n\x1b[38;2;255;50;80m[cognition-escalation] Winner's score {:.3} is below threshold (0.65)! Escalating to Heavy Mode for deep multi-agent evaluation...\x1b[0m", confidence);
             if let Some(tx) = &self.tui_tx {
                 let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
-                    "[cognition-escalation] Escalating to Heavy Mode due to low confidence".to_string()
+                    "[cognition-escalation] Escalating to Heavy Mode due to low confidence"
+                        .to_string(),
                 ));
             }
             self.set_cognition_mode("heavy").await;
@@ -2116,11 +2368,11 @@ impl LeaderOrchestrator {
     fn build_heavy_consciousness_context(&self) -> String {
         let mut ws_map = String::new();
         ws_map.push_str("Top-Level Workspace Structure:\n");
-        
+
         if let Ok(entries) = std::fs::read_dir(".") {
             let mut paths: Vec<_> = entries.filter_map(Result::ok).collect();
             paths.sort_by_key(|e| e.path());
-            
+
             for entry in paths {
                 let path = entry.path();
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -2132,7 +2384,8 @@ impl LeaderOrchestrator {
                     // list children if it's src/ or .korg/
                     if name == "src" {
                         if let Ok(sub_entries) = std::fs::read_dir(&path) {
-                            let mut sub_paths: Vec<_> = sub_entries.filter_map(Result::ok).collect();
+                            let mut sub_paths: Vec<_> =
+                                sub_entries.filter_map(Result::ok).collect();
                             sub_paths.sort_by_key(|e| e.path());
                             for sub_entry in sub_paths {
                                 let sub_name = sub_entry.file_name().to_string_lossy().into_owned();
@@ -2150,7 +2403,9 @@ impl LeaderOrchestrator {
         dag_ctx.push_str("DAG Nodes:\n");
         dag_ctx.push_str("  - pkg-captain (Persona: Captain, Command: RouteWork captain)\n");
         dag_ctx.push_str("  - pkg-harper (Persona: Harper, Command: RouteWork harper)\n");
-        dag_ctx.push_str("  - pkg-benjamin (Persona: Benjamin, Dependencies: pkg-captain, pkg-harper)\n");
+        dag_ctx.push_str(
+            "  - pkg-benjamin (Persona: Benjamin, Dependencies: pkg-captain, pkg-harper)\n",
+        );
         dag_ctx.push_str("  - pkg-lucas (Persona: Lucas, Dependencies: pkg-benjamin)\n");
 
         let mut conflicts = String::new();
@@ -2203,16 +2458,16 @@ impl LeaderOrchestrator {
     /// - Bug B: crashed workers are retried *after* all live workers drain, not inline
     /// - Bug C: each worker has a 300s timeout; silent hangs no longer deadlock fan-in
     #[tracing::instrument(skip(self, plan), fields(session_id = %self.session_id))]
-    async fn dispatch_concurrent(&mut self, plan: &serde_json::Value) -> Result<Vec<PersonaResult>> {
+    async fn dispatch_concurrent(
+        &mut self,
+        plan: &serde_json::Value,
+    ) -> Result<Vec<PersonaResult>> {
         let bb_handle = self.telemetry_blackboard.clone();
         let start_time = std::time::Instant::now();
 
         // Build the DAG + packages_map via workers module
-        let (mut dag, levels, packages_map) = crate::workers::build_campaign_dag(
-            &self.root_task,
-            plan,
-            self.tui_tx.as_ref(),
-        ).await?;
+        let (mut dag, levels, packages_map) =
+            crate::workers::build_campaign_dag(&self.root_task, plan, self.tui_tx.as_ref()).await?;
 
         tracing::info!(levels = levels.len(), "campaign_dag_compiled");
 
@@ -2222,7 +2477,9 @@ impl LeaderOrchestrator {
             tracing::info!(level = idx + 1, nodes = level.len(), "dispatching_level");
             if let Some(ref tx) = self.tui_tx {
                 let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
-                    "  [→] Scheduling Level {}: {:?}", idx + 1, level
+                    "  [→] Scheduling Level {}: {:?}",
+                    idx + 1,
+                    level
                 )));
             }
 
@@ -2241,7 +2498,8 @@ impl LeaderOrchestrator {
                 self.campaign_signing_key.clone(),
                 self.tui_tx.clone(),
                 self.runtime_coordinator.clone(),
-            ).await;
+            )
+            .await;
 
             // Update healed flag from level result
             if level_result.healed_count > 0 {
@@ -2251,7 +2509,11 @@ impl LeaderOrchestrator {
             // Update DAG node statuses from level result
             for res in &level_result.completed {
                 if let Some(node) = dag.nodes.get_mut(&res.routing_id) {
-                    node.status = if res.crashed { NodeStatus::Failed } else { NodeStatus::Success };
+                    node.status = if res.crashed {
+                        NodeStatus::Failed
+                    } else {
+                        NodeStatus::Success
+                    };
                 }
             }
             for failed_id in &level_result.failed_node_ids {
@@ -2280,7 +2542,8 @@ impl LeaderOrchestrator {
         println!("  └─ Attestation: JCS-signed non-repudiation");
         if let Some(ref tx) = self.tui_tx {
             let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
-                "🔒 [CRYPTOGRAPHIC PROOF OF EXECUTION] Root: sha256_{}", root
+                "🔒 [CRYPTOGRAPHIC PROOF OF EXECUTION] Root: sha256_{}",
+                root
             )));
         }
 
@@ -2361,7 +2624,10 @@ impl LeaderOrchestrator {
                     _ => 999,
                 };
                 if idx < arr.len() {
-                    format!(" | Evaluator Score: {:.3}", arr[idx].as_f64().unwrap_or(0.0))
+                    format!(
+                        " | Evaluator Score: {:.3}",
+                        arr[idx].as_f64().unwrap_or(0.0)
+                    )
                 } else {
                     "".to_string()
                 }
@@ -2435,13 +2701,17 @@ impl LeaderOrchestrator {
                     serde_json::to_string_pretty(&r.mutations).unwrap_or_default()
                 );
 
-                println!("[Leader] Spawning Evaluator to score persona {}...", r.persona.name());
+                println!(
+                    "[Leader] Spawning Evaluator to score persona {}...",
+                    r.persona.name()
+                );
 
                 let eval_result = crate::personas::run_persona(
                     crate::personas::Persona::Evaluator,
                     &payload,
                     &format!("arena-eval-{}", r.routing_id),
-                ).await;
+                )
+                .await;
 
                 (r, eval_result)
             });
@@ -2535,7 +2805,8 @@ impl LeaderOrchestrator {
 
         prompt.push_str("Please reconcile these mutations. Resolve any semantic overlaps, combine complementary features, and discard duplicates or broken implementations.\n");
         prompt.push_str("Your output MUST contain a standard markdown ```json block containing the finalized, merged JSON array of mutations. Each mutation should follow this structure:\n");
-        prompt.push_str(r#"
+        prompt.push_str(
+            r#"
 ```json
 [
   {
@@ -2545,7 +2816,8 @@ impl LeaderOrchestrator {
   }
 ]
 ```
-"#);
+"#,
+        );
 
         let cfg = crate::llm::KorgConfig::load();
         let provider = crate::llm::build_provider(&cfg);
@@ -2611,7 +2883,9 @@ impl LeaderOrchestrator {
             merged_mutations.as_array().map(|a| a.len()).unwrap_or(0)
         );
 
-        let campaign_dir = crate::paths::campaign_dir(&self.session_id).display().to_string();
+        let campaign_dir = crate::paths::campaign_dir(&self.session_id)
+            .display()
+            .to_string();
         std::fs::create_dir_all(&campaign_dir).ok();
         let merge_path = format!("{}/semantic-merge.json", campaign_dir);
         if let Ok(mutations_str) = serde_json::to_string_pretty(&merged_mutations) {
@@ -2648,7 +2922,8 @@ impl LeaderOrchestrator {
             crate::personas::Persona::Evaluator,
             &payload,
             &format!("eval-{}", generator_result.routing_id),
-        ).await;
+        )
+        .await;
 
         // Convert the rich persona output into a real EvaluationVerdict and feed the closed loop
         if let Some(overall) = eval_result.output.get("overall").and_then(|v| v.as_str()) {
@@ -2724,12 +2999,13 @@ impl LeaderOrchestrator {
         let bb_dir = &crate::paths::blackboard_dir().display().to_string();
         let _ = tokio::fs::create_dir_all(bb_dir).await;
 
-        let mut blackboard: serde_json::Value =
-            if let Ok(content) = tokio::fs::read_to_string(format!("{}/blackboard.json", bb_dir)).await {
-                serde_json::from_str(&content).unwrap_or(json!({}))
-            } else {
-                json!({})
-            };
+        let mut blackboard: serde_json::Value = if let Ok(content) =
+            tokio::fs::read_to_string(format!("{}/blackboard.json", bb_dir)).await
+        {
+            serde_json::from_str(&content).unwrap_or(json!({}))
+        } else {
+            json!({})
+        };
 
         for rid in routing_ids {
             let pattern = format!("{}-", rid);
@@ -2805,20 +3081,31 @@ impl LeaderOrchestrator {
             &generator_result.persona.name().to_lowercase(),
             &generator_result.routing_id,
             &generator_result.routing_id,
-        ).display().to_string();
+        )
+        .display()
+        .to_string();
         let worktree_path = std::path::Path::new(&worktree_dir);
 
         if !worktree_path.exists() {
-            println!("[Self-Healing] Worktree path {} does not exist. Skipping compilation check.", worktree_dir);
+            println!(
+                "[Self-Healing] Worktree path {} does not exist. Skipping compilation check.",
+                worktree_dir
+            );
             return Ok(current_result);
         }
 
-        println!("\n=== Starting Self-Healing & Repair loop for {} ===", generator_result.persona.name());
+        println!(
+            "\n=== Starting Self-Healing & Repair loop for {} ===",
+            generator_result.persona.name()
+        );
         println!("Checking compilation in worktree: {}", worktree_dir);
 
         for iteration in 1..=3 {
-            println!("[Self-Healing] Iteration {}/3: Running compiler check (cargo check)...", iteration);
-            
+            println!(
+                "[Self-Healing] Iteration {}/3: Running compiler check (cargo check)...",
+                iteration
+            );
+
             // Run cargo check in the worktree
             let check_output = tokio::process::Command::new("cargo")
                 .arg("check")
@@ -2833,8 +3120,13 @@ impl LeaderOrchestrator {
                         break;
                     } else {
                         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                        println!("\x1b[38;2;255;50;80m❌ [Self-Healing] Compilation failed!\x1b[0m");
-                        println!("--- Compiler Error ---\n{}\n----------------------", stderr.trim());
+                        println!(
+                            "\x1b[38;2;255;50;80m❌ [Self-Healing] Compilation failed!\x1b[0m"
+                        );
+                        println!(
+                            "--- Compiler Error ---\n{}\n----------------------",
+                            stderr.trim()
+                        );
 
                         // Intercept compilation failure and trigger Thumper's sub-second self-healing
                         println!("[Self-Healing] Intercepting compilation failure with Thumper recovery engine...");
@@ -2847,21 +3139,26 @@ impl LeaderOrchestrator {
                                 }
                             }
                         });
-                        
+
                         let heal_res = crate::dag::heal_node_with_context(
                             "cargo check",
                             Some(&stderr),
                             Some(worktree_path),
                             Some(heal_tx),
-                        ).await;
+                        )
+                        .await;
                         let _ = join_handle.await;
 
                         if let Ok(true) = heal_res {
                             self.last_round_healed = true;
-                            crate::llm::HEALS_RESOLVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            crate::llm::HEALS_RESOLVED
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             println!("\x1b[38;2;0;255;128m🔧 [Self-Healing] Thumper auto-healed the compilation failure in sub-seconds!\x1b[0m");
                             if let Some(ref tx) = self.tui_tx {
-                                let _ = tx.try_send(crate::tui::TuiUpdate::Trace("🔧 [HEAL] Healing successful. Resuming execution loop.".to_string()));
+                                let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
+                                    "🔧 [HEAL] Healing successful. Resuming execution loop."
+                                        .to_string(),
+                                ));
                             }
                             break;
                         }
@@ -2877,7 +3174,9 @@ impl LeaderOrchestrator {
                                     anyhow::bail!("Self-healing loop aborted by operator due to compilation failure.");
                                 }
                                 OperatorChoice::ApproveAsIs => {
-                                    println!("[Self-Healing] Operator approved partial state as-is.");
+                                    println!(
+                                        "[Self-Healing] Operator approved partial state as-is."
+                                    );
                                 }
                                 OperatorChoice::ManualFix => {
                                     println!("[Self-Healing] Operator chose manual fix. Please edit files manually.");
@@ -2888,7 +3187,7 @@ impl LeaderOrchestrator {
 
                         // Feed error back to Benjamin for repair
                         println!("[Self-Healing] Feeding compiler error back to {} for speculative repair...", current_result.persona.name());
-                        
+
                         let repair_prompt = format!(
                             "Your previous changes caused a compilation error. Here is the compiler output:\n\n```\n{}\n```\n\nPlease fix the compilation errors by updating the file contents correctly. Ensure your changes compile.",
                             stderr
@@ -2899,17 +3198,24 @@ impl LeaderOrchestrator {
                             current_result.persona,
                             &repair_prompt,
                             &format!("{}-repair-{}", current_result.routing_id, iteration),
-                        ).await;
+                        )
+                        .await;
 
                         // Apply the new mutations to the files in the worktree
                         for mutation in &new_result.mutations {
                             if let Some(target) = mutation.get("target").and_then(|v| v.as_str()) {
                                 let file_path = worktree_path.join(target);
                                 // Speculative edit/creation
-                                if let Some(content) = mutation.get("content").and_then(|v| v.as_str()) {
+                                if let Some(content) =
+                                    mutation.get("content").and_then(|v| v.as_str())
+                                {
                                     let _ = tokio::fs::write(&file_path, content).await;
                                 } else {
-                                    let _ = tokio::fs::write(&file_path, "// Speculative repair patch applied\n").await;
+                                    let _ = tokio::fs::write(
+                                        &file_path,
+                                        "// Speculative repair patch applied\n",
+                                    )
+                                    .await;
                                 }
                             }
                         }
@@ -2918,7 +3224,10 @@ impl LeaderOrchestrator {
                     }
                 }
                 Err(e) => {
-                    println!("[Self-Healing] Failed to execute cargo check command: {}", e);
+                    println!(
+                        "[Self-Healing] Failed to execute cargo check command: {}",
+                        e
+                    );
                     break;
                 }
             }
@@ -2932,8 +3241,11 @@ impl LeaderOrchestrator {
             println!("\x1b[38;2;255;215;0m[Goal Mode] Compilation failed after 3 speculative retries. Automatically approving partial state as-is under autonomous goal execution.\x1b[0m");
             return Ok(OperatorChoice::ApproveAsIs);
         }
-        let msg = format!("Compilation failed after 3 speculative retries:\n{}", error_msg);
-        
+        let msg = format!(
+            "Compilation failed after 3 speculative retries:\n{}",
+            error_msg
+        );
+
         if let (Some(tx), Some(rx)) = (&self.tui_tx, &mut self.tui_rx) {
             let _ = tx.try_send(crate::tui::TuiUpdate::ApprovalRequest(msg.clone()));
             println!("⏳ [Leader] Waiting for operator decision in TUI/Web...");
@@ -2975,7 +3287,10 @@ impl LeaderOrchestrator {
     }
 }
 
-fn copy_dir_recursive(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+fn copy_dir_recursive(
+    src: impl AsRef<std::path::Path>,
+    dst: impl AsRef<std::path::Path>,
+) -> std::io::Result<()> {
     std::fs::create_dir_all(&dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -3010,12 +3325,17 @@ mod tests {
         assert!(contract.is_ok());
         let contract = contract.unwrap();
 
-        assert_eq!(contract.description, "Implement high-performance concurrent contract negotiation");
+        assert_eq!(
+            contract.description,
+            "Implement high-performance concurrent contract negotiation"
+        );
         assert!(contract.acceptance_criteria.len() >= 3);
         assert!(contract.negotiated_by.contains(&"Captain".to_string()));
         assert!(contract.negotiated_by.contains(&"Evaluator".to_string()));
-        
-        let avg_sim = contract.rubric["negotiated_avg_similarity"].as_f64().unwrap();
+
+        let avg_sim = contract.rubric["negotiated_avg_similarity"]
+            .as_f64()
+            .unwrap();
         assert!(avg_sim > 0.0);
     }
 
@@ -3028,7 +3348,8 @@ mod tests {
 
         let mut results = vec![];
 
-        let mut captain_res = crate::personas::PersonaResult::new(Persona::Captain, "pkg-captain".to_string());
+        let mut captain_res =
+            crate::personas::PersonaResult::new(Persona::Captain, "pkg-captain".to_string());
         captain_res.output = json!({ "plan": "Captain plan" });
         captain_res.mutations = vec![json!({
             "target": "src/main.rs",
@@ -3037,7 +3358,8 @@ mod tests {
         })];
         results.push(captain_res);
 
-        let mut harper_res = crate::personas::PersonaResult::new(Persona::Harper, "pkg-harper".to_string());
+        let mut harper_res =
+            crate::personas::PersonaResult::new(Persona::Harper, "pkg-harper".to_string());
         harper_res.output = json!({ "research": "Harper research" });
         harper_res.mutations = vec![json!({
             "target": "src/main.rs",
@@ -3050,7 +3372,9 @@ mod tests {
         let arena_outcome = leader.run_arena(&results).await;
         assert_eq!(arena_outcome["mode"], "winner");
         let winner = arena_outcome["winner"].as_str().unwrap();
-        assert!(winner == "Captain" || winner == "Harper" || winner == "Lucas" || winner == "Benjamin");
+        assert!(
+            winner == "Captain" || winner == "Harper" || winner == "Lucas" || winner == "Benjamin"
+        );
 
         let scores = arena_outcome["scores"].as_array().unwrap();
         assert_eq!(scores.len(), 4);
@@ -3059,10 +3383,14 @@ mod tests {
         }
 
         // Perform semantic merge
-        leader.perform_semantic_merge(&arena_outcome, &results).await;
-        
+        leader
+            .perform_semantic_merge(&arena_outcome, &results)
+            .await;
+
         // Assert the merge file was created
-        let merge_path = crate::paths::semantic_merge_path(&leader.session_id).display().to_string();
+        let merge_path = crate::paths::semantic_merge_path(&leader.session_id)
+            .display()
+            .to_string();
         let path = std::path::Path::new(&merge_path);
         assert!(path.exists());
 
@@ -3078,7 +3406,9 @@ mod tests {
         let session_id = leader.session_id;
 
         // Clear directories first
-        let dir = crate::paths::campaign_dir(&session_id).display().to_string();
+        let dir = crate::paths::campaign_dir(&session_id)
+            .display()
+            .to_string();
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
 
@@ -3225,11 +3555,13 @@ mod tests {
         std::fs::write(
             format!("{}/round-000.ktrans.json", dir),
             serde_json::to_string_pretty(&envelope_0).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             format!("{}/round-001.ktrans.json", dir),
             serde_json::to_string_pretty(&envelope_1).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // 3. Replay valid campaign
         let replay_res = leader.replay_campaign(Some(session_id));
@@ -3249,11 +3581,15 @@ mod tests {
         std::fs::write(
             format!("{}/round-001.ktrans.json", dir),
             serde_json::to_string_pretty(&tampered_envelope_1).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let tampered_replay_res = leader.replay_campaign(Some(session_id));
         assert!(tampered_replay_res.is_err());
-        assert!(tampered_replay_res.unwrap_err().to_string().contains("tampered"));
+        assert!(tampered_replay_res
+            .unwrap_err()
+            .to_string()
+            .contains("tampered"));
 
         // Clean up
         let _ = std::fs::remove_dir_all(&dir);
@@ -3278,22 +3614,23 @@ mod tests {
 
         assert!(contract.is_ok());
         let contract = contract.unwrap();
-        assert_eq!(contract.description, "Test speculative execution skips negotiation");
+        assert_eq!(
+            contract.description,
+            "Test speculative execution skips negotiation"
+        );
         // Instant Mode skips synchronous wait, so it should be extremely fast (< 100ms)
         assert!(duration.as_millis() < 100);
     }
 
     #[tokio::test]
     async fn test_cognition_mode_escalation() {
-        let mut leader = LeaderOrchestrator::new(
-            "Test confidence escalation".to_string(),
-            None,
-        );
+        let mut leader = LeaderOrchestrator::new("Test confidence escalation".to_string(), None);
         // Set mode to Instant initially
         leader.set_cognition_mode("instant").await;
 
         let mut results = vec![];
-        let mut captain_res = crate::personas::PersonaResult::new(Persona::Captain, "pkg-captain".to_string());
+        let mut captain_res =
+            crate::personas::PersonaResult::new(Persona::Captain, "pkg-captain".to_string());
         captain_res.output = json!({ "plan": "Weak plan output" });
         captain_res.mutations = vec![];
         results.push(captain_res);
@@ -3324,7 +3661,8 @@ mod tests {
     #[tokio::test]
     async fn test_self_healing_loop_success() {
         let mut leader = LeaderOrchestrator::new("Test self-healing success".to_string(), None);
-        let mut benjamin_res = crate::personas::PersonaResult::new(Persona::Benjamin, "pkg-benjamin".to_string());
+        let mut benjamin_res =
+            crate::personas::PersonaResult::new(Persona::Benjamin, "pkg-benjamin".to_string());
         benjamin_res.mutations = vec![json!({
             "target": "src/main.rs",
             "action": "modify",
@@ -3333,7 +3671,8 @@ mod tests {
 
         // Create the worktree path manually so the test passes
         let worktree_dir = crate::paths::worktree_dir("benjamin", "pkg-benjamin", "pkg-benjamin")
-            .display().to_string();
+            .display()
+            .to_string();
         let _ = std::fs::create_dir_all(&worktree_dir);
 
         // Run cargo init to make it a valid compiling crate
@@ -3347,7 +3686,7 @@ mod tests {
 
         let healed = leader.run_self_healing_loop(&benjamin_res).await.unwrap();
         assert_eq!(healed.persona, Persona::Benjamin);
-        
+
         let _ = std::fs::remove_dir_all(&worktree_dir);
     }
 
@@ -3362,20 +3701,23 @@ mod tests {
 
         let results = vec![];
         let arena = json!({ "winner": "Captain" });
-        let final_choice = leader.prompt_final_approval(&results, &arena).await.unwrap();
+        let final_choice = leader
+            .prompt_final_approval(&results, &arena)
+            .await
+            .unwrap();
         assert_eq!(final_choice, Some("winner".to_string()));
 
-        let choice = leader.prompt_operator_escalation("Dummy compilation error").await.unwrap();
+        let choice = leader
+            .prompt_operator_escalation("Dummy compilation error")
+            .await
+            .unwrap();
         assert!(matches!(choice, OperatorChoice::ApproveAsIs));
     }
 
     #[tokio::test]
     async fn test_playhead_steering_fork_campaign_reset() {
         // Construct leader with task and mock TUI channel
-        let mut leader = LeaderOrchestrator::new(
-            "Initial task statement".to_string(),
-            None,
-        );
+        let mut leader = LeaderOrchestrator::new("Initial task statement".to_string(), None);
         leader.set_cognition_mode("instant").await;
 
         let (feedback_tx, feedback_rx) = tokio::sync::mpsc::channel(100);
@@ -3384,7 +3726,9 @@ mod tests {
 
         // Pre-populate target transaction 0 (round 0) with a mock signed CampaignKtrans so handle_operator_fork finds it!
         let session_id = leader.session_id;
-        let dir = crate::paths::campaign_dir(&session_id).display().to_string();
+        let dir = crate::paths::campaign_dir(&session_id)
+            .display()
+            .to_string();
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
 
@@ -3441,12 +3785,15 @@ mod tests {
         std::fs::write(
             format!("{}/round-000.ktrans.json", dir),
             serde_json::to_string_pretty(&envelope_0).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Send a playhead fork signal to the leader!
-        feedback_tx.try_send(crate::tui::ContractResponse::Override(vec![
-            "FORK:0:focus on memory-mapped buffer parser rules".to_string()
-        ])).unwrap();
+        feedback_tx
+            .try_send(crate::tui::ContractResponse::Override(vec![
+                "FORK:0:focus on memory-mapped buffer parser rules".to_string(),
+            ]))
+            .unwrap();
 
         // Run campaign! Since Korg default llm is mock, this runs offline.
         // It will trigger the fork in round 0, reset, set the root_task to "focus on memory-mapped buffer parser rules",
@@ -3455,7 +3802,10 @@ mod tests {
         assert!(campaign_res.is_ok());
 
         // Assert root task was steer pivoted to operator's custom directive!
-        assert_eq!(leader.root_task, "focus on memory-mapped buffer parser rules");
+        assert_eq!(
+            leader.root_task,
+            "focus on memory-mapped buffer parser rules"
+        );
         // Assert swarm size was restored to at least 6 and subsequently scaled!
         assert!(leader.swarm_size >= 6);
         // Assert base snapshot was updated to the codebase tree from target transaction!
@@ -3465,4 +3815,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
-

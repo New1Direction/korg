@@ -10,7 +10,7 @@
 use crate::acp::AcpMessage;
 use crate::evaluator::TraceEvent;
 use chrono::Utc;
-use std::collections::{VecDeque, HashMap};
+use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 
 /// Helper function to initialize a default bounded LRU Cache for deduplication.
@@ -56,7 +56,8 @@ impl VectorClock {
         let mut self_greater = false;
         let mut other_greater = false;
 
-        let all_keys: std::collections::HashSet<&String> = self.clocks.keys().chain(other.clocks.keys()).collect();
+        let all_keys: std::collections::HashSet<&String> =
+            self.clocks.keys().chain(other.clocks.keys()).collect();
 
         for key in all_keys {
             let self_val = self.clocks.get(key).copied().unwrap_or(0);
@@ -181,7 +182,11 @@ impl Blackboard {
     /// Takes a SwarmTelemetryPulse (the ACP message) and returns the derived TraceEvent(s).
     /// Supports both the flat per_agent shape and the richer aggregate+per_agent form from the spec.
     /// Prevents duplicate processing via LRU-bound message ID check and increments vector clocks.
-    pub fn ingest_telemetry_pulse(&mut self, pulse: &AcpMessage, message_id: Option<Uuid>) -> Vec<TraceEvent> {
+    pub fn ingest_telemetry_pulse(
+        &mut self,
+        pulse: &AcpMessage,
+        message_id: Option<Uuid>,
+    ) -> Vec<TraceEvent> {
         // 1. Bounded LRU Cache Deduplication Check
         if let Some(id) = message_id {
             if self.processed_events.get(&id).is_some() {
@@ -210,7 +215,10 @@ impl Blackboard {
 
         // Increment the logical clocks using saturating addition
         self.vector_clock.increment(&agent_id);
-        let agent_clock = self.vector_clocks.entry(agent_id.clone()).or_insert_with(VectorClock::new);
+        let agent_clock = self
+            .vector_clocks
+            .entry(agent_id.clone())
+            .or_insert_with(VectorClock::new);
         agent_clock.increment(&agent_id);
 
         let mut events = vec![];
@@ -442,7 +450,14 @@ mod tests {
 
         // Logical clocks should have incremented correctly
         assert_eq!(bb.vector_clock.clocks.get("agent-1"), Some(&1));
-        assert_eq!(bb.vector_clocks.get("agent-1").unwrap().clocks.get("agent-1"), Some(&1));
+        assert_eq!(
+            bb.vector_clocks
+                .get("agent-1")
+                .unwrap()
+                .clocks
+                .get("agent-1"),
+            Some(&1)
+        );
 
         // Let's test vector clock merging
         let mut vc1 = VectorClock::new();
