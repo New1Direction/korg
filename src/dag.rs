@@ -79,7 +79,7 @@ impl ExecutionDag {
         }
         for node in self.nodes.values() {
             for dep in &node.dependencies {
-                *in_degree.entry(dep.as_str()).or_insert(0); // ensure dep exists
+                let _ = in_degree.entry(dep.as_str()).or_insert(0); // ensure dep exists
                 if let Some(deg) = in_degree.get_mut(node.id.as_str()) {
                     // Only count deps that actually exist in the graph
                     if self.nodes.contains_key(dep) {
