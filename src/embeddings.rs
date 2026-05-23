@@ -63,10 +63,13 @@ impl EmbeddingModel for FakeEmbeddingModel {
         }
 
         let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm > 1e-8 {
+        if norm > f32::EPSILON {
             for v in &mut vec {
                 *v /= norm;
             }
+        } else {
+            vec.fill(0.0);
+            vec[0] = 1.0;
         }
 
         Ok(vec)
@@ -208,10 +211,12 @@ mod candle_impl {
 
             // L2 normalize (important for cosine similarity / entropy calculation)
             let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
-            let normalized = if norm > 1e-8 {
+            let normalized = if norm > f32::EPSILON {
                 vec.iter().map(|x| x / norm).collect()
             } else {
-                vec
+                let mut safe = vec![0.0f32; EMBED_DIM];
+                safe[0] = 1.0;
+                safe
             };
 
             Ok(normalized)

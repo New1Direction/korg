@@ -180,7 +180,7 @@ pub fn load_prompt_for_persona(persona: Persona) -> String {
         Persona::Lucas => "lucas.md",
         Persona::Evaluator => "evaluator.md",
     };
-    let path = format!("/Users/clubpenguin/Documents/Korg/Prompts/{}", filename);
+    let path = crate::paths::prompts_dir().join(filename);
     if let Ok(content) = fs::read_to_string(&path) {
         content
     } else {
@@ -210,6 +210,10 @@ pub struct LlmPersona {
     pub provider: Arc<dyn LlmProvider>,
     pub system_prompt: String,
     pub temperature: f32,
+    pub top_p: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub max_tokens: Option<u32>,
 }
 
 impl LlmPersona {
@@ -227,6 +231,10 @@ impl LlmPersona {
             provider,
             system_prompt,
             temperature,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: Some(4096),
         }
     }
 
@@ -249,13 +257,16 @@ impl LlmPersona {
         let request = LlmRequest {
             messages,
             temperature: self.temperature,
-            max_tokens: Some(4096),
+            max_tokens: self.max_tokens,
             tools: None,
             stop_sequences: None,
             multimodal: None,
             tx_id: Some(routing_id.to_string()),
             session_id: None,
             policy_hash: None,
+            top_p: self.top_p,
+            presence_penalty: self.presence_penalty,
+            frequency_penalty: self.frequency_penalty,
         };
 
         let response = self.provider.complete(request).await?;
@@ -423,8 +434,51 @@ pub async fn fallback_evaluator(payload: &str, routing_id: &str) -> PersonaResul
 
 pub async fn run_persona(persona: Persona, payload: &str, routing_id: &str) -> PersonaResult {
     let cfg = crate::llm::KorgConfig::load();
-    let provider = crate::llm::build_provider(&cfg);
-    run_persona_with_provider(persona, payload, routing_id, provider).await
+    let (provider, temp_override) = crate::llm::build_provider_for_persona(&cfg, persona.name());
+    run_persona_with_provider_and_temp(persona, payload, routing_id, provider, temp_override).await
+}
+
+pub async fn run_persona_with_provider_and_temp(
+    persona: Persona,
+    payload: &str,
+    routing_id: &str,
+    provider: Arc<dyn LlmProvider>,
+    temperature_override: Option<f32>,
+) -> PersonaResult {
+    let mut lp = LlmPersona::new(persona, provider);
+    if let Some(t) = temperature_override {
+        lp.temperature = t;
+    }
+    let cfg = crate::llm::KorgConfig::load();
+    if let Some(ov) = cfg.persona_overrides.get(&persona.name().to_lowercase()) {
+        if let Some(tp) = ov.top_p {
+            lp.top_p = Some(tp);
+        }
+        if let Some(pp) = ov.presence_penalty {
+            lp.presence_penalty = Some(pp);
+        }
+        if let Some(fp) = ov.frequency_penalty {
+            lp.frequency_penalty = Some(fp);
+        }
+        if let Some(mt) = ov.max_tokens {
+            lp.max_tokens = Some(mt);
+        }
+    }
+    match lp.think(payload, routing_id).await {
+        Ok(res) => res,
+        Err(e) => {
+            eprintln!("[Persona] Live LLM execution failed for {}: {}. Falling back to simulation.", persona.name(), e);
+            let mut res = match persona {
+                Persona::Captain => fallback_captain(payload, routing_id),
+                Persona::Harper => fallback_harper(payload, routing_id),
+                Persona::Benjamin => fallback_benjamin(payload, routing_id),
+                Persona::Lucas => fallback_lucas(payload, routing_id),
+                Persona::Evaluator => fallback_evaluator(payload, routing_id).await,
+            };
+            res.error_msg = Some(e.to_string());
+            res
+        }
+    }
 }
 
 pub async fn run_persona_with_provider(

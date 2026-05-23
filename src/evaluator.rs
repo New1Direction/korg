@@ -13,6 +13,8 @@ use uuid::Uuid;
 
 const WINDOW_SIZE: usize = 24; // ~5-30s of 1-5Hz telemetry
 
+static EVAL_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
 /// Tunable thresholds for the harsh critic (Heavy-Tier defaults).
 #[derive(Debug, Clone)]
 pub struct RubricConfig {
@@ -206,6 +208,9 @@ impl Evaluator {
             return 0.15;
         }
 
+        let _permit = EVAL_SEMAPHORE.acquire().await.unwrap();
+        let start_time = std::time::Instant::now();
+
         let mut embeddings = Vec::with_capacity(texts.len());
         for t in &texts {
             let cached_opt = {
@@ -231,24 +236,49 @@ impl Evaluator {
             return 0.25;
         }
 
-        let mut sum_sim = 0.0f32;
-        let mut pairs = 0usize;
+        // Offload the pairwise calculations to spawn_blocking
+        let calculate_res = tokio::task::spawn_blocking(move || {
+            let mut sum_sim = 0.0f32;
+            let mut pairs = 0usize;
 
-        for i in 0..embeddings.len() {
-            for j in (i + 1)..embeddings.len() {
-                let s = cosine_similarity(&embeddings[i], &embeddings[j]);
-                sum_sim += s;
-                pairs += 1;
+            for i in 0..embeddings.len() {
+                for j in (i + 1)..embeddings.len() {
+                    let a = &embeddings[i];
+                    let b = &embeddings[j];
+                    let mut dot = 0.0f32;
+                    for (x, y) in a.iter().zip(b.iter()) {
+                        dot += x * y;
+                    }
+                    sum_sim += dot.clamp(-1.0, 1.0);
+                    pairs += 1;
+                }
             }
-        }
+            (sum_sim, pairs)
+        }).await;
 
-        if pairs == 0 {
-            return 0.3;
-        }
+        let h = match calculate_res {
+            Ok((sum_sim, pairs)) => {
+                if pairs == 0 {
+                    0.3
+                } else {
+                    let avg_sim = sum_sim / (pairs as f32);
+                    let val = 1.0 - avg_sim;
+                    val.clamp(0.0, 1.0)
+                }
+            }
+            Err(_) => 0.3,
+        };
 
-        let avg_sim = sum_sim / (pairs as f32);
-        let h = 1.0 - avg_sim;
-        h.clamp(0.0, 1.0)
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+        tracing::info!(
+            target: "korg::metrics",
+            duration_ms = duration_ms,
+            texts_count = texts.len(),
+            entropy = h,
+            "Semantic Entropy calculated"
+        );
+
+        h
     }
 
     /// Convenience wrapper that uses the current window's surface_text values.
@@ -465,6 +495,7 @@ impl Evaluator {
 
     /// Main entry point: run all five rubrics, compute live semantic_entropy,
     /// decide overall harsh verdict, and return a rich EvaluationVerdict.
+    #[tracing::instrument(skip(self), fields(session_id = %session_id))]
     pub async fn evaluate(&mut self, session_id: Uuid) -> EvaluationVerdict {
         let live_entropy = self.semantic_entropy_from_window().await;
 
@@ -479,11 +510,12 @@ impl Evaluator {
         let mut passed = 0u8;
         let mut justifications = vec![];
 
-        for (name, (ok, j)) in checks {
-            if ok {
+        for (name, (ok, j)) in &checks {
+            if *ok {
                 passed += 1;
             }
             justifications.push(format!("[{}] {}", name, j));
+            tracing::debug!(rubric = name, passed = ok, justification = j, "rubric_evaluated");
         }
 
         let total = 5u8;
@@ -504,6 +536,18 @@ impl Evaluator {
         } else {
             ("NEEDS_REVISION".to_string(), "hold".to_string())
         };
+
+        tracing::info!(
+            overall = %overall,
+            passed_rubrics = passed,
+            total_rubrics = total,
+            semantic_entropy = live_entropy,
+            doom_loop_detected = doom,
+            recommended_action = %action,
+            "evaluation_verdict"
+        );
+
+        crate::metrics::record_evaluator_verdict(&overall, doom, live_entropy);
 
         EvaluationVerdict {
             verdict_id: Uuid::now_v7(),

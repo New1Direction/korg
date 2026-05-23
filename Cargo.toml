@@ -27,7 +27,17 @@ async-trait = "0.1"
 bytes = "1"
 toml = "0.8"
 directories = "5.0"
-thumper-cli = { path = "../API/api-anything" }
+base64 = "0.22"
+shell-words = "1.1"
+lru = "0.12"
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tracing-appender = "0.2"
+futures = "0.3"
+fs2 = "0.4"
+libc = "0.2"
+
 
 # Optional real embedding backend (Heavy-Tier semantic_entropy)
 candle-core = { version = "0.8", optional = true }
@@ -39,11 +49,15 @@ hf-hub = { version = "0.3", optional = true, features = ["tokio"] }
 # Ratatui TUI for the live operator dashboard (production feature)
 ratatui = "0.24"
 crossterm = { version = "0.27", features = ["event-stream"] }
+syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
 
 # Axum Web Server & SSE (production feature for public cockpit)
 axum = { version = "0.7", features = ["macros"] }
 tower-http = { version = "0.5", features = ["cors", "fs"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+tree-sitter = "0.26.9"
+tree-sitter-rust = "0.24.2"
+tree-sitter-python = "0.25.0"
 
 [features]
 default = ["candle"]

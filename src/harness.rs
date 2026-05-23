@@ -102,7 +102,7 @@ impl SingleWorkerHarness {
                             let verified = crate::acp::verify_envelope(&extra_env).unwrap_or(false);
                             eprintln!("[Harness] Received post-work tool request (verified={})", verified);
 
-                            if let Some(result_msg) = crate::tools::dispatch_tool(extra_env.payload).await {
+                            if let Some(result_msg) = crate::tools::dispatch_tool(extra_env.payload, &worker_id).await {
                                 let _ = real_client.send(&result_msg).await;
                                 eprintln!("[Harness] Sent signed tool result back to leader");
                             }
@@ -120,7 +120,7 @@ impl SingleWorkerHarness {
                         let worker_signing_key = SigningKey::generate(&mut OsRng);
                         let mut real_client = AcpClient::new_stdio(&worker_id, worker_signing_key);
 
-                        if let Some(result_msg) = crate::tools::dispatch_tool(tool).await {
+                        if let Some(result_msg) = crate::tools::dispatch_tool(tool, &worker_id).await {
                             let _ = real_client.send(&result_msg).await;
                             eprintln!("[Harness] Sent signed tool result");
                         }
@@ -157,10 +157,9 @@ impl SingleWorkerHarness {
         eprintln!("[Harness] Parent repository working directory: {:?}", original_dir);
 
         // 1. Create isolated worktree (see isolation-routing.md)
-        let worktree_path = PathBuf::from(format!(
-            "/tmp/korg/worktrees/{}-{}",
-            self.worker_id, routing_id
-        ));
+        let worktree_path = crate::paths::worktree_dir_harness(
+            &self.worker_id, &routing_id,
+        );
         self.current_worktree = Some(worktree_path.clone());
 
         // Ensure parent and target worktree directory are completely clean
@@ -563,8 +562,8 @@ fn write_terminal_ktrans(
     provenance: &[String],
     doom_loop: bool,
 ) {
-    let ktrans_dir = "/tmp/korg/ktrans";
-    std::fs::create_dir_all(ktrans_dir).ok();
+    let ktrans_dir = crate::paths::ktrans_dir();
+    std::fs::create_dir_all(&ktrans_dir).ok();
 
     let tx_id = uuid::Uuid::now_v7();
     let timestamp = chrono::Utc::now().to_rfc3339();
@@ -582,7 +581,7 @@ fn write_terminal_ktrans(
     });
 
     let filename = format!("{}-{}.ktrans.json", routing_id, worker_id);
-    let path = std::path::Path::new(ktrans_dir).join(filename);
+    let path = ktrans_dir.join(filename);
 
     if let Ok(content) = serde_json::to_string_pretty(&ktrans) {
         if std::fs::write(&path, content).is_ok() {
@@ -619,10 +618,9 @@ mod tests {
         assert!(res.is_ok());
 
         // Verify that the worktree directory is removed and cleaned up after successful completion
-        let worktree_path = std::path::PathBuf::from(format!(
-            "/tmp/korg/worktrees/{}-{}",
-            worker_id, routing_id
-        ));
+        let worktree_path = crate::paths::worktree_dir_harness(
+            &worker_id, &routing_id,
+        );
         assert!(!worktree_path.exists());
     }
 }

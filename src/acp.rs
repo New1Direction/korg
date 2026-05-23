@@ -169,13 +169,15 @@ impl AcpError {
 }
 
 /// ===== Signing / Verification Helpers (JCS + Ed25519 per v1.17) =====
-/// Canonicalizes a serializable value.
-/// For the reference harness we use stable JSON (field order from serde + BTreeMap where needed).
-/// A production implementation would use a true RFC 8785 JCS crate.
+/// Canonicalizes a serializable value using RFC 8785 JCS (JSON Canonicalization Scheme).
+/// This ensures deterministic byte-level output regardless of field ordering,
+/// making Ed25519 signatures reproducible and verifiable.
 pub fn canonicalize<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    // Best-effort stable form for the skeleton (good enough for signing demo)
-    let s = serde_json::to_string(value)?;
-    Ok(s.into_bytes())
+    // First serialize to a serde_json::Value so canonical_json can sort keys
+    let json_val = serde_json::to_value(value)?;
+    let canonical = canonical_json::to_string(&json_val)
+        .map_err(|e| anyhow::anyhow!("JCS canonicalization failed: {:?}", e))?;
+    Ok(canonical.into_bytes())
 }
 
 /// Creates a SignatureObject for a given payload using the provided signing key.
@@ -471,6 +473,16 @@ pub struct CampaignKtrans {
     pub codebase_merkle_root: String,
     pub signature: Option<SignatureObject>,
     pub vision_attachments: Option<Vec<VisionAttachment>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub certainty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blast_radius: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remediation_confidence: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_healed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -491,6 +503,16 @@ pub struct CampaignKtransPayload {
     pub state_merkle_root: String,
     pub codebase_merkle_root: String,
     pub vision_attachments: Option<Vec<VisionAttachment>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub certainty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blast_radius: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remediation_confidence: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_healed: Option<bool>,
 }
 
 // === Coding Tool Payload Structs (Option C) ===

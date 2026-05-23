@@ -35,6 +35,8 @@ struct AppState {
     broadcaster: broadcast::Sender<TuiUpdate>,
     feedback_tx: Mutex<Option<mpsc::Sender<ContractResponse>>>,
     cognition_mode: Arc<std::sync::Mutex<crate::leader::CognitionMode>>,
+    capability_resolver: Arc<tokio::sync::Mutex<crate::registry::CapabilityResolver>>,
+    runtime_coordinator: Arc<std::sync::Mutex<Option<Arc<crate::runtime::RuntimeCoordinator>>>>,
 }
 
 /// Auto-opens the default system browser targeting the given URL.
@@ -67,14 +69,21 @@ pub async fn run_web_with_campaign(
 
     let cognition_mode_arc = Arc::new(std::sync::Mutex::new(mode.unwrap_or(crate::leader::CognitionMode::Balanced)));
 
+    let runtime_coordinator_container = Arc::new(std::sync::Mutex::new(None));
+    let capability_resolver_container = Arc::new(tokio::sync::Mutex::new(crate::registry::CapabilityResolver::default_resolver()));
+
     // 2. Spawn the leader process campaign in the background
     let campaign_tx = tui_tx.clone();
     let cognition_mode_leader = cognition_mode_arc.clone();
+    let cap_res_leader = capability_resolver_container.clone();
+    let coord_leader = runtime_coordinator_container.clone();
     tokio::spawn(async move {
         let mut leader = LeaderOrchestrator::new(prompt, session);
         leader.tui_tx = Some(campaign_tx.clone());
         leader.tui_rx = Some(feedback_rx);
         leader.cognition_mode = cognition_mode_leader;
+        leader.capability_resolver = cap_res_leader;
+        *coord_leader.lock().unwrap() = Some(leader.runtime_coordinator.clone());
 
         let _ = leader.run_observable_campaign().await;
 
@@ -111,11 +120,12 @@ pub async fn run_web_with_campaign(
         }
     });
 
-    // 4. Start the Axum web server on port 8080
     let app_state = Arc::new(AppState {
         broadcaster: broadcaster_tx,
         feedback_tx: Mutex::new(Some(feedback_tx)),
         cognition_mode: cognition_mode_arc,
+        capability_resolver: capability_resolver_container,
+        runtime_coordinator: runtime_coordinator_container,
     });
 
     let router = Router::new()
@@ -123,14 +133,27 @@ pub async fn run_web_with_campaign(
         .route("/dashboard", get(index_handler))
         .route("/cockpit", get(index_handler))
         .route("/index.html", get(index_handler))
+        .route("/korg-frontend.js", get(wasm_js_handler))
+        .route("/static/korg-frontend.js", get(wasm_js_handler))
+        .route("/korg-frontend_bg.wasm", get(wasm_bytes_handler))
+        .route("/static/korg-frontend_bg.wasm", get(wasm_bytes_handler))
         .route("/api/events", get(sse_handler))
         .route("/api/state", get(state_handler))
         .route("/api/screenshots", get(screenshots_handler))
         .route("/api/override", post(override_handler))
         .route("/api/mode", post(mode_handler))
+        .route("/api/capabilities", get(capabilities_handler))
+        .route("/api/capabilities/toggle", post(capabilities_toggle_handler))
         .route("/api/diff", get(diff_handler))
         .route("/api/input", post(input_handler))
+        .route("/api/semantic_search", post(semantic_search_handler))
+        .route("/api/journal", get(journal_handler))
+        .route("/api/metrics", get(metrics_handler))
+        .route("/api/workspaces", get(workspaces_handler))
+        .route("/api/campaign/abort", post(campaign_abort_handler))
+        .route("/api/projections/campaign", get(campaign_projection_handler))
         .with_state(app_state);
+
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     println!("\n\x1b[1m[korg] Axum server listening on http://localhost:8080\x1b[0m");
@@ -154,6 +177,11 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
 
     let (broadcaster_tx, _) = broadcast::channel::<TuiUpdate>(256);
     let cognition_mode_arc = leader.cognition_mode.clone();
+
+    // Authoritatively extract runtime coordinator and capability resolver BEFORE moving leader
+    let runtime_coordinator = leader.runtime_coordinator.clone();
+    let capability_resolver = leader.capability_resolver.clone();
+    let runtime_coordinator_container = Arc::new(std::sync::Mutex::new(Some(runtime_coordinator)));
 
     tokio::spawn(async move {
         let _ = leader.run_observable_campaign().await;
@@ -192,6 +220,8 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
         broadcaster: broadcaster_tx,
         feedback_tx: Mutex::new(Some(feedback_tx)),
         cognition_mode: cognition_mode_arc,
+        capability_resolver,
+        runtime_coordinator: runtime_coordinator_container,
     });
 
     let router = Router::new()
@@ -199,13 +229,25 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
         .route("/dashboard", get(index_handler))
         .route("/cockpit", get(index_handler))
         .route("/index.html", get(index_handler))
+        .route("/korg-frontend.js", get(wasm_js_handler))
+        .route("/static/korg-frontend.js", get(wasm_js_handler))
+        .route("/korg-frontend_bg.wasm", get(wasm_bytes_handler))
+        .route("/static/korg-frontend_bg.wasm", get(wasm_bytes_handler))
         .route("/api/events", get(sse_handler))
         .route("/api/state", get(state_handler))
         .route("/api/screenshots", get(screenshots_handler))
         .route("/api/override", post(override_handler))
         .route("/api/mode", post(mode_handler))
+        .route("/api/capabilities", get(capabilities_handler))
+        .route("/api/capabilities/toggle", post(capabilities_toggle_handler))
         .route("/api/diff", get(diff_handler))
         .route("/api/input", post(input_handler))
+        .route("/api/semantic_search", post(semantic_search_handler))
+        .route("/api/journal", get(journal_handler))
+        .route("/api/metrics", get(metrics_handler))
+        .route("/api/workspaces", get(workspaces_handler))
+        .route("/api/campaign/abort", post(campaign_abort_handler))
+        .route("/api/projections/campaign", get(campaign_projection_handler))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
@@ -223,6 +265,20 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
 /// Serves the embedded glassmorphism SPA index.html
 async fn index_handler() -> impl IntoResponse {
     Html(INDEX_HTML)
+}
+
+async fn wasm_js_handler() -> impl IntoResponse {
+    (
+        [("content-type", "application/javascript")],
+        WASM_JS,
+    )
+}
+
+async fn wasm_bytes_handler() -> impl IntoResponse {
+    (
+        [("content-type", "application/wasm")],
+        WASM_BYTES,
+    )
 }
 
 /// Serves the premium monochrome landing page
@@ -254,7 +310,7 @@ async fn state_handler(
         let m = state.cognition_mode.lock().unwrap();
         format!("{:?}", *m)
     };
-    let path = "/tmp/korg/blackboard/blackboard.json";
+    let path = crate::paths::blackboard_json();
     if let Ok(content) = tokio::fs::read_to_string(path).await {
         if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
             if let Some(obj) = json.as_object_mut() {
@@ -378,33 +434,302 @@ struct ModeRequest {
 }
 
 /// POST `/api/mode`
+///
+/// Forwards the mode change to the CapabilityResolver (single state authority).
+/// The Arc<Mutex<CognitionMode>> is updated by reading back from registry active_states,
+/// NOT by re-interpreting the mode string in the web layer.
 async fn mode_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ModeRequest>,
 ) -> impl IntoResponse {
-    let mode = match payload.mode.to_lowercase().as_str() {
-        "instant" => crate::leader::CognitionMode::Instant,
-        "heavy" => crate::leader::CognitionMode::Heavy,
-        "research" => crate::leader::CognitionMode::Research,
-        "recovery" => crate::leader::CognitionMode::Recovery,
-        "autonomous" => crate::leader::CognitionMode::Autonomous,
-        _ => crate::leader::CognitionMode::Balanced,
-    };
-    
-    {
-        let mut m = state.cognition_mode.lock().unwrap();
-        *m = mode;
-    }
-    
-    println!("[Web API] Dynamic Cognition Mode updated to: {:?}", mode);
-    
-    // Broadcast trace event to live console log stream
-    let _ = state.broadcaster.send(TuiUpdate::Trace(format!(
-        "[cognition-mode] Dynamically switched active mode to: {:?}",
-        mode
-    )));
+    let mode_str = payload.mode.to_lowercase();
+    let cap_state = crate::registry::CapabilityState::Mode(mode_str.clone());
 
-    axum::http::StatusCode::OK
+    let req = crate::registry::TransitionRequest {
+        id: "cognition_mode".to_string(),
+        target_state: cap_state,
+        correlation_id: None,
+    };
+
+    let mut resolver = state.capability_resolver.lock().await;
+    let response = resolver.handle_transition_request(req);
+
+    if response.status == crate::registry::TransitionState::Applied {
+        // Read the authoritative mode string back from registry active_states.
+        // The web layer does NOT interpret -- it mirrors what the resolver decided.
+        let canonical_mode_str = match resolver.active_states.get("cognition_mode") {
+            Some(crate::registry::CapabilityState::Mode(m)) => m.clone(),
+            _ => mode_str.clone(),
+        };
+        drop(resolver);
+
+        let mode = match canonical_mode_str.as_str() {
+            "instant"                               => crate::leader::CognitionMode::Instant,
+            "heavy"                                 => crate::leader::CognitionMode::Heavy,
+            "research"                              => crate::leader::CognitionMode::Research,
+            "recovery"                              => crate::leader::CognitionMode::Recovery,
+            "autonomous"                            => crate::leader::CognitionMode::Autonomous,
+            "heavy-consciousness" | "consciousness" => crate::leader::CognitionMode::HeavyConsciousness,
+            _                                       => crate::leader::CognitionMode::Balanced,
+        };
+        {
+            let mut m = state.cognition_mode.lock().unwrap();
+            *m = mode;
+        }
+        tracing::info!(mode = ?mode, canonical = %canonical_mode_str, "cognition_mode_updated");
+
+        // Broadcast trace event to live console log stream
+        let _ = state.broadcaster.send(TuiUpdate::Trace(format!(
+            "[cognition-mode] Dynamically switched active mode to: {:?}",
+            mode
+        )));
+
+        (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({ "mode": canonical_mode_str, "status": "applied" })),
+        ).into_response()
+    } else {
+        drop(resolver);
+        let errors = response.errors.join(", ");
+        tracing::warn!(errors = %errors, "mode_transition_rejected");
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": errors, "plan_id": response.plan_id })),
+        ).into_response()
+    }
+}
+
+/// GET `/api/capabilities`
+async fn capabilities_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let resolver = state.capability_resolver.lock().await;
+    let nodes = resolver.nodes.clone();
+    let active_states = resolver.active_states.clone();
+    let events = resolver.journal.events.clone();
+
+    Json(serde_json::json!({
+        "nodes": nodes,
+        "active_states": active_states,
+        "events": events,
+    }))
+}
+
+/// GET `/api/projections/campaign`
+async fn campaign_projection_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let resolver = state.capability_resolver.lock().await;
+    let campaign_state = resolver.get_campaign_state();
+    Json(campaign_state)
+}
+
+/// POST `/api/capabilities/toggle`
+async fn capabilities_toggle_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<crate::registry::TransitionRequest>,
+) -> impl IntoResponse {
+    let mut resolver = state.capability_resolver.lock().await;
+    let response = resolver.handle_transition_request(payload);
+    Json(response)
+}
+
+#[derive(serde::Deserialize)]
+struct SemanticSearchRequest {
+    query: String,
+    top_n: Option<usize>,
+}
+
+#[derive(serde::Serialize)]
+struct SemanticSearchResult {
+    file_path: String,
+    block_name: String,
+    block_type: String,
+    start_line: usize,
+    end_line: usize,
+    content: String,
+    similarity: f32,
+}
+
+/// POST `/api/semantic_search`
+async fn semantic_search_handler(
+    State(_state): State<Arc<AppState>>,
+    Json(payload): Json<SemanticSearchRequest>,
+) -> impl IntoResponse {
+    let index_path = ".korg/index.json";
+    if !std::path::Path::new(index_path).exists() {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Index file not found. Please run indexer." })),
+        ).into_response();
+    }
+
+    let index = match crate::code_indexer::load_index(index_path) {
+        Ok(idx) => idx,
+        Err(e) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Failed to load index: {}", e) })),
+            ).into_response();
+        }
+    };
+
+    let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> = match crate::embeddings::CandleEmbeddingModel::load() {
+        Ok(model) => Box::new(model),
+        Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
+    };
+
+    let top_n = payload.top_n.unwrap_or(5);
+    let matches = crate::code_indexer::query_codebase(&index, &payload.query, &*embedding_model, top_n);
+
+    let results: Vec<SemanticSearchResult> = matches
+        .into_iter()
+        .map(|(sim, block)| SemanticSearchResult {
+            file_path: block.file_path,
+            block_name: block.block_name,
+            block_type: block.block_type,
+            start_line: block.start_line,
+            end_line: block.end_line,
+            content: block.content,
+            similarity: sim,
+        })
+        .collect();
+
+    (axum::http::StatusCode::OK, Json(results)).into_response()
+}
+
+/// GET `/api/journal`
+///
+/// Returns the last 100 capability kernel events as JSONL (one event per line).
+/// Suitable for streaming to log shippers, dashboards, or debugging sessions.
+async fn journal_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let resolver = state.capability_resolver.lock().await;
+    let jsonl = resolver.journal.to_json_lines(100);
+    let total = resolver.journal.len();
+    drop(resolver);
+
+    (
+        [
+            ("content-type", "application/x-ndjson"),
+            ("x-korg-journal-total", ""),
+        ],
+        format!("// total events: {}\n{}", total, jsonl),
+    )
+        .into_response()
+}
+
+/// GET `/api/metrics`
+///
+/// Returns a point-in-time snapshot of all atomic runtime counters.
+/// Lock-free; safe to call at any frequency.
+async fn metrics_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let snap = crate::metrics::snapshot();
+
+    // Extract active processes and retry budget if coordinator is available
+    let (active_processes, remaining_retry_budget) = {
+        let coord_guard = state.runtime_coordinator.lock().unwrap();
+        if let Some(coord) = &*coord_guard {
+            let active = coord.supervisor.active_count();
+            let remaining = coord.retry_budget.lock().unwrap().remaining();
+            (active, remaining)
+        } else {
+            (0, 0)
+        }
+    };
+
+    let mut json_val = serde_json::to_value(snap).unwrap_or(serde_json::json!({}));
+    if let Some(obj) = json_val.as_object_mut() {
+        obj.insert("active_processes".to_string(), serde_json::json!(active_processes));
+        obj.insert("remaining_retry_budget".to_string(), serde_json::json!(remaining_retry_budget));
+    }
+
+    Json(json_val)
+}
+
+/// GET `/api/workspaces`
+///
+/// Returns the current workspace manager snapshot — all known workspaces
+/// with their state, persona, routing_id, and path.
+async fn workspaces_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let metrics = crate::metrics::snapshot();
+
+    // Check if coordinator is present and get workspace manager snapshot
+    let coordinator_opt = {
+        let guard = state.runtime_coordinator.lock().unwrap();
+        guard.clone()
+    };
+
+    if let Some(coord) = coordinator_opt {
+        let wm = coord.workspace_manager.lock().await;
+        let list: Vec<serde_json::Value> = wm.snapshot_all()
+            .into_iter()
+            .map(|ws| serde_json::to_value(ws).unwrap_or(serde_json::Value::Null))
+            .collect();
+
+        Json(serde_json::json!({
+            "session_id": coord.session_id.to_string(),
+            "workspaces_created": metrics.workspaces_created,
+            "workspaces_completed": metrics.workspaces_completed,
+            "workspaces_destroyed": metrics.workspaces_destroyed,
+            "workers_completed": metrics.workers_completed,
+            "workers_crashed": metrics.workers_crashed,
+            "worker_timeouts": metrics.worker_timeouts,
+            "active_count": wm.active_workspaces().count(),
+            "workspaces": list,
+        }))
+    } else {
+        Json(serde_json::json!({
+            "session_id": "(no-active-session)",
+            "workspaces_created": metrics.workspaces_created,
+            "workspaces_completed": metrics.workspaces_completed,
+            "workspaces_destroyed": metrics.workspaces_destroyed,
+            "workers_completed": metrics.workers_completed,
+            "workers_crashed": metrics.workers_crashed,
+            "worker_timeouts": metrics.worker_timeouts,
+            "workspaces": Vec::<serde_json::Value>::new(),
+        }))
+    }
+}
+
+/// POST `/api/campaign/abort`
+///
+/// Forcibly aborts the currently running campaign by calling `abort()` on the coordinator.
+async fn campaign_abort_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let coordinator_opt = {
+        let guard = state.runtime_coordinator.lock().unwrap();
+        guard.clone()
+    };
+
+    if let Some(coordinator) = coordinator_opt {
+        coordinator.abort();
+        tracing::warn!(session_id = %coordinator.session_id, "campaign_abort_endpoint_triggered");
+        let _ = state.broadcaster.send(TuiUpdate::Trace(format!(
+            "[campaign-abort] Forcibly aborted the active campaign session: {}",
+            coordinator.session_id
+        )));
+        (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "aborted",
+                "session_id": coordinator.session_id.to_string(),
+            })),
+        ).into_response()
+    } else {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "No active campaign session to abort.",
+            })),
+        ).into_response()
+    }
 }
 
 // ============================================================================
@@ -2475,2327 +2800,6 @@ async fn test_adversarial_security_leaks() {
 </html>
 "##;
 
-const INDEX_HTML: &str = r##"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>korg — autonomous software engineering environment</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg-base: #000000;
-            --pane-bg: #050505;
-            --pane-header-bg: #030303;
-            --border-color: rgba(255, 255, 255, 0.04);
-            --border-active: #06b6d4;
-            --text-primary: #ffffff;
-            --text-secondary: #a1a1aa;
-            --text-muted: #52525b;
-            --font-sans: 'Outfit', sans-serif;
-            --font-heading: 'Plus Jakarta Sans', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
-            --accent-emerald: #10b981;
-            --accent-emerald-glow: rgba(16, 185, 129, 0.15);
-            --accent-cyan: #06b6d4;
-            --accent-cyan-glow: rgba(6, 182, 212, 0.15);
-            --accent-gold: #f59e0b;
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        html, body {
-            max-width: 100%;
-            overflow: hidden;
-            width: 100%;
-            height: 100%;
-        }
-
-        body {
-            font-family: var(--font-sans);
-            background-color: var(--bg-base);
-            color: var(--text-primary);
-            height: 100vh;
-            overflow: hidden;
-            display: grid;
-            grid-template-rows: auto 1fr;
-            position: relative;
-        }
-
-        /* Scrollbars */
-        ::-webkit-scrollbar {
-            width: 3px;
-            height: 3px;
-        }
-        ::-webkit-scrollbar-track {
-            background: var(--bg-base);
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #222222;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #444444;
-        }
-
-        .ambient-glow {
-            position: absolute;
-            top: -250px;
-            left: -250px;
-            width: 800px;
-            height: 800px;
-            background: radial-gradient(circle, rgba(245, 158, 11, 0.05) 0%, rgba(217, 119, 6, 0.05) 30%, transparent 70%);
-            filter: blur(120px);
-            pointer-events: none;
-            z-index: 0;
-            opacity: 0.8;
-            animation: float-glow 25s infinite ease-in-out alternate;
-            transition: background 1s ease-in-out;
-        }
-
-        @keyframes float-glow {
-            0% {
-                transform: translate(0, 0) scale(1);
-                opacity: 0.6;
-            }
-            50% {
-                transform: translate(120px, 80px) scale(1.08);
-                opacity: 0.8;
-            }
-            100% {
-                transform: translate(-80px, 150px) scale(0.95);
-                opacity: 0.5;
-            }
-        }
-
-        /* Ambient Glow States based on body mode classes */
-        body.mode-instant-active .ambient-glow {
-            background: radial-gradient(circle, rgba(239, 68, 68, 0.05) 0%, rgba(249, 115, 22, 0.05) 30%, transparent 70%);
-        }
-        body.mode-balanced-active .ambient-glow {
-            background: radial-gradient(circle, rgba(245, 158, 11, 0.05) 0%, rgba(217, 119, 6, 0.05) 30%, transparent 70%);
-        }
-        body.mode-heavy-active .ambient-glow {
-            background: radial-gradient(circle, rgba(16, 185, 129, 0.06) 0%, rgba(6, 182, 212, 0.06) 30%, transparent 70%);
-        }
-        body.mode-research-active .ambient-glow {
-            background: radial-gradient(circle, rgba(139, 92, 246, 0.05) 0%, rgba(236, 72, 153, 0.05) 30%, transparent 70%);
-        }
-        body.mode-recovery-active .ambient-glow {
-            background: radial-gradient(circle, rgba(220, 38, 38, 0.07) 0%, rgba(185, 28, 28, 0.05) 30%, transparent 70%);
-        }
-        body.mode-autonomous-active .ambient-glow {
-            background: radial-gradient(circle, rgba(6, 182, 212, 0.07) 0%, rgba(16, 185, 129, 0.07) 30%, transparent 70%);
-        }
-
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 14px 24px;
-            border-bottom: 1px solid var(--border-color);
-            background-color: rgba(0, 0, 0, 0.75);
-            backdrop-filter: blur(24px);
-            position: relative;
-            z-index: 10000;
-            width: 100%;
-            box-sizing: border-box;
-            flex-shrink: 0;
-        }
-
-        .logo-container {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            position: relative;
-            z-index: 10001;
-            flex-shrink: 0;
-        }
-
-        .logo-circle {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            background: #000000;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            color: #ffffff;
-            font-family: var(--font-mono);
-            font-size: 12px;
-            font-weight: 700;
-            box-shadow: 0 0 10px rgba(255, 255, 255, 0.05);
-            flex-shrink: 0;
-            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-            line-height: 1;
-            padding-bottom: 1px;
-        }
-
-        .logo-container:hover .logo-circle {
-            border-color: rgba(6, 182, 212, 0.8);
-            box-shadow: 0 0 12px rgba(6, 182, 212, 0.4);
-            transform: scale(1.08);
-        }
-
-        .logo {
-            font-family: var(--font-heading);
-            font-size: 20px;
-            font-weight: 800;
-            letter-spacing: -0.04em;
-            background: linear-gradient(135deg, #ffffff 60%, #71717a 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            text-transform: lowercase;
-            position: relative;
-            z-index: 10002;
-            flex-shrink: 0;
-        }
-
-        .logo-sub {
-            font-size: 11px;
-            color: var(--text-muted);
-            font-family: var(--font-mono);
-            border-left: 1px solid var(--border-color);
-            padding-left: 12px;
-            padding-bottom: 2px; /* Ensure descenders are not cut off */
-            letter-spacing: 0.05em;
-            line-height: 1.4;
-            margin-top: 0;
-            overflow: visible;
-            display: inline-block;
-            vertical-align: middle;
-            position: relative;
-            top: -1px; /* Visual baseline alignment correction */
-            z-index: 10002;
-            flex-shrink: 0;
-            white-space: nowrap;
-        }
-
-        .session-info {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .status-badge {
-            font-size: 11px;
-            font-family: var(--font-mono);
-            color: var(--text-secondary);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background-color: #ffffff;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 0.3; }
-            50% { opacity: 1; }
-            100% { opacity: 0.3; }
-        }
-
-        .session-id {
-            font-size: 11px;
-            font-family: var(--font-mono);
-            border: 1px solid var(--border-color);
-            padding: 3px 8px;
-            color: var(--text-secondary);
-        }
-
-        /* Layout Grid */
-        main {
-            display: grid;
-            grid-template-columns: 50% 50%;
-            grid-template-rows: 1fr 45px;
-            background-color: var(--bg-base);
-            overflow: hidden;
-            min-height: 0;
-            height: 100%;
-        }
-
-        .left-col, .right-col {
-            display: flex;
-            flex-direction: column;
-            border-right: 1px solid var(--border-color);
-            min-height: 0;
-            height: 100%;
-        }
-
-        .right-col {
-            border-right: none;
-        }
-
-        .pane {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            border-bottom: 1px solid var(--border-color);
-            overflow: hidden;
-            background-color: var(--pane-bg);
-            min-height: 0;
-        }
-
-        .pane:last-child {
-            border-bottom: none;
-        }
-
-        .pane-header {
-            padding: 10px 16px;
-            background-color: var(--pane-header-bg);
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .pane-title {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: var(--text-secondary);
-            text-transform: lowercase;
-            letter-spacing: 0.02em;
-        }
-
-        .pane-meta {
-            font-family: var(--font-mono);
-            font-size: 10px;
-            color: var(--text-muted);
-        }
-
-        .pane-body {
-            flex: 1;
-            padding: 16px;
-            overflow-y: auto;
-            position: relative;
-        }
-
-        /* Explainer Tooltips for Everyday Regular People */
-        .info-tooltip-container {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            margin-left: 6px;
-            color: var(--text-muted);
-            cursor: help;
-            vertical-align: middle;
-        }
-
-        .info-icon {
-            opacity: 0.5;
-            transition: opacity 0.2s ease, color 0.2s ease;
-        }
-
-        .info-tooltip-container:hover .info-icon {
-            opacity: 1;
-            color: var(--accent-cyan, #06b6d4);
-        }
-
-        .info-tooltip {
-            visibility: hidden;
-            width: 240px;
-            background-color: #0e0e11;
-            color: #d4d4d8;
-            text-align: left;
-            border: 1px solid #27272a;
-            border-radius: 6px;
-            padding: 10px 14px;
-            position: absolute;
-            z-index: 1000;
-            top: 130%;
-            left: 50%;
-            transform: translateX(-50%) translateY(5px);
-            opacity: 0;
-            transition: opacity 0.2s ease, transform 0.2s ease;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-            font-size: 11px;
-            font-family: var(--font-sans);
-            font-weight: 400;
-            line-height: 1.4;
-            pointer-events: none;
-            text-transform: none; /* keep normal case */
-            letter-spacing: normal;
-        }
-
-        .info-tooltip::after {
-            content: "";
-            position: absolute;
-            bottom: 100%;
-            left: 50%;
-            margin-left: -5px;
-            border-width: 5px;
-            border-style: solid;
-            border-color: transparent transparent #27272a transparent;
-        }
-
-        .info-tooltip-container:hover .info-tooltip {
-            visibility: visible;
-            opacity: 1;
-            transform: translateX(-50%) translateY(0);
-        }
-
-        /* Ambient Heavy Mode (Green & Cyan accents, Black & Gray theme) */
-        body.mode-heavy-active {
-            --bg-base: #000000;
-            --pane-bg: #050505;
-            --pane-header-bg: #050505;
-            --border-color: #222225;
-            background-color: #000000;
-            transition: all 0.5s ease;
-        }
-
-        body.mode-heavy-active header {
-            border-bottom: 1px solid rgba(16, 185, 129, 0.2);
-            box-shadow: 
-                0 4px 30px rgba(16, 185, 129, 0.03),
-                0 0 15px rgba(6, 182, 212, 0.02);
-            transition: all 0.5s ease;
-            background-color: rgba(5, 5, 5, 0.8) !important;
-        }
-
-        body.mode-heavy-active .pane-header {
-            border-bottom: 1px solid rgba(16, 185, 129, 0.1);
-            transition: all 0.5s ease;
-        }
-
-        body.mode-heavy-active .pane {
-            border-color: #222225;
-            background: #050505;
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.6);
-            transition: all 0.5s ease;
-        }
-
-        body.mode-heavy-active .pane:hover {
-            border-color: rgba(16, 185, 129, 0.25);
-            box-shadow: 0 0 15px rgba(16, 185, 129, 0.03), 0 0 30px rgba(6, 182, 212, 0.02);
-        }
-
-        body.mode-heavy-active .metric-card {
-            background: #09090b;
-            border-color: #222225;
-        }
-
-        body.mode-heavy-active .metric-card:hover {
-            border-color: rgba(6, 182, 212, 0.35);
-            box-shadow: 0 0 10px rgba(6, 182, 212, 0.04);
-        }
-
-        body.mode-heavy-active input[type="text"] {
-            background: #08080a !important;
-            border-color: #222225 !important;
-        }
-
-        body.mode-heavy-active input[type="text"]:focus {
-            border-color: rgba(16, 185, 129, 0.5) !important;
-            box-shadow: 0 0 8px rgba(16, 185, 129, 0.15) !important;
-        }
-
-        body.mode-heavy-active .mode-btn.active {
-            color: #ffffff;
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(6, 182, 212, 0.15) 100%) !important;
-            border: 1px solid rgba(16, 185, 129, 0.4) !important;
-            box-shadow: 0 0 10px rgba(16, 185, 129, 0.15);
-        }
-
-        /* Monaco Workspace Styling */
-        .workspace-body {
-            padding: 0;
-            background-color: #020202;
-        }
-
-        .code-container {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            line-height: 1.5;
-            color: #d4d4d8;
-            padding: 16px;
-            white-space: pre-wrap;
-            tab-size: 4;
-        }
-
-        .code-line {
-            display: flex;
-            position: relative;
-        }
-
-        .code-num {
-            width: 32px;
-            color: var(--text-muted);
-            user-select: none;
-            text-align: right;
-            margin-right: 16px;
-        }
-
-        .code-content {
-            flex-grow: 1;
-        }
-
-        .code-line.addition {
-            background-color: rgba(255, 255, 255, 0.05);
-            border-left: 2px solid #ffffff;
-            color: #ffffff;
-        }
-
-        .code-line.deletion {
-            background-color: rgba(255, 255, 255, 0.02);
-            border-left: 2px solid var(--text-muted);
-            color: var(--text-muted);
-            text-decoration: line-through;
-        }
-
-        .code-badge {
-            background-color: #ffffff;
-            color: #000000;
-            font-size: 9px;
-            padding: 1px 4px;
-            font-weight: 700;
-            margin-left: 8px;
-            vertical-align: middle;
-            text-transform: lowercase;
-        }
-
-        /* Terminal Console */
-        .console-body {
-            background-color: var(--bg-base);
-            font-family: var(--font-mono);
-            font-size: 11px;
-            line-height: 1.4;
-            color: #e4e4e7;
-        }
-
-        .console-line {
-            margin-bottom: 4px;
-        }
-
-        .console-prompt {
-            color: #ffffff;
-        }
-
-        .console-system {
-            color: var(--text-secondary);
-        }
-
-        .console-info {
-            color: #a1a1aa;
-        }
-
-        /* Metrics & Telemetry Grid */
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-
-        .metric-card {
-            border: 1px solid var(--border-color);
-            padding: 12px;
-            background-color: #030303;
-            text-align: left;
-        }
-
-        .metric-label {
-            font-family: var(--font-mono);
-            font-size: 10px;
-            color: var(--text-secondary);
-            text-transform: lowercase;
-            margin-bottom: 4px;
-        }
-
-        .metric-value {
-            font-size: 18px;
-            font-weight: 700;
-            font-family: var(--font-mono);
-        }
-
-        .sparkline-container {
-            border: 1px solid var(--border-color);
-            background-color: #030303;
-            padding: 16px;
-            height: calc(100% - 70px);
-            min-height: 80px;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .sparkline-header {
-            display: flex;
-            justify-content: space-between;
-            font-family: var(--font-mono);
-            font-size: 10px;
-            color: var(--text-secondary);
-            margin-bottom: 12px;
-            text-transform: lowercase;
-        }
-
-        .sparkline-canvas {
-            width: 100%;
-            flex-grow: 1;
-        }
-
-        /* Timeline Merkle DAG */
-        .dag-container {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .dag-svg {
-            flex-grow: 1;
-            width: 100%;
-            background-color: var(--bg-base);
-        }
-
-        .dag-node {
-            cursor: pointer;
-        }
-
-        .dag-node circle {
-            fill: var(--bg-base);
-            stroke: #333333;
-            stroke-width: 1.5;
-            transition: all 0.2s;
-        }
-
-        .dag-node:hover circle {
-            stroke: #ffffff;
-        }
-
-        .dag-node.orchestration circle { stroke: #38bdf8; }
-        .dag-node.orchestration.active circle { fill: #38bdf8; stroke: #ffffff; filter: drop-shadow(0 0 6px #38bdf8); }
-        .dag-node.worker circle { stroke: #10b981; }
-        .dag-node.worker.active circle { fill: #10b981; stroke: #ffffff; filter: drop-shadow(0 0 6px #10b981); }
-        .dag-node.evaluator circle { stroke: #ef4444; }
-        .dag-node.evaluator.active circle { fill: #ef4444; stroke: #ffffff; filter: drop-shadow(0 0 6px #ef4444); }
-        .dag-node.operator circle { stroke: #f59e0b; }
-        .dag-node.operator.active circle { fill: #f59e0b; stroke: #ffffff; filter: drop-shadow(0 0 6px #f59e0b); }
-
-        .dag-node-text {
-            font-family: var(--font-mono);
-            font-size: 9px;
-            fill: var(--text-secondary);
-            text-anchor: start;
-        }
-
-        .dag-node.active .dag-node-text {
-            fill: #ffffff;
-            font-weight: bold;
-        }
-
-        .dag-edge {
-            stroke: #222222;
-            stroke-width: 1;
-            fill: none;
-        }
-
-        .dag-edge.active {
-            stroke: #555555;
-        }
-
-        /* Provenance and Swarm Brains */
-        .provenance-container {
-            display: grid;
-            grid-template-columns: 55% 45%;
-            gap: 12px;
-            height: 100%;
-        }
-
-        .prov-details {
-            font-family: var(--font-mono);
-            font-size: 10px;
-            line-height: 1.6;
-            border-right: 1px solid var(--border-color);
-            padding-right: 12px;
-        }
-
-        .prov-row {
-            display: flex;
-            margin-bottom: 6px;
-        }
-
-        .prov-key {
-            width: 90px;
-            color: var(--text-muted);
-            text-transform: lowercase;
-        }
-
-        .prov-val {
-            flex-grow: 1;
-            color: var(--text-primary);
-        }
-
-        .swarm-actors {
-            padding-left: 6px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .actor-card {
-            border: 1px solid var(--border-color);
-            padding: 6px 10px;
-            background-color: #030303;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .actor-name {
-            font-size: 11px;
-            font-weight: 600;
-            color: #ffffff;
-            text-transform: lowercase;
-        }
-
-        .actor-lock {
-            font-family: var(--font-mono);
-            font-size: 9px;
-            padding: 1px 5px;
-            border: 1px solid var(--border-color);
-            color: var(--text-secondary);
-        }
-
-        .actor-lock.active {
-            background-color: #ffffff;
-            color: #000000;
-            border-color: #ffffff;
-        }
-
-        /* Replay Scrubber Bottom Bar */
-        .bottom-bar {
-            grid-row: 2;
-            grid-column: 1 / span 2;
-            border-top: 1px solid var(--border-color);
-            background-color: var(--bg-base);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 24px;
-            font-family: var(--font-mono);
-            font-size: 11px;
-        }
-
-        .scrubber-info {
-            color: var(--text-secondary);
-            text-transform: lowercase;
-        }
-
-        .scrubber-track {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            flex-grow: 1;
-            max-width: 600px;
-            margin: 0 40px;
-        }
-
-        .scrubber-btn {
-            background: none;
-            border: none;
-            color: var(--text-secondary);
-            cursor: pointer;
-            font-family: var(--font-mono);
-            font-size: 12px;
-            padding: 4px;
-        }
-
-        .scrubber-btn:hover {
-            color: #ffffff;
-        }
-
-        .scrubber-slider-container {
-            position: relative;
-            flex-grow: 1;
-            height: 4px;
-            background: #222222;
-            cursor: pointer;
-        }
-
-        .scrubber-progress {
-            position: absolute;
-            left: 0;
-            top: 0;
-            height: 100%;
-            background: #ffffff;
-            width: 0%;
-        }
-
-        .scrubber-handle {
-            position: absolute;
-            top: -4px;
-            width: 12px;
-            height: 12px;
-            background: #ffffff;
-            border: 1px solid #000000;
-            transform: translateX(-50%);
-            left: 0%;
-        }
-
-        .footer-status {
-            color: var(--text-muted);
-            text-transform: lowercase;
-        }
-
-        /* Inline Actions Pane - 100% Zero-Overlap DOM (Grok/xAI inspired) */
-        .inline-actions-pane {
-            display: flex;
-            flex-direction: column;
-            background-color: #030303;
-            border-bottom: 1px solid var(--border-color);
-            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-            max-height: 0;
-            overflow: hidden;
-            opacity: 0;
-            box-sizing: border-box;
-            width: 100%;
-        }
-
-        .inline-actions-pane.active {
-            max-height: 550px;
-            opacity: 1;
-            padding: 24px;
-            border-bottom: 1px solid var(--border-color);
-            overflow-y: auto;
-        }
-
-        /* Glowing states for different action categories */
-        .inline-actions-pane.approval-gate {
-            border-bottom: 2px solid var(--accent-gold);
-            box-shadow: inset 0 0 15px rgba(245, 158, 11, 0.05);
-        }
-
-        .inline-actions-pane.consensus-gate {
-            border-bottom: 2px solid var(--accent-emerald);
-            box-shadow: inset 0 0 15px rgba(16, 185, 129, 0.05);
-        }
-
-        .inline-actions-pane.fork-gate {
-            border-bottom: 2px solid var(--accent-cyan);
-            box-shadow: inset 0 0 15px rgba(6, 182, 212, 0.05);
-        }
-
-        .inline-container {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            width: 100%;
-        }
-
-        .modal-overlay {
-            display: none;
-            width: 100%;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .modal-overlay.active {
-            display: flex;
-        }
-
-        .modal-card {
-            background-color: transparent;
-            border: none;
-            width: 100%;
-            max-width: 100%;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .modal-title {
-            font-family: var(--font-mono);
-            font-size: 13px;
-            font-weight: bold;
-            color: #ffffff;
-            text-transform: lowercase;
-            letter-spacing: 0.05em;
-            border-bottom: 1px solid #222222;
-            padding-bottom: 10px;
-        }
-
-        .modal-desc {
-            font-size: 12px;
-            color: var(--text-secondary);
-            line-height: 1.6;
-        }
-
-        .modal-input {
-            width: 100%;
-            background-color: var(--bg-base);
-            border: 1px solid #333333;
-            color: #ffffff;
-            padding: 8px 12px;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            outline: none;
-        }
-
-        .modal-input:focus {
-            border-color: #ffffff;
-        }
-
-        .modal-criteria-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin: 10px 0;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-
-        .modal-criterion-item {
-            display: flex;
-            justify-content: space-between;
-            font-family: var(--font-mono);
-            font-size: 10px;
-            padding: 6px;
-            border: 1px solid #1c1c1e;
-            background-color: #080808;
-        }
-
-        .criterion-text {
-            color: var(--text-primary);
-        }
-
-        .criterion-similarity {
-            color: var(--text-secondary);
-        }
-
-        .modal-actions {
-            display: flex;
-            gap: 12px;
-            margin-top: 10px;
-        }
-
-        .btn {
-            font-family: var(--font-sans);
-            font-size: 11px;
-            font-weight: 600;
-            padding: 8px 16px;
-            border: 1px solid #333333;
-            background: none;
-            color: #ffffff;
-            cursor: pointer;
-            text-transform: lowercase;
-            transition: all 0.2s;
-        }
-
-        .btn:hover {
-            border-color: #ffffff;
-            background-color: #ffffff;
-            color: #000000;
-        }
-
-        .btn-primary {
-            background-color: #ffffff;
-            color: #000000;
-            border-color: #ffffff;
-        }
-
-        .btn-primary:hover {
-            background-color: #e4e4e7;
-            border-color: #e4e4e7;
-        }
-
-        .btn-danger {
-            border-color: #331111;
-            color: #ff5555;
-        }
-
-        .btn-danger:hover {
-            background-color: #ff5555;
-            color: #ffffff;
-            border-color: #ff5555;
-        }
-
-        .btn-warning {
-            border-color: #332200;
-            color: #ffaa00;
-        }
-
-        .btn-warning:hover {
-            background-color: #ffaa00;
-            color: #000000;
-            border-color: #ffaa00;
-        }
-
-        /* PREMIUM MONOCHROME COGNITION MODE SELECTOR STYLE */
-        .cognition-selector-container {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            background-color: #0c0c0e;
-            border: 1px solid #27272a;
-            padding: 3px 6px;
-            border-radius: 6px;
-        }
-
-        .mode-pulse-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background-color: #a1a1aa; /* silver */
-            margin-left: 6px;
-            transition: background-color 0.4s ease, box-shadow 0.4s ease;
-        }
-
-        /* Pulsating depth pulses for different modes */
-        .mode-pulse-dot.instant {
-            background-color: #38bdf8;
-            box-shadow: 0 0 8px #38bdf8;
-            animation: pulse-blue 2s infinite;
-        }
-        .mode-pulse-dot.balanced {
-            background-color: #a1a1aa;
-            box-shadow: 0 0 6px #a1a1aa;
-            animation: pulse-silver 2s infinite;
-        }
-        .mode-pulse-dot.heavy {
-            background: linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
-            box-shadow: 
-                0 0 10px rgba(16, 185, 129, 0.6),
-                0 0 16px rgba(6, 182, 212, 0.4);
-            animation: pulse-heavy-gradient 1.5s infinite alternate;
-        }
-        .mode-pulse-dot.research {
-            background-color: #22c55e;
-            box-shadow: 0 0 8px #22c55e;
-            animation: pulse-green 2s infinite;
-        }
-        .mode-pulse-dot.recovery {
-            background-color: #ef4444;
-            box-shadow: 0 0 12px #ef4444;
-            animation: pulse-red 2s infinite;
-        }
-        .mode-pulse-dot.autonomous {
-            background-color: #f59e0b;
-            box-shadow: 0 0 10px #f59e0b;
-            animation: pulse-gold 2s infinite;
-        }
-
-        @keyframes pulse-blue {
-            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
-        }
-        @keyframes pulse-silver {
-            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
-        }
-        @keyframes pulse-heavy-gradient {
-            0% { opacity: 0.5; transform: scale(0.9); }
-            100% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 14px rgba(16, 185, 129, 0.8), 0 0 22px rgba(6, 182, 212, 0.6); }
-        }
-        @keyframes pulse-green {
-            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
-        }
-        @keyframes pulse-red {
-            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
-        }
-        @keyframes pulse-gold {
-            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
-        }
-
-        .cognition-selector {
-            display: flex;
-            gap: 2px;
-        }
-
-        .mode-btn {
-            background: transparent;
-            border: 1px solid transparent;
-            color: #71717a;
-            font-family: var(--font-sans);
-            font-size: 11px;
-            font-weight: 500;
-            padding: 4px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-            text-transform: lowercase;
-            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-
-        .mode-btn:hover {
-            color: #ffffff;
-            background-color: #18181b;
-        }
-
-        .mode-btn.active {
-            color: #ffffff;
-            background-color: #27272a;
-            border-color: #3f3f46;
-        }
-
-        /* Styling for side-by-side diff comparisons in zinc-gray and pitch-black */
-        .diff-card {
-            background: #080808;
-            border: 1px solid #1c1c1c;
-            border-radius: 6px;
-            margin-bottom: 16px;
-            overflow: hidden;
-        }
-        .diff-card-header {
-            background: #111111;
-            border-bottom: 1px solid #1c1c1c;
-            padding: 8px 12px;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: #a1a1aa;
-            display: flex;
-            justify-content: space-between;
-        }
-        .diff-card-body {
-            padding: 8px 12px;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            overflow-x: auto;
-            white-space: pre;
-        }
-        .diff-line-del {
-            color: #ef4444;
-            background: rgba(239, 68, 68, 0.1);
-            display: block;
-            width: 100%;
-        }
-        .diff-line-add {
-            color: #22c55e;
-            background: rgba(34, 197, 94, 0.1);
-            display: block;
-            width: 100%;
-        }
-        .diff-line-normal {
-            color: #a1a1aa;
-            display: block;
-            width: 100%;
-        }
-
-        @media (max-width: 1100px) {
-            .logo-sub {
-                display: none !important;
-            }
-        }
-
-        @media (max-width: 850px) {
-            header {
-                padding: 10px 16px;
-                gap: 8px;
-            }
-            .session-id {
-                display: none;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="ambient-glow"></div>
-    <header>
-        <div class="logo-container">
-            <div class="logo-circle">k</div>
-            <span class="logo">korg</span>
-            <span class="logo-sub">autonomous engineering runtime</span>
-        </div>
-
-        <div class="cognition-selector-container">
-            <div class="mode-pulse-dot balanced" id="mode-pulse"></div>
-            <div class="cognition-selector">
-                <button class="mode-btn" data-mode="instant" onclick="setCognitionMode('instant')">instant</button>
-                <button class="mode-btn active" data-mode="balanced" onclick="setCognitionMode('balanced')">balanced</button>
-                <button class="mode-btn" data-mode="heavy" onclick="setCognitionMode('heavy')">heavy</button>
-                <button class="mode-btn" data-mode="research" onclick="setCognitionMode('research')">research</button>
-                <button class="mode-btn" data-mode="recovery" onclick="setCognitionMode('recovery')">recovery</button>
-                <button class="mode-btn" data-mode="autonomous" onclick="setCognitionMode('autonomous')">autonomous</button>
-            </div>
-        </div>
-        <div class="session-info">
-            <div class="status-badge">
-                <span class="status-dot"></span>
-                <span>telemetry active</span>
-            </div>
-            <div class="session-id" id="session-id">session: initializing</div>
-        </div>
-    </header>
-
-    <main>
-        <!-- Left Column: Workspace & Console -->
-        <div class="left-col">
-            <!-- Inline Actions Pane (Zero-Overlap Dynamic Action Center) -->
-            <div id="inline-actions-pane" class="inline-actions-pane">
-                <!-- Human Security Approval Modal -->
-                <div class="modal-overlay" id="approval-modal">
-                    <div class="modal-card">
-                        <div class="modal-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; color: #f59e0b; margin-right: 8px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg> human security approval gate</div>
-                        <div class="modal-desc" id="approval-modal-desc">
-                            a zero-trust security policy has triggered a mandate for human operator verification.
-                        </div>
-                        <div class="modal-actions">
-                            <button class="btn btn-primary" id="btn-approve-raw" onclick="submitContractFeedback('Approve')">approve execution</button>
-                            <button class="btn btn-warning" id="btn-approve-redacted" style="display: none;" onclick="submitContractFeedback('Force')">approve redacted</button>
-                            <button class="btn btn-danger" onclick="submitContractFeedback('Reject')">reject & terminate</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Swarm Contract Consensus Modal -->
-                <div class="modal-overlay" id="contract-modal">
-                    <div class="modal-card">
-                        <div class="modal-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; color: #10b981; margin-right: 8px;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg> swarm contract consensus & negotiation</div>
-                        <div class="modal-desc">
-                            the swarm is proposing a contract round for autonomous execution. review the criteria:
-                            <div class="modal-criteria-list" id="contract-criteria-list">
-                                <!-- Criteria populated dynamically -->
-                            </div>
-                        </div>
-                        <div class="modal-input-container" id="custom-criterion-container" style="display: none; margin-top: 8px;">
-                            <div class="modal-label" style="font-family: var(--font-mono); font-size: 10px; margin-bottom: 4px; color: var(--text-secondary);">inject custom acceptance criterion:</div>
-                            <input type="text" class="modal-input" id="custom-criterion-input" placeholder="e.g. must pass tools::tests::test_unified_diff">
-                        </div>
-                        <div class="modal-actions">
-                            <button class="btn btn-primary" onclick="submitContractFeedback('Approve')">approve swarm contract</button>
-                            <button class="btn" onclick="submitContractFeedback('Reject')">demand revision</button>
-                            <button class="btn" id="btn-custom-toggle" onclick="toggleCustomCriterion()">override & add custom</button>
-                            <button class="btn btn-primary" id="btn-custom-submit" style="display: none;" onclick="submitCustomCriterion()">inject & approve</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Playhead Fork Modal -->
-                <div class="modal-overlay" id="fork-modal">
-                    <div class="modal-card">
-                        <div class="modal-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; margin-right: 8px;"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 15V9a4 4 0 0 0-4-4H9"></path><line x1="6" y1="9" x2="6" y2="15"></line></svg> playhead steering & workspace fork</div>
-                        <div class="modal-desc">
-                            you are about to fork the swarm execution back to transaction <span id="fork-modal-tx" style="font-weight: bold; color: #fff;">tx_00</span>.
-                            <p style="margin-top: 8px; font-size: 11px; color: var(--text-secondary);">
-                                this will physically revert your workspace codebase (via git tree) and logically rehydrate the blackboard to this point.
-                            </p>
-                            <div class="modal-input-container" style="margin-top: 12px;">
-                                <div class="modal-label" style="font-family: var(--font-mono); font-size: 10px; margin-bottom: 4px; color: var(--text-secondary);">provide steering directive for the new branch:</div>
-                                <input type="text" class="modal-input" id="fork-directive-input" placeholder="e.g., focus on robust parser rules">
-                            </div>
-                        </div>
-                        <div class="modal-actions">
-                            <button class="btn btn-primary" onclick="submitFork()">execute fork</button>
-                            <button class="btn" onclick="closeForkModal()">cancel</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="pane" style="flex: 6;">
-                <div class="pane-header">
-                    <span class="pane-title" id="workspace-title">
-                        workspace
-                        <span class="info-tooltip-container">
-                            <svg class="info-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                            <span class="info-tooltip">The active file viewer where Korg's specialized AI agents write, edit, and audit code in real time.</span>
-                        </span>
-                    </span>
-                    <span class="pane-meta" id="workspace-meta">src/llm.rs — mono view</span>
-                </div>
-                <div class="pane-body workspace-body" style="position: relative;">
-                    <div class="code-container" id="workspace-content"></div>
-                    <div class="diff-container" id="workspace-diffs" style="display: none; padding: 12px; overflow-y: auto; height: 100%; width: 100%;"></div>
-                </div>
-            </div>
-            <div class="pane" style="flex: 4; display: flex; flex-direction: column;">
-                <div class="pane-header">
-                    <span class="pane-title">
-                        console
-                        <span class="info-tooltip-container">
-                            <svg class="info-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                            <span class="info-tooltip">Live terminal output displaying Korg compiling files, running test commands, and resolving bug reports in the sandbox.</span>
-                        </span>
-                    </span>
-                    <span class="pane-meta">runtime stdout</span>
-                </div>
-                <div class="pane-body console-body" id="console-content" style="flex: 1; overflow-y: auto;"></div>
-                <div style="border-top: 1px solid var(--border-color); padding: 8px; display: flex; gap: 8px; background: #000;">
-                    <input type="text" id="console-input" placeholder="Type command/approval (e.g., 'y', 'n', or instruction) and press Enter..." style="flex: 1; background: #111; border: 1px solid #222; color: #fff; padding: 8px; font-family: var(--font-mono); font-size: 12px; outline: none; border-radius: 4px;" />
-                    <button id="console-input-btn" style="background: #222; border: 1px solid #333; color: #fff; padding: 8px 16px; font-family: var(--font-mono); font-size: 12px; cursor: pointer; border-radius: 4px;">SEND</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Right Column: Telemetry, Timeline, Provenance -->
-        <div class="right-col">
-            <div class="pane" style="flex: 3;">
-                <div class="pane-header">
-                    <span class="pane-title">
-                        telemetry
-                        <span class="info-tooltip-container">
-                            <svg class="info-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                            <span class="info-tooltip">Real-time measurements tracking Korg's execution velocity, security risks, timeline progress, and mathematical thinking scores.</span>
-                        </span>
-                    </span>
-                    <span class="pane-meta">realtime metrics</span>
-                </div>
-                <div class="pane-body" style="padding: 12px;">
-                    <div class="metrics-grid">
-                        <div class="metric-card">
-                            <div class="metric-label">velocity</div>
-                            <div class="metric-value" id="metric-velocity">0.0 t/s</div>
-                        </div>
-                        <div class="metric-card">
-                            <div class="metric-label">risk</div>
-                            <div class="metric-value" id="metric-risk">0.00</div>
-                        </div>
-                        <div class="metric-card">
-                            <div class="metric-label">progress</div>
-                            <div class="metric-value" id="metric-progress">0.0%</div>
-                        </div>
-                        <div class="metric-card">
-                            <div class="metric-label">entropy</div>
-                            <div class="metric-value" id="metric-entropy">0.000</div>
-                        </div>
-                    </div>
-                    <div class="sparkline-container">
-                        <div class="sparkline-header">
-                            <span>entropy trajectory h_sem</span>
-                            <span id="entropy-current">0.000</span>
-                        </div>
-                        <canvas class="sparkline-canvas" id="sparkline-canvas"></canvas>
-                    </div>
-                </div>
-            </div>
-            <div class="pane" style="flex: 4;">
-                <div class="pane-header">
-                    <span class="pane-title">
-                        timeline & vision scrubber
-                        <span class="info-tooltip-container">
-                            <svg class="info-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                            <span class="info-tooltip">An interactive history of Korg's agent network. Drag the scrubber bar below to view screenshots of active browser campaigns.</span>
-                        </span>
-                    </span>
-                    <span class="pane-meta">merkle-dag & visual screenshot carousel</span>
-                </div>
-                <div class="pane-body" style="padding: 0; display: flex; flex-direction: column;">
-                    <div class="dag-container" style="flex: 1; min-height: 180px;">
-                        <svg class="dag-svg" id="dag-svg" viewBox="0 0 600 240">
-                            <!-- SVG elements will be drawn dynamically -->
-                        </svg>
-                    </div>
-                    
-                    <!-- Visual Screenshot Scrubber Section -->
-                    <div class="screenshot-carousel-section" style="border-top: 1px solid #1a1a1a; padding: 12px; background: #050505; display: flex; flex-direction: column; gap: 8px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #888;">Visual Screenshot Stream</span>
-                            <span id="screenshot-index-badge" style="font-family: var(--font-mono); font-size: 9px; padding: 2px 6px; background: #111; border: 1px solid #222; border-radius: 3px; color: #fff;">no frames</span>
-                        </div>
-                        
-                        <!-- Slide display -->
-                        <div id="screenshot-carousel-display" style="width: 100%; height: 180px; display: flex; justify-content: center; align-items: center; background: #000; border: 1px solid #111; overflow: hidden; position: relative;">
-                            <img id="screenshot-carousel-img" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;" />
-                            <div id="screenshot-carousel-placeholder" style="font-family: var(--font-mono); font-size: 11px; color: #444;">[no vision attachments captured]</div>
-                            <div id="screenshot-carousel-verdict" style="position: absolute; bottom: 8px; right: 8px; font-family: var(--font-mono); font-size: 9px; padding: 2px 6px; border-radius: 2px; font-weight: bold; display: none;"></div>
-                        </div>
-
-                        <!-- Scrubber slider and playback controls -->
-                        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
-                            <button id="carousel-play-btn" style="background: none; border: 1px solid #222; color: #fff; font-size: 10px; font-family: var(--font-mono); padding: 4px 8px; cursor: pointer; border-radius: 3px; min-width: 48px;">PLAY</button>
-                            <input type="range" id="carousel-scrubber" min="0" max="0" value="0" style="flex: 1; opacity: 0.8; accent-color: #fff; cursor: pointer;" disabled />
-                        </div>
-                        
-                        <!-- Description and details -->
-                        <div id="screenshot-carousel-desc" style="font-family: var(--font-mono); font-size: 9px; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;">-</div>
-                    </div>
-                </div>
-            </div>
-            <div class="pane" style="flex: 3;">
-                <div class="pane-header">
-                    <span class="pane-title">
-                        provenance
-                        <span class="info-tooltip-container">
-                            <svg class="info-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                            <span class="info-tooltip">The secure cryptographic record keeping proof of the AI's signatures, file modifications, and safety verification hashes.</span>
-                        </span>
-                    </span>
-                    <span class="pane-meta">zero-trust evaluation blackboard</span>
-                </div>
-                <div class="pane-body" style="padding: 12px;">
-                    <div class="provenance-container">
-                        <div class="prov-details" id="provenance-details">
-                            <div class="prov-row">
-                                <div class="prov-key">ed25519 key</div>
-                                <div class="prov-val" style="font-size: 9px;">8f3c29a2b7e5... [verified ✓]</div>
-                            </div>
-                            <div class="prov-row">
-                                <div class="prov-key">merkle root</div>
-                                <div class="prov-val" style="font-size: 9px;" id="merkle-root">a7b8c9d0e1f2...</div>
-                            </div>
-                            <div class="prov-row">
-                                <div class="prov-key">authority</div>
-                                <div class="prov-val">swarmauthority-v1</div>
-                            </div>
-                            <div class="prov-row">
-                                <div class="prov-key">policy engine</div>
-                                <div class="prov-val">zero-trust active</div>
-                            </div>
-                            <div class="prov-row">
-                                <div class="prov-key">ktrans status</div>
-                                <div class="prov-val" id="ktrans-status">idle</div>
-                            </div>
-                        </div>
-                        <div class="swarm-actors" id="swarm-actors-list">
-                            <!-- Swarm actors and their locks will be rendered here -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Bottom Scrubber Bar -->
-        <div class="bottom-bar">
-            <div class="scrubber-info">
-                <span>playhead: tx_<span id="playhead-num">00</span></span>
-            </div>
-            <div class="scrubber-track">
-                <button class="scrubber-btn" onclick="adjustPlayhead(-1)">◀</button>
-                <div class="scrubber-slider-container" id="scrubber-container">
-                    <div class="scrubber-progress" id="scrubber-progress"></div>
-                    <div class="scrubber-handle" id="scrubber-handle"></div>
-                </div>
-                <button class="scrubber-btn" onclick="adjustPlayhead(1)">▶</button>
-            </div>
-            <div class="footer-status">
-                <span>[esc] quit │ [p] pause │ [f] steer fork │ playhead key scrubbing active</span>
-            </div>
-        </div>
-    </main>
-
-    <script>
-        // Inline Actions Pane controllers
-        function showInlineActionHub(type) {
-            const hub = document.getElementById("inline-actions-pane");
-            
-            // Remove active class from all modal overlays first to reset their display
-            document.getElementById("approval-modal").classList.remove("active");
-            document.getElementById("contract-modal").classList.remove("active");
-            document.getElementById("fork-modal").classList.remove("active");
-            
-            // Remove all gate theme classes
-            hub.classList.remove("approval-gate", "consensus-gate", "fork-gate");
-            
-            if (type === "approval") {
-                document.getElementById("approval-modal").classList.add("active");
-                hub.classList.add("approval-gate");
-            } else if (type === "contract") {
-                document.getElementById("contract-modal").classList.add("active");
-                hub.classList.add("consensus-gate");
-            } else if (type === "fork") {
-                document.getElementById("fork-modal").classList.add("active");
-                hub.classList.add("fork-gate");
-            }
-            
-            hub.classList.add("active");
-        }
-        
-        function closeInlineActionHub() {
-            const hub = document.getElementById("inline-actions-pane");
-            hub.classList.remove("active");
-            
-            document.getElementById("approval-modal").classList.remove("active");
-            document.getElementById("contract-modal").classList.remove("active");
-            document.getElementById("fork-modal").classList.remove("active");
-        }
-
-        // Core Web App State
-        let playhead = 0;
-        let maxPlayhead = 5;
-        let entropyHistory = [];
-        let sessionID = 'initializing...';
-
-        // Dynamic Nodes and Edges for the Merkle-DAG Graph
-        let dagNodes = [
-            { id: 0, label: 'tx_00: genesis', desc: 'orchestration', x: 80, y: 120, tx_hash: 'genesis', parent_hashes: [], state_merkle_root: 'sha256:genesis', codebase_merkle_root: 'sha256:genesis' },
-            { id: 1, label: 'tx_01: negotiate_contract', desc: 'orchestration', x: 180, y: 80 },
-            { id: 2, label: 'tx_02: dispatch_concurrent', desc: 'worker', x: 280, y: 80 },
-            { id: 3, label: 'tx_03: generate_patch', desc: 'worker', x: 380, y: 120 },
-            { id: 4, label: 'tx_04: evaluate_verdict', desc: 'evaluator', x: 480, y: 120 },
-            { id: 5, label: 'tx_05: operator_steer', desc: 'operator', x: 520, y: 180 }
-        ];
-
-        let edges = [
-            { from: 0, to: 1 },
-            { from: 1, to: 2 },
-            { from: 2, to: 3 },
-            { from: 3, to: 4 },
-            { from: 4, to: 5 },
-            { from: 0, to: 5 }
-        ];
-
-        // Pre-recorded workspace code snippets corresponding to playhead positions
-        const codeSnippets = {
-            0: [
-                { num: 1, content: '// korg heavy-tier swarm initialization & genesis', style: 'color: var(--text-muted);' },
-                { num: 2, content: 'fn main() -> Result<()> {', style: '' },
-                { num: 3, content: '    let mut swarm = Swarm::new(4);', style: '' },
-                { num: 4, content: '    swarm.negotiate_contract()?;', style: 'color: #ffffff; font-weight: 600;' },
-                { num: 5, content: '    swarm.start_execution()?;', style: 'color: #ffffff; font-weight: 600;' },
-                { num: 6, content: '    Ok(())', style: '' },
-                { num: 7, content: '}', style: '' }
-            ],
-            1: [
-                { num: 10, content: '// swarm contract negotiator layer', style: 'color: var(--text-muted);' },
-                { num: 11, content: 'pub async fn negotiate(target: &str) -> Result<Contract> {', style: '' },
-                { num: 12, content: '    // [LOCKED BY CAPTAIN: READ-LOCK ACTIVE]', style: 'background-color: #ffffff; color: #000000; font-weight: bold; padding: 0 4px;' },
-                { num: 13, content: '    let criteria = self.generate_proposal(target).await?;', style: '' },
-                { num: 14, content: '    let contract = self.reconcile(criteria).await?;', style: '' },
-                { num: 15, content: '    Ok(contract)', style: '' },
-                { num: 16, content: '}', style: '' }
-            ],
-            2: [
-                { num: 10, content: '// swarm contract negotiator layer', style: 'color: var(--text-muted);' },
-                { num: 11, content: 'pub async fn negotiate(target: &str) -> Result<Contract> {', style: '' },
-                { num: 12, content: '    // [LOCKED BY CAPTAIN: READ-LOCK ACTIVE]', style: 'background-color: #ffffff; color: #000000; font-weight: bold; padding: 0 4px;' },
-                { num: 13, content: '    let criteria = self.generate_proposal(target).await?;', style: '' },
-                { num: 14, content: '    let contract = self.reconcile(criteria).await?;', style: '' },
-                { num: 15, content: '    Ok(contract)', style: '' },
-                { num: 16, content: '}', style: '' }
-            ],
-            3: [
-                { num: 20, content: '// model-agnostic LlmProvider complete method', style: 'color: var(--text-muted);' },
-                { num: 21, content: 'pub fn complete(&self, req: LlmRequest) -> Result<LlmResponse> {', style: '' },
-                { num: 22, content: '    let client = req.provider.get_client();', style: '' },
-                { num: 23, content: '    // [LOCKED BY BENJAMIN: WRITE-LOCK ACTIVE <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>]', style: 'background-color: #8e8e93; color: #000000; font-weight: bold; padding: 0 4px;' },
-                { num: 24, content: '+   let request_payload = req.build_payload()?;', style: 'color: #ffffff; font-weight: bold;', class: 'addition' },
-                { num: 25, content: '+   let res = self.retry_decorator.execute(|| {', style: 'color: #ffffff; font-weight: bold;', class: 'addition' },
-                { num: 26, content: '+       client.post(&req.url, &request_payload)', style: 'color: #ffffff; font-weight: bold;', class: 'addition' },
-                { num: 27, content: '+   })?;', style: 'color: #ffffff; font-weight: bold;', class: 'addition' },
-                { num: 28, content: '-   let res = client.post(&req.url)?;', style: 'color: var(--text-muted); text-decoration: line-through;', class: 'deletion' },
-                { num: 29, content: '    Ok(res)', style: '' },
-                { num: 30, content: '}', style: '' }
-            ],
-            4: [
-                { num: 20, content: '// model-agnostic LlmProvider complete method', style: 'color: var(--text-muted);' },
-                { num: 21, content: 'pub fn complete(&self, req: LlmRequest) -> Result<LlmResponse> {', style: '' },
-                { num: 22, content: '    let client = req.provider.get_client();', style: '' },
-                { num: 23, content: '    // [LOCKED BY BENJAMIN: WRITE-LOCK ACTIVE <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>]', style: 'background-color: #8e8e93; color: #000000; font-weight: bold; padding: 0 4px;' },
-                { num: 24, content: '+   let request_payload = req.build_payload()?;', style: 'color: #ffffff; font-weight: bold;', class: 'addition' },
-                { num: 25, content: '+   let res = self.retry_decorator.execute(|| {', style: 'color: #ffffff; font-weight: bold;', class: 'addition' },
-                { num: 26, content: '+       client.post(&req.url, &request_payload)', style: 'color: #ffffff; font-weight: bold;', class: 'addition' },
-                { num: 27, content: '+   })?;', style: 'color: #ffffff; font-weight: bold;', class: 'addition' },
-                { num: 28, content: '-   let res = client.post(&req.url)?;', style: 'color: var(--text-muted); text-decoration: line-through;', class: 'deletion' },
-                { num: 29, content: '    Ok(res)', style: '' },
-                { num: 30, content: '}', style: '' }
-            ],
-            5: [
-                { num: 40, content: '// zero-trust security policy engine check runtime intercepts', style: 'color: var(--text-muted);' },
-                { num: 41, content: 'pub fn check_policy(command: &str) -> Result<(), String> {', style: '' },
-                { num: 42, content: '    // [LOCKED BY EVALUATOR: CRITIC-INTERCEPT ACTIVE <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>]', style: 'background-color: #ffffff; color: #000000; font-weight: bold; padding: 0 4px;' },
-                { num: 43, content: '    if is_blacklisted(command) {', style: '' },
-                { num: 44, content: '        return Err("CONTESTED: Policy Violation".into());', style: 'color: #ff5555; font-weight: bold;' },
-                { num: 45, content: '    }', style: '' },
-                { num: 46, content: '    Ok(())', style: '' },
-                { num: 47, content: '}', style: '' }
-            ]
-        };
-
-        // Static Nodes replaced by global dynamic nodes
-
-        // Core Swarm Actors & Lock states
-        const defaultActors = [
-            { name: 'captain', mode: 'read', status: 'idle', latency: '4ms' },
-            { name: 'harper', mode: 'read', status: 'idle', latency: '8ms' },
-            { name: 'benjamin', mode: 'write', status: 'idle', latency: '12ms' },
-            { name: 'lucas', mode: 'write', status: 'idle', latency: '16ms' }
-        ];
-
-        // 1. Initialize Replay & Layout
-        function updateWorkspace(index) {
-            const container = document.getElementById("workspace-content");
-            container.innerHTML = "";
-            const lines = codeSnippets[index] || codeSnippets[0];
-            lines.forEach(line => {
-                const row = document.createElement("div");
-                row.className = `code-line ${line.class || ''}`;
-                
-                const num = document.createElement("div");
-                num.className = "code-num";
-                num.innerText = line.num;
-                
-                const code = document.createElement("div");
-                code.className = "code-content";
-                code.innerText = line.content;
-                if (line.style) {
-                    code.setAttribute("style", line.style);
-                }
-
-                row.appendChild(num);
-                row.appendChild(code);
-                container.appendChild(row);
-            });
-            
-            document.getElementById("workspace-meta").innerText = `src/llm.rs — playhead tx_0${index}`;
-        }
-
-        function drawDag() {
-            const svg = document.getElementById("dag-svg");
-            // Clear existing svg
-            svg.innerHTML = `
-                <defs>
-                    <marker id="arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                        <path d="M 0 1 L 10 5 L 0 9 z" fill="#333" />
-                    </marker>
-                </defs>
-            `;
-
-            edges.forEach(edge => {
-                const nodeFrom = dagNodes.find(n => n.id === edge.from);
-                const nodeTo = dagNodes.find(n => n.id === edge.to);
-                if (!nodeFrom || !nodeTo) return;
-                
-                const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                
-                let activeClass = (playhead >= edge.to) ? "active" : "";
-                
-                // Draw curve lines for beautiful visual
-                let d = `M ${nodeFrom.x} ${nodeFrom.y} C ${(nodeFrom.x + nodeTo.x)/2} ${nodeFrom.y}, ${(nodeFrom.x + nodeTo.x)/2} ${nodeTo.y}, ${nodeTo.x} ${nodeTo.y}`;
-                
-                path.setAttribute("d", d);
-                path.setAttribute("class", `dag-edge ${activeClass}`);
-                path.setAttribute("marker-end", "url(#arrow)");
-                svg.appendChild(path);
-            });
-
-            // Draw Nodes
-            dagNodes.forEach(node => {
-                const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-                let nodeDesc = (node.desc || '').toLowerCase();
-                let roleClass = 'orchestration';
-                if (nodeDesc.includes('captain') || nodeDesc.includes('orchestration')) {
-                    roleClass = 'orchestration';
-                } else if (nodeDesc.includes('benjamin') || nodeDesc.includes('harper') || nodeDesc.includes('worker') || nodeDesc.includes('coder')) {
-                    roleClass = 'worker';
-                } else if (nodeDesc.includes('lucas') || nodeDesc.includes('evaluator')) {
-                    roleClass = 'evaluator';
-                } else if (nodeDesc.includes('operator') || nodeDesc.includes('human') || nodeDesc.includes('steer')) {
-                    roleClass = 'operator';
-                }
-                g.setAttribute("class", `dag-node ${roleClass} ${playhead === node.id ? 'active' : ''}`);
-                g.onclick = () => selectPlayhead(node.id);
-
-                const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-                circle.setAttribute("cx", node.x);
-                circle.setAttribute("cy", node.y);
-                circle.setAttribute("r", 6);
-
-                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-                text.setAttribute("x", node.x + 12);
-                text.setAttribute("y", node.y + 4);
-                text.setAttribute("class", "dag-node-text");
-                text.textContent = node.label;
-
-                g.appendChild(circle);
-                g.appendChild(text);
-                svg.appendChild(g);
-            });
-        }
-
-        function drawSparkline() {
-            const canvas = document.getElementById("sparkline-canvas");
-            const ctx = canvas.getContext("2d");
-            
-            // Handle resizing
-            const rect = canvas.getBoundingClientRect();
-            canvas.width = rect.width;
-            canvas.height = rect.height;
-
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            if (entropyHistory.length < 2) {
-                // Draw flat line
-                ctx.strokeStyle = "#222222";
-                ctx.lineWidth = 1.5;
-                ctx.beginPath();
-                ctx.moveTo(0, canvas.height / 2);
-                ctx.lineTo(canvas.width, canvas.height / 2);
-                ctx.stroke();
-                return;
-            }
-
-            const maxVal = Math.max(...entropyHistory, 1.0);
-            const minVal = Math.min(...entropyHistory, 0.0);
-            const range = maxVal - minVal || 1.0;
-
-            ctx.strokeStyle = "#ffffff";
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-
-            const step = canvas.width / (entropyHistory.length - 1);
-            
-            entropyHistory.forEach((val, i) => {
-                const x = i * step;
-                const y = canvas.height - ((val - minVal) / range) * (canvas.height - 10) - 5;
-                if (i === 0) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
-            });
-
-            ctx.stroke();
-
-            // Subtle monochrome fill
-            ctx.lineTo(canvas.width, canvas.height);
-            ctx.lineTo(0, canvas.height);
-            ctx.closePath();
-            ctx.fillStyle = "rgba(255,255,255,0.02)";
-            ctx.fill();
-        }
-
-        function renderActors(lockStates = []) {
-            const list = document.getElementById("swarm-actors-list");
-            list.innerHTML = "";
-
-            defaultActors.forEach((actor, i) => {
-                const card = document.createElement("div");
-                card.className = "actor-card";
-
-                const left = document.createElement("div");
-                left.className = "actor-name";
-                left.innerText = actor.name;
-
-                // Sync locking from telemetry if present
-                let lockStatus = "idle";
-                if (lockStates && lockStates[i]) {
-                    lockStatus = lockStates[i][1].toLowerCase();
-                } else {
-                    // Fallback visual linking based on playhead
-                    if (playhead === 1 && actor.name === 'captain') lockStatus = 'read-lock';
-                    if (playhead === 3 && actor.name === 'benjamin') lockStatus = 'write-lock';
-                }
-
-                const right = document.createElement("div");
-                right.className = `actor-lock ${lockStatus !== 'idle' ? 'active' : ''}`;
-                right.innerText = lockStatus;
-
-                card.appendChild(left);
-                card.appendChild(right);
-                list.appendChild(card);
-            });
-        }
-
-        // 2. Playhead Scrubber Logic
-        function selectPlayhead(index) {
-            if (index < 0 || index > maxPlayhead) return;
-            playhead = index;
-
-            // Sync visual bar
-            const percent = (playhead / maxPlayhead) * 100;
-            document.getElementById("scrubber-progress").style.width = `${percent}%`;
-            document.getElementById("scrubber-handle").style.left = `${percent}%`;
-            document.getElementById("playhead-num").innerText = `0${playhead}`;
-
-            updateWorkspace(playhead);
-            drawDag();
-            renderActors();
-
-            // Update provenance roots from dynamic transaction nodes if present
-            const selectedNode = dagNodes.find(n => n.id === playhead);
-            if (selectedNode && selectedNode.state_merkle_root) {
-                const shortRoot = selectedNode.state_merkle_root.length > 12 
-                    ? selectedNode.state_merkle_root.substring(0, 12) + "..."
-                    : selectedNode.state_merkle_root;
-                document.getElementById("merkle-root").innerText = shortRoot;
-                document.getElementById("merkle-root").title = selectedNode.state_merkle_root;
-                
-                // Draw dynamic "steering fork" action in provenance pane
-                const actionRowId = "provenance-fork-action-row";
-                let actionRow = document.getElementById(actionRowId);
-                if (!actionRow) {
-                    actionRow = document.createElement("div");
-                    actionRow.className = "prov-row";
-                    actionRow.id = actionRowId;
-                    document.getElementById("provenance-details").appendChild(actionRow);
-                }
-                
-                if (playhead > 0) {
-                    actionRow.innerHTML = `
-                        <div class="prov-key">steering fork</div>
-                        <div class="prov-val">
-                            <a href="#" onclick="openForkModal(${playhead}); return false;" style="color: #ff5555; font-weight: bold; text-decoration: underline;">Fork from Round ${playhead}</a>
-                        </div>
-                    `;
-                } else {
-                    actionRow.innerHTML = `
-                        <div class="prov-key">steering fork</div>
-                        <div class="prov-val" style="color: var(--text-muted);">genesis cannot be forked</div>
-                    `;
-                }
-            }
-        }
-
-        function adjustPlayhead(dir) {
-            selectPlayhead(playhead + dir);
-        }
-
-        document.getElementById("scrubber-container").onclick = (e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const pct = (e.clientX - rect.left) / rect.width;
-            const targetIdx = Math.round(pct * maxPlayhead);
-            selectPlayhead(targetIdx);
-        };
-
-        // 3. Event Streaming SSE Connection
-        function appendConsole(text) {
-            const container = document.getElementById("console-content");
-            const row = document.createElement("div");
-            row.className = "console-line";
-            
-            // Clean ANSI strings if any
-            let cleanText = text.replace(/\\u001b\\[[0-9;]*[a-zA-Z]/g, '');
-            cleanText = cleanText.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-
-            if (cleanText.startsWith("$ ")) {
-                row.innerHTML = `<span class="console-prompt">$</span> <span class="console-info">${cleanText.substring(2)}</span>`;
-            } else if (cleanText.startsWith("[System]")) {
-                row.innerHTML = `<span class="console-system">${cleanText}</span>`;
-            } else {
-                row.innerText = cleanText;
-            }
-
-            container.appendChild(row);
-            container.scrollTop = container.scrollHeight;
-        }
-
-        function appendProvenance(line) {
-            document.getElementById("ktrans-status").innerText = "compaction synced";
-            const row = document.createElement("div");
-            row.className = "prov-row";
-            row.innerHTML = `<div class="prov-key" style="width: 100px;">.ktrans record</div><div class="prov-val" style="font-size: 8px; color: var(--text-secondary);">${line}</div>`;
-            
-            const details = document.getElementById("provenance-details");
-            details.appendChild(row);
-        }
-
-        let screenshotHistory = [];
-        let carouselInterval = null;
-        let isCarouselPlaying = false;
-        let currentCarouselIndex = 0;
-
-        async function fetchScreenshots() {
-            try {
-                const response = await fetch('/api/screenshots');
-                if (!response.ok) return;
-                const data = await response.json();
-                screenshotHistory = data;
-                updateCarouselUI();
-            } catch (err) {
-                console.error("failed to fetch screenshots:", err);
-            }
-        }
-
-        function updateCarouselUI() {
-            const badge = document.getElementById("screenshot-index-badge");
-            const displayImg = document.getElementById("screenshot-carousel-img");
-            const placeholder = document.getElementById("screenshot-carousel-placeholder");
-            const verdictBadge = document.getElementById("screenshot-carousel-verdict");
-            const scrubber = document.getElementById("carousel-scrubber");
-            const desc = document.getElementById("screenshot-carousel-desc");
-
-            if (!badge || !displayImg || !placeholder || !verdictBadge || !scrubber || !desc) return;
-
-            if (screenshotHistory.length === 0) {
-                badge.innerText = "no frames";
-                displayImg.style.display = "none";
-                placeholder.style.display = "block";
-                verdictBadge.style.display = "none";
-                scrubber.disabled = true;
-                scrubber.max = 0;
-                scrubber.value = 0;
-                desc.innerText = "-";
-                return;
-            }
-
-            scrubber.disabled = false;
-            scrubber.max = screenshotHistory.length - 1;
-            
-            if (currentCarouselIndex >= screenshotHistory.length) {
-                currentCarouselIndex = screenshotHistory.length - 1;
-            }
-            scrubber.value = currentCarouselIndex;
-
-            const frame = screenshotHistory[currentCarouselIndex];
-            badge.innerText = `frame ${currentCarouselIndex + 1} / ${screenshotHistory.length}`;
-            
-            let base64 = frame.data_base64;
-            if (!base64.startsWith("data:")) {
-                let mime = frame.mime_type || "image/png";
-                base64 = `data:${mime};base64,${base64}`;
-            }
-            displayImg.src = base64;
-            displayImg.style.display = "block";
-            placeholder.style.display = "none";
-
-            verdictBadge.style.display = "block";
-            verdictBadge.innerText = frame.verdict;
-            if (frame.verdict === "APPROVED") {
-                verdictBadge.style.background = "rgba(0, 255, 128, 0.2)";
-                verdictBadge.style.color = "#00ff80";
-                verdictBadge.style.border = "1px solid #00ff80";
-            } else if (frame.verdict === "REDACTED") {
-                verdictBadge.style.background = "rgba(255, 215, 0, 0.2)";
-                verdictBadge.style.color = "#ffd700";
-                verdictBadge.style.border = "1px solid #ffd700";
-            } else {
-                verdictBadge.style.background = "rgba(255, 0, 80, 0.2)";
-                verdictBadge.style.color = "#ff0050";
-                verdictBadge.style.border = "1px solid #ff0050";
-            }
-
-            desc.innerText = `${frame.name} (${frame.description || 'no desc'})`;
-        }
-
-        function toggleCarouselPlay() {
-            const btn = document.getElementById("carousel-play-btn");
-            if (!btn) return;
-            if (isCarouselPlaying) {
-                clearInterval(carouselInterval);
-                isCarouselPlaying = false;
-                btn.innerText = "PLAY";
-            } else {
-                isCarouselPlaying = true;
-                btn.innerText = "PAUSE";
-                carouselInterval = setInterval(() => {
-                    if (screenshotHistory.length > 0) {
-                        currentCarouselIndex = (currentCarouselIndex + 1) % screenshotHistory.length;
-                        updateCarouselUI();
-                    }
-                }, 2000);
-            }
-        }
-
-        function setupSSE() {
-            const events = new EventSource('/api/events');
-            
-            events.onmessage = (event) => {
-                fetchScreenshots();
-                try {
-                    const update = JSON.parse(event.data);
-                    
-                    if (update.Trace) {
-                        appendConsole(update.Trace);
-                        if (update.Trace.includes("[cognition-mode]")) {
-                            const parts = update.Trace.split("to:");
-                            if (parts.length > 1) {
-                                const modeName = parts[1].trim();
-                                updateModeUI(modeName);
-                            }
-                        } else if (update.Trace.includes("[cognition-escalation]")) {
-                            updateModeUI("heavy");
-                        }
-                    } else if (update.Ktrans) {
-                        appendProvenance(update.Ktrans);
-                        try {
-                            const ktrans = JSON.parse(update.Ktrans);
-                            if (ktrans && typeof ktrans.round === 'number') {
-                                if (sessionID === 'initializing...' || sessionID !== ktrans.session_id) {
-                                    sessionID = ktrans.session_id;
-                                    dagNodes = [];
-                                    edges = [];
-                                    maxPlayhead = ktrans.round > 5 ? ktrans.round : 5;
-                                }
-                                
-                                let existingNode = dagNodes.find(n => n.id === ktrans.round);
-                                if (!existingNode) {
-                                    let x = 80 + ktrans.round * 100;
-                                    let y = 120;
-                                    
-                                    if (ktrans.round % 2 !== 0 && ktrans.round > 0) {
-                                        y = 80;
-                                    } else if (ktrans.round % 3 === 0 && ktrans.round > 0) {
-                                        y = 160;
-                                    }
-                                    
-                                    let label = `tx_0${ktrans.round}: ${ktrans.leader_action || ktrans.arena_winner || 'steer'}`;
-                                    let desc = ktrans.arena_winner || 'orchestration';
-                                    
-                                    dagNodes.push({
-                                        id: ktrans.round,
-                                        label: label,
-                                        desc: desc,
-                                        x: x,
-                                        y: y,
-                                        tx_hash: ktrans.tx_hash,
-                                        parent_hashes: ktrans.parent_hashes || [],
-                                        state_merkle_root: ktrans.state_merkle_root,
-                                        codebase_merkle_root: ktrans.codebase_merkle_root
-                                    });
-                                    
-                                    if (ktrans.round > maxPlayhead) {
-                                        maxPlayhead = ktrans.round;
-                                    }
-                                    
-                                    if (ktrans.parent_hashes && ktrans.parent_hashes.length > 0) {
-                                        ktrans.parent_hashes.forEach(pHash => {
-                                            let parentNode = dagNodes.find(n => n.tx_hash === pHash);
-                                            if (parentNode) {
-                                                edges.push({ from: parentNode.id, to: ktrans.round });
-                                            } else {
-                                                edges.push({ from: ktrans.round - 1, to: ktrans.round });
-                                            }
-                                        });
-                                    } else if (ktrans.round > 0) {
-                                        edges.push({ from: ktrans.round - 1, to: ktrans.round });
-                                    }
-                                    
-                                    drawDag();
-                                }
-                            }
-                        } catch (e) {
-                            console.error("Error parsing dynamic Ktrans transaction:", e);
-                        }
-                    } else if (update.Verdict) {
-                        const verdict = update.Verdict;
-                        document.getElementById("metric-velocity").innerText = `${verdict.velocity.toFixed(1)} t/s`;
-                        document.getElementById("metric-risk").innerText = verdict.risk.toFixed(2);
-                        document.getElementById("metric-progress").innerText = `${verdict.progress.toFixed(1)}%`;
-                        document.getElementById("metric-entropy").innerText = verdict.h_sem.toFixed(3);
-                        document.getElementById("entropy-current").innerText = verdict.h_sem.toFixed(3);
-                        
-                        entropyHistory.push(verdict.h_sem);
-                        if (entropyHistory.length > 50) entropyHistory.shift();
-                        drawSparkline();
-
-                        // Fast playhead linking based on progress
-                        let targetPlayhead = Math.min(Math.floor((verdict.progress / 100) * (maxPlayhead + 1)), maxPlayhead);
-                        if (targetPlayhead !== playhead) {
-                            selectPlayhead(targetPlayhead);
-                        }
-                    } else if (update.PersonaTelemetry) {
-                        const tel = update.PersonaTelemetry;
-                        renderActors(tel.lock_states);
-                        document.getElementById("merkle-root").innerText = `len: ${tel.provenance_chain_length} | root: a7b8...`;
-                    } else if (update.ApprovalRequest) {
-                        const reason = update.ApprovalRequest;
-                        const isSecurity = reason.includes("Security Policy Blocked!");
-                        document.getElementById("approval-modal-desc").innerText = reason;
-                        
-                        const titleEl = document.querySelector("#approval-modal .modal-title");
-                        const btnRaw = document.getElementById("btn-approve-raw");
-                        const btnRedacted = document.getElementById("btn-approve-redacted");
-                        
-                        if (isSecurity) {
-                            titleEl.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; color: #ef4444; margin-right: 8px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> zero-trust security policy intercept`;
-                            btnRaw.innerText = "force override & approve raw";
-                            btnRedacted.style.display = "inline-block";
-                        } else {
-                            titleEl.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; color: #f59e0b; margin-right: 8px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg> human security approval gate`;
-                            btnRaw.innerText = "approve execution";
-                            btnRedacted.style.display = "none";
-                        }
-                        
-                        showInlineActionHub("approval");
-                    } else if (update.ContractApprovalRequest) {
-                        const req = update.ContractApprovalRequest;
-                        const list = document.getElementById("contract-criteria-list");
-                        list.innerHTML = "";
-                        
-                        req.criteria.forEach((crit, i) => {
-                            const item = document.createElement("div");
-                            item.className = "modal-criterion-item";
-                            item.innerHTML = `<span class="criterion-text">[${i+1}] ${crit[0]}</span> <span class="criterion-similarity">cons: ${crit[1].toFixed(3)}</span>`;
-                            list.appendChild(item);
-                        });
-
-                        showInlineActionHub("contract");
-                    } else if (update.ContractNegotiated) {
-                        appendConsole(`[contract negotiated]: ${update.ContractNegotiated.description}`);
-                        closeInlineActionHub();
-                    } else if (update.Compaction) {
-                        appendConsole(`[blackboard compaction]: ${update.Compaction}`);
-                    }
-                } catch(e) {
-                    console.error("SSE parse error", e);
-                }
-            };
-
-            events.onerror = () => {
-                console.warn("SSE connection closed; attempting reconnect.");
-            };
-        }
-
-        // 4. Overrides and Interventions
-        function submitContractFeedback(verdict) {
-            fetch('/api/override', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(verdict)
-            }).then(res => {
-                if (res.ok) {
-                    closeInlineActionHub();
-                    appendConsole(`[operator override]: human sent '${verdict}' override signature successfully.`);
-                }
-            });
-        }
-
-        function toggleCustomCriterion() {
-            const container = document.getElementById("custom-criterion-container");
-            const btnSubmit = document.getElementById("btn-custom-submit");
-            const btnToggle = document.getElementById("btn-custom-toggle");
-            
-            if (container.style.display === "none") {
-                container.style.display = "block";
-                btnSubmit.style.display = "inline-block";
-                btnToggle.innerText = "cancel";
-            } else {
-                container.style.display = "none";
-                btnSubmit.style.display = "none";
-                btnToggle.innerText = "override & add custom";
-            }
-        }
-
-        function submitCustomCriterion() {
-            const val = document.getElementById("custom-criterion-input").value;
-            if (!val) return;
-
-            fetch('/api/override', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ Override: [val] })
-            }).then(res => {
-                if (res.ok) {
-                    closeInlineActionHub();
-                    document.getElementById("custom-criterion-container").style.display = "none";
-                    document.getElementById("btn-custom-submit").style.display = "none";
-                    document.getElementById("btn-custom-toggle").innerText = "override & add custom";
-                    appendConsole(`[operator override]: human injected acceptance criteria: '${val}'`);
-                }
-            });
-        }
-
-        let activeForkTx = null;
-
-        function openForkModal(txId) {
-            activeForkTx = txId;
-            document.getElementById("fork-modal-tx").innerText = `tx_0${txId}`;
-            document.getElementById("fork-directive-input").value = "";
-            showInlineActionHub("fork");
-        }
-
-        function closeForkModal() {
-            closeInlineActionHub();
-            activeForkTx = null;
-        }
-
-        function submitFork() {
-            if (activeForkTx === null) return;
-            const directive = document.getElementById("fork-directive-input").value || "focus on robustness";
-            const forkStr = `FORK:${activeForkTx}:${directive}`;
-            
-            fetch('/api/override', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ Override: [forkStr] })
-            }).then(res => {
-                if (res.ok) {
-                    closeForkModal();
-                    appendConsole(`[operator fork]: triggered playhead steering fork at tx_0${activeForkTx} with directive: '${directive}'`);
-                }
-            });
-        }
-
-        // 5. Initial State Load
-        function loadInitialState() {
-            fetch('/api/state')
-                .then(res => res.json())
-                .then(state => {
-                    sessionID = state.session_id;
-                    document.getElementById("session-id").innerText = `session: ${sessionID.substring(0, 12)}`;
-                    
-                    if (state.cognition_mode) {
-                        updateModeUI(state.cognition_mode);
-                    }
-                    
-                    appendConsole("[system] synchronized with blackboard Evaluation Blackboard");
-                    appendConsole("[system] awaiting leader runtime telemetry campaign...");
-                });
-        }
-
-        function updateModeUI(mode) {
-            if (!mode) return;
-            const lowercaseMode = mode.toLowerCase();
-            
-            document.querySelectorAll(".mode-btn").forEach(btn => {
-                if (btn.getAttribute("data-mode") === lowercaseMode) {
-                    btn.classList.add("active");
-                } else {
-                    btn.classList.remove("active");
-                }
-            });
-            
-            const pulse = document.getElementById("mode-pulse");
-            if (pulse) {
-                pulse.className = "mode-pulse-dot";
-                pulse.classList.add(lowercaseMode);
-            }
-
-            // Remove previous mode classes
-            document.body.classList.remove('mode-instant-active', 'mode-balanced-active', 'mode-heavy-active', 'mode-research-active', 'mode-recovery-active', 'mode-autonomous-active');
-            // Add current mode class
-            document.body.classList.add(`mode-${lowercaseMode}-active`);
-        }
-
-        function setCognitionMode(mode) {
-            updateModeUI(mode);
-            fetch('/api/mode', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ mode: mode })
-            })
-            .then(res => {
-                if (!res.ok) {
-                    console.error("Failed to update cognition mode");
-                }
-            })
-            .catch(err => console.error("Error setting cognition mode:", err));
-        }
-
-        // Keyboard listeners for scrubbing
-        window.addEventListener("keydown", (e) => {
-            if (e.key === "ArrowRight") {
-                adjustPlayhead(1);
-            } else if (e.key === "ArrowLeft") {
-                adjustPlayhead(-1);
-            }
-        });
-
-        async function fetchDiffs() {
-            try {
-                const response = await fetch('/api/diff');
-                const diffs = await response.json();
-                const diffsContainer = document.getElementById('workspace-diffs');
-                const workspaceContent = document.getElementById('workspace-content');
-                
-                if (diffs && diffs.length > 0) {
-                    diffsContainer.style.display = 'block';
-                    workspaceContent.style.display = 'none';
-                    document.getElementById('workspace-title').textContent = 'workspace / active diffs';
-                    
-                    let html = '';
-                    diffs.forEach(item => {
-                        const lines = item.diff.split('\n');
-                        let bodyHtml = '';
-                        lines.forEach(line => {
-                            if (line.startsWith('-')) {
-                                bodyHtml += `<span class="diff-line-del">${escapeHtml(line)}</span>`;
-                            } else if (line.startsWith('+')) {
-                                bodyHtml += `<span class="diff-line-add">${escapeHtml(line)}</span>`;
-                            } else {
-                                bodyHtml += `<span class="diff-line-normal">${escapeHtml(line)}</span>`;
-                            }
-                        });
-                        
-                        html += `
-                            <div class="diff-card">
-                                <div class="diff-card-header">
-                                    <span>branch: ${item.branch}</span>
-                                </div>
-                                <div class="diff-card-body">${bodyHtml}</div>
-                            </div>
-                        `;
-                    });
-                    diffsContainer.innerHTML = html;
-                } else {
-                    diffsContainer.style.display = 'none';
-                    workspaceContent.style.display = 'block';
-                    document.getElementById('workspace-title').textContent = 'workspace';
-                }
-            } catch (e) {
-                console.error('Error fetching diffs:', e);
-            }
-        }
-
-        async function submitConsoleInput() {
-            const inputEl = document.getElementById('console-input');
-            const text = inputEl.value.trim();
-            if (!text) return;
-            
-            appendConsole(`[operator-console-input] ${text}`);
-            inputEl.value = '';
-            
-            try {
-                const response = await fetch('/api/input', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ input: text })
-                });
-                if (response.ok) {
-                    appendConsole(`[operator-console] Input sent successfully.`);
-                } else {
-                    appendConsole(`[operator-console] Error sending input: server returned ${response.status}`);
-                }
-            } catch (e) {
-                appendConsole(`[operator-console] Connection error: ${e.message}`);
-            }
-        }
-
-        function escapeHtml(text) {
-            return text
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#039;");
-        }
-
-        // Bootstrap on load
-        window.onload = () => {
-            selectPlayhead(0);
-            loadInitialState();
-            setupSSE();
-            window.addEventListener("resize", drawSparkline);
-
-            // Carousel Scrubber Bindings
-            const playBtn = document.getElementById("carousel-play-btn");
-            if (playBtn) {
-                playBtn.addEventListener("click", toggleCarouselPlay);
-            }
-            const scrubberInput = document.getElementById("carousel-scrubber");
-            if (scrubberInput) {
-                scrubberInput.addEventListener("input", (e) => {
-                    currentCarouselIndex = parseInt(e.target.value);
-                    if (isCarouselPlaying) {
-                        toggleCarouselPlay(); // pause
-                    }
-                    updateCarouselUI();
-                });
-            }
-
-            fetchScreenshots();
-            setInterval(fetchScreenshots, 3000);
-
-            // Start polling active diffs
-            fetchDiffs();
-            setInterval(fetchDiffs, 2500);
-
-            // Hook up console input listeners
-            const consoleInput = document.getElementById('console-input');
-            if (consoleInput) {
-                consoleInput.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter') {
-                        submitConsoleInput();
-                    }
-                });
-            }
-            const consoleInputBtn = document.getElementById('console-input-btn');
-            if (consoleInputBtn) {
-                consoleInputBtn.addEventListener('click', submitConsoleInput);
-            }
-        };
-    </script>
-</body>
-</html>
-"##;
+const INDEX_HTML: &str = include_str!("../frontend/dist/index.html");
+const WASM_JS: &str = include_str!("../frontend/dist/korg-frontend.js");
+const WASM_BYTES: &[u8] = include_bytes!("../frontend/dist/korg-frontend_bg.wasm");

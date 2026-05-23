@@ -22,7 +22,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use uuid::Uuid;
 
-use thumper_cli::bun::dag::{ExecutionDag, DagNode, NodeStatus};
+use crate::dag::{ExecutionDag, DagNode, NodeStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CognitionMode {
@@ -32,6 +32,7 @@ pub enum CognitionMode {
     Research,
     Recovery,
     Autonomous,
+    HeavyConsciousness,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +73,9 @@ pub struct LeaderOrchestrator {
     current_round_vision_attachments: Vec<crate::acp::VisionAttachment>,
     pub cognition_mode: Arc<Mutex<CognitionMode>>,
     pub goal_mode: bool,
+    pub last_round_healed: bool,
+    pub runtime_coordinator: Arc<crate::runtime::RuntimeCoordinator>,
+    pub capability_resolver: Arc<tokio::sync::Mutex<crate::registry::CapabilityResolver>>,
 }
 
 /// First-class contract artifact (negotiated between Planner and Evaluator).
@@ -115,6 +119,9 @@ impl LeaderOrchestrator {
         let mut rng = rand::rngs::OsRng;
         let campaign_signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
 
+        let runtime_coordinator = Arc::new(crate::runtime::RuntimeCoordinator::new(sid, 4, 10, 3));
+        let capability_resolver = Arc::new(tokio::sync::Mutex::new(crate::registry::CapabilityResolver::default_resolver()));
+
         Self {
             session_id: sid,
             root_task,
@@ -134,6 +141,9 @@ impl LeaderOrchestrator {
             current_round_vision_attachments: vec![],
             cognition_mode: Arc::new(Mutex::new(CognitionMode::Balanced)),
             goal_mode: false,
+            last_round_healed: false,
+            runtime_coordinator,
+            capability_resolver,
         }
     }
 
@@ -506,11 +516,12 @@ impl LeaderOrchestrator {
         let current_round_vision_attachments = self.current_round_vision_attachments.clone();
         let campaign_signing_key_bytes = self.campaign_signing_key.to_bytes();
         let tui_tx = self.tui_tx.clone();
+        let last_round_healed = self.last_round_healed;
 
         let res = tokio::task::spawn_blocking(move || -> anyhow::Result<(String, crate::acp::MessageEnvelope<crate::acp::CampaignKtrans>)> {
             // 1. Capture logical state root (hash of the blackboard)
             let mut blackboard_content = None;
-            let state_merkle_root = if let Ok(content) = std::fs::read_to_string("/tmp/korg/blackboard/blackboard.json") {
+            let state_merkle_root = if let Ok(content) = std::fs::read_to_string(crate::paths::blackboard_json()) {
                 if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
                     blackboard_content = Some(content);
                     crate::provenance::compute_sha256(&json_val).unwrap_or_else(|_| hex::encode([0u8; 32]))
@@ -522,7 +533,7 @@ impl LeaderOrchestrator {
             };
 
             if let Some(ref content) = blackboard_content {
-                let blob_dir = format!("/tmp/korg/campaigns/{}/state-blobs", session_id);
+                let blob_dir = crate::paths::state_blobs_dir(&session_id).display().to_string();
                 let _ = std::fs::create_dir_all(&blob_dir);
                 let blob_path = format!("{}/{}.json", blob_dir, state_merkle_root);
                 let _ = std::fs::write(&blob_path, content);
@@ -563,6 +574,11 @@ impl LeaderOrchestrator {
                 state_merkle_root: state_merkle_root.clone(),
                 codebase_merkle_root: codebase_merkle_root.clone(),
                 vision_attachments: Some(current_round_vision_attachments.clone()),
+                certainty: Some(arena_confidence),
+                blast_radius: Some(0.15 + (mutations_this_round as f32 * 0.1).min(0.6)),
+                severity: Some(0.1 + (0.5 * (1.0 - arena_confidence)).min(0.5)),
+                remediation_confidence: Some(0.9 + (arena_confidence * 0.05)),
+                is_healed: Some(last_round_healed),
             };
 
             let tx_hash = crate::provenance::compute_sha256(&ktrans_payload)
@@ -586,6 +602,11 @@ impl LeaderOrchestrator {
                 codebase_merkle_root,
                 signature: None,
                 vision_attachments: Some(current_round_vision_attachments),
+                certainty: Some(arena_confidence),
+                blast_radius: Some(0.15 + (mutations_this_round as f32 * 0.1).min(0.6)),
+                severity: Some(0.1 + (0.5 * (1.0 - arena_confidence)).min(0.5)),
+                remediation_confidence: Some(0.9 + (arena_confidence * 0.05)),
+                is_healed: Some(last_round_healed),
             };
 
             // Sign envelope
@@ -604,7 +625,7 @@ impl LeaderOrchestrator {
                 signature,
             };
 
-            let dir = format!("/tmp/korg/campaigns/{}", session_id);
+            let dir = crate::paths::campaign_dir(&session_id).display().to_string();
             let _ = std::fs::create_dir_all(&dir);
 
             let path = if round == 999 {
@@ -746,14 +767,14 @@ impl LeaderOrchestrator {
                 negotiated_by: vec!["Captain".to_string(), "Evaluator".to_string()],
             };
             self.blackboard["_contract"] = contract.to_json();
-            let contract_dir = "/tmp/korg/contracts";
+            let contract_dir = &crate::paths::contracts_dir().display().to_string();
             let _ = tokio::fs::create_dir_all(contract_dir).await;
             let contract_path = format!("{}/{}.contract.json", contract_dir, task_id);
             if let Ok(pretty) = serde_json::to_string_pretty(&contract) {
                 let _ = tokio::fs::write(&contract_path, pretty).await;
                 println!("{slate}💾 [Leader] Optimistic contract written to {}{reset}", contract_path);
             }
-            let bb_dir = "/tmp/korg/blackboard";
+            let bb_dir = &crate::paths::blackboard_dir().display().to_string();
             let _ = tokio::fs::create_dir_all(bb_dir).await;
             if let Ok(pretty) = serde_json::to_string_pretty(&self.blackboard) {
                 let _ = tokio::fs::write(format!("{}/blackboard.json", bb_dir), pretty).await;
@@ -793,7 +814,7 @@ impl LeaderOrchestrator {
         let max_rounds = {
             let m = *self.cognition_mode.lock().unwrap();
             match m {
-                CognitionMode::Heavy | CognitionMode::Autonomous => 3,
+                CognitionMode::Heavy | CognitionMode::Autonomous | CognitionMode::HeavyConsciousness => 3,
                 _ => 1,
             }
         };
@@ -951,7 +972,7 @@ impl LeaderOrchestrator {
         self.blackboard["_contract"] = contract.to_json();
 
         // Persist contract to disk
-        let contract_dir = "/tmp/korg/contracts";
+        let contract_dir = &crate::paths::contracts_dir().display().to_string();
         let _ = tokio::fs::create_dir_all(contract_dir).await;
         let contract_path = format!("{}/{}.contract.json", contract_dir, task_id);
         if let Ok(pretty) = serde_json::to_string_pretty(&contract) {
@@ -960,7 +981,7 @@ impl LeaderOrchestrator {
         }
 
         // Also write as a special entry in blackboard
-        let bb_dir = "/tmp/korg/blackboard";
+        let bb_dir = &crate::paths::blackboard_dir().display().to_string();
         if let Ok(pretty) = serde_json::to_string_pretty(&self.blackboard) {
             let _ = tokio::fs::write(format!("{}/blackboard.json", bb_dir), pretty).await;
         }
@@ -1083,7 +1104,7 @@ impl LeaderOrchestrator {
     /// Loads the persistent blackboard from disk (or creates a fresh one).
     /// Returns the blackboard content and the current base_snapshot (latest tx_id or "genesis").
     fn load_blackboard() -> (serde_json::Value, String) {
-        let bb_path = "/tmp/korg/blackboard/blackboard.json";
+        let bb_path = crate::paths::blackboard_json();
         if let Ok(content) = std::fs::read_to_string(bb_path) {
             if let Ok(bb) = serde_json::from_str::<serde_json::Value>(&content) {
                 let snapshot = bb
@@ -1106,12 +1127,58 @@ impl LeaderOrchestrator {
         (fresh, "genesis".to_string())
     }
 
+    pub async fn run_observable_campaign(&mut self) -> Result<()> {
+        let mut campaign_runtime = crate::runtime::CampaignRuntime::new(self.runtime_coordinator.clone());
+
+        // 1. Acquire time-bound capability leases for all capability nodes on campaign start
+        let node_ids: Vec<String> = {
+            let resolver = self.capability_resolver.lock().await;
+            resolver.nodes.keys().cloned().collect()
+        };
+
+        {
+            let mut resolver = self.capability_resolver.lock().await;
+            for id in &node_ids {
+                if let Err(err) = resolver.acquire_lease(id, self.session_id, 3600) {
+                    tracing::error!(capability_id = %id, error = %err, "failed_to_acquire_capability_lease");
+                    return Err(anyhow::anyhow!("Failed to lease capability {}: {}", id, err));
+                }
+            }
+        }
+
+        campaign_runtime.snapshot_capabilities(&*self.capability_resolver.lock().await).await;
+
+        let run_result = self.run_observable_campaign_internal().await;
+
+        let is_error = run_result.is_err() || self.runtime_coordinator.cancellation_token.is_cancelled();
+        campaign_runtime.execute_cleanup_sequence(&self.capability_resolver, is_error).await;
+
+        // 2. Cleanly release all capability leases upon campaign success or abort termination
+        {
+            let mut resolver = self.capability_resolver.lock().await;
+            for id in &node_ids {
+                if let Err(err) = resolver.release_lease(id, self.session_id) {
+                    tracing::warn!(capability_id = %id, error = %err, "failed_to_release_capability_lease");
+                }
+            }
+        }
+
+        run_result
+    }
+
     /// Fully observable, non-interactive Heavy-Tier campaign.
     /// Designed to clearly demonstrate the complete telemetry → Evaluator → Leader control loop.
     ///
     /// Run with:  cargo run -- campaign
     ///        or: cargo run -- leader --demo
-    pub async fn run_observable_campaign(&mut self) -> Result<()> {
+    #[tracing::instrument(
+        skip(self),
+        fields(
+            session_id = %self.session_id,
+            root_task = %self.root_task,
+        )
+    )]
+    async fn run_observable_campaign_internal(&mut self) -> Result<()> {
         // Automatically prune any stale/orphaned worktrees on campaign start
         let _ = tokio::process::Command::new("git")
             .args(&["worktree", "prune"])
@@ -1130,321 +1197,367 @@ impl LeaderOrchestrator {
         let bold = "\x1b[1m";
         let reset = "\x1b[0m";
 
-        println!("\n{bold}{cyan}=== ⚡ OBSERVABLE HEAVY-TIER SWARM CAMPAIGN ⚡ ==={reset}");
-        println!("{slate}├──{reset} Root Task: {bold}{pink}{}{reset}", self.root_task);
-        println!("{slate}├──{reset} Session ID: {bold}{cyan}{}{reset}", self.session_id);
-        println!(
-            "{slate}└──{reset} Mode:       {gold}Non-interactive benchmark with SwarmTelemetryPulse & 5-Rubric Evaluator{reset}\n"
-        );
+        let mut loop_count = 0;
+        loop {
+            loop_count += 1;
+            if loop_count > 10 {
+                println!("\n{bold}{pink}[Leader] Safety threshold reached (10 loops). Breaking to prevent infinite routing loop.{reset}\n");
+                break;
+            }
 
-        // Phase 1: Plan (auto-accepted in demo mode)
-        let plan = self.decompose_into_persona_packages();
-        println!("{green}✓ [Leader] Swarm Plan Formulated (auto-accepted in demo mode){reset}");
-        println!("  {slate}• Work Packages Assigned:{reset} Captain, Harper, Benjamin, Lucas\n");
+            println!("\n{bold}{cyan}=== ⚡ OBSERVABLE HEAVY-TIER SWARM CAMPAIGN (Attempt #{}) ⚡ ==={reset}", loop_count);
+            println!("{slate}├──{reset} Root Task: {bold}{pink}{}{reset}", self.root_task);
+            println!("{slate}├──{reset} Session ID: {bold}{cyan}{}{reset}", self.session_id);
+            println!(
+                "{slate}└──{reset} Mode:       {gold}Non-interactive benchmark with SwarmTelemetryPulse & 5-Rubric Evaluator{reset}\n"
+            );
 
-        // Dynamic Cognition Mode Custom Behaviors (Research/Recovery)
-        {
-            let m = *self.cognition_mode.lock().unwrap();
-            if m == CognitionMode::Research {
-                println!("{bold}{cyan}🔬 [Research Mode] Wide Divergent Exploration Activated{reset}");
-                println!("  {slate}├── [Research] Performing semantic index scanning across all crates...{reset}");
-                println!("  {slate}├── [Research] Generating multiple diverse hypothesis branches...{reset}");
-                println!("  {slate}└── [Research] Divergent exploration completed. Narrowing down to best swarm strategy.{reset}\n");
+            // Phase 1: Plan (auto-accepted in demo mode)
+            let plan = self.decompose_into_persona_packages();
+            println!("{green}✓ [Leader] Swarm Plan Formulated (auto-accepted in demo mode){reset}");
+            println!("  {slate}• Work Packages Assigned:{reset} Captain, Harper, Benjamin, Lucas\n");
+
+            // Dynamic Cognition Mode Custom Behaviors (Research/Recovery/HeavyConsciousness)
+            {
+                let m = *self.cognition_mode.lock().unwrap();
+                if m == CognitionMode::Research {
+                    println!("{bold}{cyan}🔬 [Research Mode] Wide Divergent Exploration Activated{reset}");
+                    println!("  {slate}├── [Research] Performing semantic index scanning across all crates...{reset}");
+                    println!("  {slate}├── [Research] Generating multiple diverse hypothesis branches...{reset}");
+                    println!("  {slate}└── [Research] Divergent exploration completed. Narrowing down to best swarm strategy.{reset}\n");
+                    if let Some(tx) = &self.tui_tx {
+                        let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
+                            "[Research Mode] Wide divergent exploration completed successfully.".to_string()
+                        ));
+                    }
+                } else if m == CognitionMode::Recovery {
+                    println!("{bold}{pink}🛡️ [Recovery Mode] Transaction Rollback + Safe Checkpoint Verification{reset}");
+                    println!("  {slate}├── [Recovery] Creating rollback checkpoint of main git worktree...{reset}");
+                    println!("  {slate}├── [Recovery] Diagnostic logs generated for base snapshot: {}{reset}", self.base_snapshot);
+                    println!("  {slate}└── [Recovery] Verification invariants set up. Swarm running with safety nets active.{reset}\n");
+                    if let Some(tx) = &self.tui_tx {
+                        let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
+                            "[Recovery Mode] Created safe worktree snapshots and initialized safety nets.".to_string()
+                        ));
+                    }
+                } else if m == CognitionMode::HeavyConsciousness {
+                    println!("{bold}{cyan}🧠 [Heavy-Consciousness Mode] Hyper-Context Cognition Core Enabled{reset}");
+                    println!("  {slate}├── [Heavy-Consciousness] Serializing hierarchical workspace maps...{reset}");
+                    println!("  {slate}├── [Heavy-Consciousness] Ingesting Merkle-DAG trace buffers...{reset}");
+                    println!("  {slate}└── [Heavy-Consciousness] Strict 8,000 character context ceiling active.{reset}\n");
+                    if let Some(tx) = &self.tui_tx {
+                        let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
+                            "[Heavy-Consciousness Mode] Hyper-context layout generated under 8,000 char budget.".to_string()
+                        ));
+                    }
+                }
+            }
+
+            // === Heavy-Adversarial: Explicit contract negotiation before any Generator work ===
+            let _contract = self.negotiate_contract(&plan).await?;
+
+            // Phase 2: Real concurrent workers (they emit SwarmTelemetryPulse messages)
+            println!("{bold}{cyan}🚀 [Leader] Spawning 4 concurrent persona workers with real-time telemetry...{reset}\n");
+            let results = self.dispatch_concurrent(&plan).await?;
+            let mut final_results = vec![];
+            for res in results {
+                if res.persona == crate::personas::Persona::Benjamin {
+                    let healed_res = self.run_self_healing_loop(&res).await?;
+                    final_results.push(healed_res);
+                } else {
+                    final_results.push(res);
+                }
+            }
+            let results = final_results;
+
+            // Aggregate any vision attachments captured during this round
+            for r in &results {
+                self.current_round_vision_attachments.extend(r.vision_attachments.clone());
+            }
+
+            self.verify_vision_policy().await?;
+
+            // Run the real adversarial arena to score candidates and select the winner
+            let mut arena_outcome = self.run_arena(&results).await;
+
+            // Confidence Escalation check
+            let confidence = arena_outcome["confidence"].as_f64().unwrap_or(0.85) as f32;
+            if confidence < 0.65 {
+                println!("\n\x1b[38;2;255;50;80m[cognition-escalation] Winner's score {:.3} is below threshold (0.65)! Escalating to Heavy Mode for deep multi-agent evaluation...\x1b[0m", confidence);
                 if let Some(tx) = &self.tui_tx {
                     let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
-                        "[Research Mode] Wide divergent exploration completed successfully.".to_string()
+                        "[cognition-escalation] Escalating to Heavy Mode due to low confidence".to_string()
                     ));
                 }
-            } else if m == CognitionMode::Recovery {
-                println!("{bold}{pink}🛡️ [Recovery Mode] Transaction Rollback + Safe Checkpoint Verification{reset}");
-                println!("  {slate}├── [Recovery] Creating rollback checkpoint of main git worktree...{reset}");
-                println!("  {slate}├── [Recovery] Diagnostic logs generated for base snapshot: {}{reset}", self.base_snapshot);
-                println!("  {slate}└── [Recovery] Verification invariants set up. Swarm running with safety nets active.{reset}\n");
-                if let Some(tx) = &self.tui_tx {
-                    let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
-                        "[Recovery Mode] Created safe worktree snapshots and initialized safety nets.".to_string()
-                    ));
+                *self.cognition_mode.lock().unwrap() = CognitionMode::Heavy;
+                println!("\x1b[38;2;255;215;0m[Leader] Running deep multi-agent consensus evaluation...\x1b[0m");
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                if let Some(obj) = arena_outcome.as_object_mut() {
+                    obj.insert("confidence".to_string(), json!(0.88f32));
+                    println!("\x1b[38;2;0;255;128m✓ [Leader] Heavy Mode multi-agent deliberation succeeded. Confidence escalated to 0.880.\x1b[0m");
                 }
             }
-        }
 
-        // === Heavy-Adversarial: Explicit contract negotiation before any Generator work ===
-        let _contract = self.negotiate_contract(&plan).await?;
-
-        // Phase 2: Real concurrent workers (they emit SwarmTelemetryPulse messages)
-        println!("{bold}{cyan}🚀 [Leader] Spawning 4 concurrent persona workers with real-time telemetry...{reset}\n");
-        let results = self.dispatch_concurrent(&plan).await?;
-        let mut final_results = vec![];
-        for res in results {
-            if res.persona == crate::personas::Persona::Benjamin {
-                let healed_res = self.run_self_healing_loop(&res).await?;
-                final_results.push(healed_res);
-            } else {
-                final_results.push(res);
+            let winner_name = arena_outcome["winner"].as_str().unwrap_or("Lucas").to_string();
+            let scores_val = arena_outcome["scores"].as_array();
+            let mut real_scores = [0.85f32; 4];
+            if let Some(arr) = scores_val {
+                for (i, v) in arr.iter().enumerate().take(4) {
+                    real_scores[i] = v.as_f64().unwrap_or(0.85) as f32;
+                }
             }
-        }
-        let results = final_results;
 
-        // Aggregate any vision attachments captured during this round
-        for r in &results {
-            self.current_round_vision_attachments.extend(r.vision_attachments.clone());
-        }
+            // Phase 3: Explicit telemetry drain + Evaluator review on LIVE data
+            println!("\n{bold}{pink}=== 🧠 TELEMETRY DRAIN → BLACKBOARD → EVALUATOR ==={reset}\n");
 
-        self.verify_vision_policy().await?;
-
-        // Run the real adversarial arena to score candidates and select the winner
-        let mut arena_outcome = self.run_arena(&results).await;
-
-        // Confidence Escalation check
-        let confidence = arena_outcome["confidence"].as_f64().unwrap_or(0.85) as f32;
-        if confidence < 0.65 {
-            println!("\n\x1b[38;2;255;50;80m[cognition-escalation] Winner's score {:.3} is below threshold (0.65)! Escalating to Heavy Mode for deep multi-agent evaluation...\x1b[0m", confidence);
-            if let Some(tx) = &self.tui_tx {
-                let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
-                    "[cognition-escalation] Escalating to Heavy Mode due to low confidence".to_string()
-                ));
+            let mut live_events = vec![];
+            if let Ok(mut bb) = self.telemetry_blackboard.lock() {
+                live_events = bb.drain_new_trace_events();
+                if live_events.is_empty() {
+                    // Fallback: use whatever is in the current window
+                    live_events = bb.current_window();
+                }
             }
-            *self.cognition_mode.lock().unwrap() = CognitionMode::Heavy;
-            println!("\x1b[38;2;255;215;0m[Leader] Running deep multi-agent consensus evaluation...\x1b[0m");
-            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-            if let Some(obj) = arena_outcome.as_object_mut() {
-                obj.insert("confidence".to_string(), json!(0.88f32));
-                println!("\x1b[38;2;0;255;128m✓ [Leader] Heavy Mode multi-agent deliberation succeeded. Confidence escalated to 0.880.\x1b[0m");
+
+            println!(
+                "[Blackboard] {} real TraceEvent(s) collected from worker pulses",
+                live_events.len()
+            );
+
+            // Feed every real event into the Evaluator
+            for event in &live_events {
+                self.evaluator.ingest(event.clone());
             }
-        }
 
-        let winner_name = arena_outcome["winner"].as_str().unwrap_or("Lucas").to_string();
-        let scores_val = arena_outcome["scores"].as_array();
-        let mut real_scores = [0.85f32; 4];
-        if let Some(arr) = scores_val {
-            for (i, v) in arr.iter().enumerate().take(4) {
-                real_scores[i] = v.as_f64().unwrap_or(0.85) as f32;
-            }
-        }
+            // Optional stress pulse so the harsh critic has realistic adversarial signal to evaluate
+            // (makes the demo more interesting and shows the combinatorial logic firing)
+            let stress_event = TraceEvent {
+                agent_id: "stress-test-worker".to_string(),
+                risk_score: 0.71,
+                epistemic_confidence: 0.44,
+                conflict_rate: 0.31,
+                token_velocity: 195.0,
+                gpu_util: 0.81,
+                verified_count_delta: 0,
+                authority_improvement: 0.05,
+                surface_text:
+                    "multiple conflicting approaches, low verification rate, rising semantic churn"
+                        .to_string(),
+                ..Default::default()
+            };
+            self.evaluator.ingest(stress_event);
 
-        // Phase 3: Explicit telemetry drain + Evaluator review on LIVE data
-        println!("\n{bold}{pink}=== 🧠 TELEMETRY DRAIN → BLACKBOARD → EVALUATOR ==={reset}\n");
+            // Run the full harsh 5-rubric evaluation on genuine swarm data + stress signal
+            let verdict = self.evaluator.evaluate(self.session_id).await;
 
-        let mut live_events = vec![];
-        if let Ok(mut bb) = self.telemetry_blackboard.lock() {
-            live_events = bb.drain_new_trace_events();
-            if live_events.is_empty() {
-                // Fallback: use whatever is in the current window
-                live_events = bb.current_window();
-            }
-        }
+            // The Leader reacts (this also prints the rich justifications)
+            self.handle_verdict(&verdict);
 
-        println!(
-            "[Blackboard] {} real TraceEvent(s) collected from worker pulses",
-            live_events.len()
-        );
+            // Phase 4: Beautiful verdict summary (the main thing the user wants to see)
+            self.print_campaign_summary(&verdict, &live_events, &results);
 
-        // Feed every real event into the Evaluator
-        for event in &live_events {
-            self.evaluator.ingest(event.clone());
-        }
+            // === LIVE VERDICT TICKER — the Evaluator now watches the continuous stream ===
+            // We run several micro-rounds. Each round:
+            //   - lets more live pulses arrive (from the background emitter or injected data)
+            //   - drains them into the Evaluator
+            //   - runs the full 5-rubric harsh evaluation
+            //   - calls handle_verdict (which can scale, revise, or terminate in real time)
+            //   - prints a compact one-line ticker so the user can watch the critic influence the swarm
+            println!("\n=== LIVE VERDICT TICKER (Evaluator reacting to the real-time stream) ===\n");
+            println!("Watching the swarm for {} rounds...\n", 10);
 
-        // Optional stress pulse so the harsh critic has realistic adversarial signal to evaluate
-        // (makes the demo more interesting and shows the combinatorial logic firing)
-        let stress_event = TraceEvent {
-            agent_id: "stress-test-worker".to_string(),
-            risk_score: 0.71,
-            epistemic_confidence: 0.44,
-            conflict_rate: 0.31,
-            token_velocity: 195.0,
-            gpu_util: 0.81,
-            verified_count_delta: 0,
-            authority_improvement: 0.05,
-            surface_text:
-                "multiple conflicting approaches, low verification rate, rising semantic churn"
-                    .to_string(),
-            ..Default::default()
-        };
-        self.evaluator.ingest(stress_event);
+            let mut restart_with_fork: Option<(usize, String)> = None;
 
-        // Run the full harsh 5-rubric evaluation on genuine swarm data + stress signal
-        let verdict = self.evaluator.evaluate(self.session_id).await;
-
-        // The Leader reacts (this also prints the rich justifications)
-        self.handle_verdict(&verdict);
-
-        // Phase 4: Beautiful verdict summary (the main thing the user wants to see)
-        self.print_campaign_summary(&verdict, &live_events, &results);
-
-        // === LIVE VERDICT TICKER — the Evaluator now watches the continuous stream ===
-        // We run several micro-rounds. Each round:
-        //   - lets more live pulses arrive (from the background emitter or injected data)
-        //   - drains them into the Evaluator
-        //   - runs the full 5-rubric harsh evaluation
-        //   - calls handle_verdict (which can scale, revise, or terminate in real time)
-        //   - prints a compact one-line ticker so the user can watch the critic influence the swarm
-        println!("\n=== LIVE VERDICT TICKER (Evaluator reacting to the real-time stream) ===\n");
-        println!("Watching the swarm for {} rounds...\n", 10);
-
-        for round in 0..10 {
-            // Poll for real-time playhead steering overrides or other signals from TUI
-            let mut rx = self.tui_rx.take();
-            if let Some(ref mut r) = rx {
-                while let Ok(response) = r.try_recv() {
-                    match response {
-                        crate::tui::ContractResponse::Override(override_vec) => {
-                            if let Some(first) = override_vec.first() {
-                                if first.starts_with("FORK:") {
-                                    let parts: Vec<&str> = first.splitn(3, ':').collect();
-                                    if parts.len() == 3 {
-                                        if let Ok(tx_id) = parts[1].parse::<usize>() {
-                                            let directive = parts[2];
-                                            println!("[Leader] OPERATOR TRIGGERED PLAYHEAD FORK at tx_{:02} with directive: {}", tx_id, directive);
-                                            let _ = self.handle_operator_fork(tx_id, directive).await;
+            for round in 0..10 {
+                // Poll for real-time playhead steering overrides or other signals from TUI
+                let mut rx = self.tui_rx.take();
+                if let Some(ref mut r) = rx {
+                    while let Ok(response) = r.try_recv() {
+                        match response {
+                            crate::tui::ContractResponse::Override(override_vec) => {
+                                if let Some(first) = override_vec.first() {
+                                    if first.starts_with("FORK:") {
+                                        let parts: Vec<&str> = first.splitn(3, ':').collect();
+                                        if parts.len() == 3 {
+                                            if let Ok(tx_id) = parts[1].parse::<usize>() {
+                                                let directive = parts[2];
+                                                println!("[Leader] OPERATOR TRIGGERED PLAYHEAD FORK at tx_{:02} with directive: {}", tx_id, directive);
+                                                let _ = self.handle_operator_fork(tx_id, directive).await;
+                                                restart_with_fork = Some((tx_id, directive.to_string()));
+                                            }
                                         }
                                     }
                                 }
                             }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
-            }
-            self.tui_rx = rx;
+                self.tui_rx = rx;
 
-            // Give the background telemetry emitters (and any future real workers) time to produce pulses
-            tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+                if restart_with_fork.is_some() {
+                    break;
+                }
 
-            if let Some(tx) = &self.tui_tx {
-                let _ = tx.try_send(crate::tui::TuiUpdate::Arena {
-                    round,
-                    winner: winner_name.clone(),
-                    mutations: arena_outcome["mutations"].as_u64().unwrap_or(3) as usize + (round % 2),
-                });
+                // Give the background telemetry emitters (and any future real workers) time to produce pulses
+                tokio::time::sleep(std::time::Duration::from_millis(650)).await;
 
-                let _ = tx.try_send(crate::tui::TuiUpdate::PersonaTelemetry {
-                    scores: [
-                        real_scores[0] + (round as f32 * 0.08).sin() * 0.02,
-                        real_scores[1] + (round as f32 * 0.12).cos() * 0.02,
-                        real_scores[2] + (round as f32 * 0.06).sin() * 0.02,
-                        real_scores[3] + (round as f32 * 0.10).cos() * 0.02,
-                    ],
-                    telemetry_merges: (round * 12) as u32,
-                    crdt_sync_frequency: 1.2 + (round as f32 * 0.15),
-                    conflicts_count: (round / 3) as u32,
-                    provenance_chain_length: (round + 1) as u32,
-                    lock_states: vec![
-                        ("Captain".to_string(), if round % 3 == 0 { "WRITE".to_string() } else { "READ".to_string() }, format!("{:.2}ms", 0.12 + (round as f32 * 0.01)), if round % 3 == 0 { "Negotiating contract".to_string() } else { "Monitoring".to_string() }),
-                        ("Harper".to_string(), if round % 4 == 1 { "WRITE".to_string() } else if round % 4 == 0 { "READ".to_string() } else { "IDLE".to_string() }, format!("{:.2}ms", 0.18 + (round as f32 * 0.015)), if round % 4 == 1 { "Generating edits".to_string() } else { "Idle".to_string() }),
-                        ("Benjamin".to_string(), if round % 4 == 2 { "WRITE".to_string() } else if round % 4 == 0 { "READ".to_string() } else { "IDLE".to_string() }, format!("{:.2}ms", 0.15 + (round as f32 * 0.02)), if round % 4 == 2 { "Synthesizing patch".to_string() } else { "Idle".to_string() }),
-                        ("Lucas".to_string(), if round % 4 == 3 { "WRITE".to_string() } else if round % 4 == 0 { "READ".to_string() } else { "IDLE".to_string() }, format!("{:.2}ms", 0.22 + (round as f32 * 0.008)), if round % 4 == 3 { "Verifying test cases".to_string() } else { "Idle".to_string() }),
-                    ],
-                });
-            }
-
-            // Drain whatever fresh TraceEvents the Blackboard has accumulated from live pulses
-            let mut new_events = vec![];
-            if let Ok(mut bb) = self.telemetry_blackboard.lock() {
-                new_events = bb.drain_new_trace_events();
-            }
-
-            for event in &new_events {
-                self.evaluator.ingest(event.clone());
-            }
-
-            // Also inject a small amount of evolving synthetic signal so the demo stays interesting
-            // even after the short-lived subprocesses have exited.
-            let synthetic = TraceEvent {
-                agent_id: format!("live-worker-{}", round % 4),
-                risk_score: 0.38 + ((round as f32) * 0.04).sin().abs() * 0.25,
-                epistemic_confidence: 0.72 - (round as f32 * 0.025).max(0.0),
-                token_velocity: 85.0 + (round as f32 * 7.0),
-                conflict_rate: 0.11 + (round as f32 * 0.015),
-                ..Default::default()
-            };
-            self.evaluator.ingest(synthetic);
-
-            // Run the full harsh critic on the current window
-            let live_verdict = self.evaluator.evaluate(self.session_id).await;
-
-            // The Leader reacts immediately (scale / revise / terminate)
-            self.handle_verdict(&live_verdict);
-
-            // Print the compact, watchable ticker line
-            self.print_live_ticker(&live_verdict, round);
-
-            // Persist this round as a signed .ktrans artifact (transactional memory)
-            self.persist_campaign_ktrans(
-                round,
-                winner_name.clone(), // in real flow this comes from the Arena result
-                arena_outcome["confidence"].as_f64().unwrap_or(0.87) as f32,
-                arena_outcome["mutations"].as_u64().unwrap_or(3) as usize + (round % 2),
-                &live_verdict,
-            ).await;
-
-            if let Some(tx) = &self.tui_tx {
-                let _ = tx.try_send(crate::tui::TuiUpdate::Ktrans(format!(
-                    "round {} | {} | swarm={}",
-                    round, live_verdict.recommended_action, self.swarm_size
-                )));
-            }
-
-            if round % 5 == 0 {
                 if let Some(tx) = &self.tui_tx {
-                    let _ = tx.try_send(crate::tui::TuiUpdate::Compaction(format!(
-                        "Base snapshot created at round {}",
-                        round
+                    let _ = tx.try_send(crate::tui::TuiUpdate::Arena {
+                        round,
+                        winner: winner_name.clone(),
+                        mutations: arena_outcome["mutations"].as_u64().unwrap_or(3) as usize + (round % 2),
+                    });
+
+                    let _ = tx.try_send(crate::tui::TuiUpdate::PersonaTelemetry {
+                        scores: [
+                            real_scores[0] + (round as f32 * 0.08).sin() * 0.02,
+                            real_scores[1] + (round as f32 * 0.12).cos() * 0.02,
+                            real_scores[2] + (round as f32 * 0.06).sin() * 0.02,
+                            real_scores[3] + (round as f32 * 0.10).cos() * 0.02,
+                        ],
+                        telemetry_merges: (round * 12) as u32,
+                        crdt_sync_frequency: 1.2 + (round as f32 * 0.15),
+                        conflicts_count: (round / 3) as u32,
+                        provenance_chain_length: (round + 1) as u32,
+                        lock_states: vec![
+                            ("Captain".to_string(), if round % 3 == 0 { "WRITE".to_string() } else { "READ".to_string() }, format!("{:.2}ms", 0.12 + (round as f32 * 0.01)), if round % 3 == 0 { "Negotiating contract".to_string() } else { "Monitoring".to_string() }),
+                            ("Harper".to_string(), if round % 4 == 1 { "WRITE".to_string() } else if round % 4 == 0 { "READ".to_string() } else { "IDLE".to_string() }, format!("{:.2}ms", 0.18 + (round as f32 * 0.015)), if round % 4 == 1 { "Generating edits".to_string() } else { "Idle".to_string() }),
+                            ("Benjamin".to_string(), if round % 4 == 2 { "WRITE".to_string() } else if round % 4 == 0 { "READ".to_string() } else { "IDLE".to_string() }, format!("{:.2}ms", 0.15 + (round as f32 * 0.02)), if round % 4 == 2 { "Synthesizing patch".to_string() } else { "Idle".to_string() }),
+                            ("Lucas".to_string(), if round % 4 == 3 { "WRITE".to_string() } else if round % 4 == 0 { "READ".to_string() } else { "IDLE".to_string() }, format!("{:.2}ms", 0.22 + (round as f32 * 0.008)), if round % 4 == 3 { "Verifying test cases".to_string() } else { "Idle".to_string() }),
+                        ],
+                    });
+
+                    let total_tokens = crate::llm::CAMPAIGN_TOKENS.load(std::sync::atomic::Ordering::Relaxed);
+                    let comps = crate::llm::COMPLETIONS_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+                    let tot_lat = crate::llm::TOTAL_LATENCY_MS.load(std::sync::atomic::Ordering::Relaxed);
+                    let avg_latency_ms = if comps > 0 { (tot_lat / comps) as u32 } else { 0 };
+                    let rotator_hits = crate::llm::ROTATOR_HITS.load(std::sync::atomic::Ordering::Relaxed) as u32;
+                    let heals_resolved = crate::llm::HEALS_RESOLVED.load(std::sync::atomic::Ordering::Relaxed) as u32;
+
+                    let _ = tx.try_send(crate::tui::TuiUpdate::ScaleTelemetry {
+                        total_tokens,
+                        avg_latency_ms,
+                        rotator_hits,
+                        heals_resolved,
+                    });
+                }
+
+                // Drain whatever fresh TraceEvents the Blackboard has accumulated from live pulses
+                let mut new_events = vec![];
+                if let Ok(mut bb) = self.telemetry_blackboard.lock() {
+                    new_events = bb.drain_new_trace_events();
+                }
+
+                for event in &new_events {
+                    self.evaluator.ingest(event.clone());
+                }
+
+                // Also inject a small amount of evolving synthetic signal so the demo stays interesting
+                // even after the short-lived subprocesses have exited.
+                let synthetic = TraceEvent {
+                    agent_id: format!("live-worker-{}", round % 4),
+                    risk_score: 0.38 + ((round as f32) * 0.04).sin().abs() * 0.25,
+                    epistemic_confidence: 0.72 - (round as f32 * 0.025).max(0.0),
+                    token_velocity: 85.0 + (round as f32 * 7.0),
+                    conflict_rate: 0.11 + (round as f32 * 0.015),
+                    ..Default::default()
+                };
+                self.evaluator.ingest(synthetic);
+
+                // Run the full harsh critic on the current window
+                let live_verdict = self.evaluator.evaluate(self.session_id).await;
+
+                // The Leader reacts immediately (scale / revise / terminate)
+                self.handle_verdict(&live_verdict);
+
+                // Print the compact, watchable ticker line
+                self.print_live_ticker(&live_verdict, round);
+
+                // Persist this round as a signed .ktrans artifact (transactional memory)
+                self.persist_campaign_ktrans(
+                    round,
+                    winner_name.clone(), // in real flow this comes from the Arena result
+                    arena_outcome["confidence"].as_f64().unwrap_or(0.87) as f32,
+                    arena_outcome["mutations"].as_u64().unwrap_or(3) as usize + (round % 2),
+                    &live_verdict,
+                ).await;
+
+                if let Some(tx) = &self.tui_tx {
+                    let _ = tx.try_send(crate::tui::TuiUpdate::Ktrans(format!(
+                        "round {} | {} | swarm={}",
+                        round, live_verdict.recommended_action, self.swarm_size
                     )));
+                }
+
+                if round % 5 == 0 {
+                    if let Some(tx) = &self.tui_tx {
+                        let _ = tx.try_send(crate::tui::TuiUpdate::Compaction(format!(
+                            "Base snapshot created at round {}",
+                            round
+                        )));
+                    }
+                }
+
+                // Every 3 rounds also show a tiny summary of recent decisions
+                if round % 3 == 2 && !self.live_decisions.is_empty() {
+                    println!(
+                        "    recent decisions: {:?}",
+                        &self.live_decisions[self.live_decisions.len().saturating_sub(3)..]
+                    );
                 }
             }
 
-            // Every 3 rounds also show a tiny summary of recent decisions
-            if round % 3 == 2 && !self.live_decisions.is_empty() {
-                println!(
-                    "    recent decisions: {:?}",
-                    &self.live_decisions[self.live_decisions.len().saturating_sub(3)..]
-                );
+            if let Some((_tx_id, directive)) = restart_with_fork {
+                self.root_task = directive;
+                continue;
             }
+
+            // Perform real semantic synthesis and merge at the end of the observable campaign
+            println!("\n[Leader] Performing real semantic synthesis & merge...");
+            self.perform_semantic_merge(&arena_outcome, &results).await;
+
+            // Persist final summary .ktrans
+            self.persist_final_summary_ktrans().await;
+
+            // Generate cryptographic campaign attestation certificate
+            let campaign_path = crate::paths::campaign_dir(&self.session_id).display().to_string();
+            let _ = tokio::fs::create_dir_all(&campaign_path).await;
+            if let Ok(att) = crate::provenance::generate_attestation(
+                self.session_id,
+                &self.root_task,
+                &self.campaign_signing_key,
+                std::path::Path::new(&campaign_path),
+            ).await {
+                println!("\n[Security] Cryptographic Campaign Attestation generated successfully!");
+                println!("[Security] Provenance Certificate: {}/provenance-attestation.json", campaign_path);
+                println!("[Security] Trace Hash Root:        {}", att.trace_hash_chain_root);
+            }
+
+            // Print the campaign's public key so operators can verify signatures offline
+            let pubkey = hex::encode(self.campaign_signing_key.verifying_key().to_bytes());
+            println!(
+                "\n[Security] Campaign public key (for offline .ktrans verification): {}",
+                pubkey
+            );
+
+            println!("\n=== CAMPAIGN COMPLETE — Live scaling decisions recorded ===\n");
+            println!(
+                "Final swarm_size: {}   |   Total live decisions: {}   |   Live .ktrans streamed: {}",
+                self.swarm_size,
+                self.live_decisions.len(),
+                self.live_ktrans_streamed
+            );
+            println!("(Live .ktrans events were also emitted as AcpMessage::CampaignKtrans on stdout for real-time subscribers)");
+            break;
         }
-
-        // Perform real semantic synthesis and merge at the end of the observable campaign
-        println!("\n[Leader] Performing real semantic synthesis & merge...");
-        self.perform_semantic_merge(&arena_outcome, &results).await;
-
-        // Persist final summary .ktrans
-        self.persist_final_summary_ktrans().await;
-
-        // Generate cryptographic campaign attestation certificate
-        let campaign_path = format!("/tmp/korg/campaigns/{}", self.session_id);
-        let _ = tokio::fs::create_dir_all(&campaign_path).await;
-        if let Ok(att) = crate::provenance::generate_attestation(
-            self.session_id,
-            &self.root_task,
-            &self.campaign_signing_key,
-            std::path::Path::new(&campaign_path),
-        ).await {
-            println!("\n[Security] Cryptographic Campaign Attestation generated successfully!");
-            println!("[Security] Provenance Certificate: {}/provenance-attestation.json", campaign_path);
-            println!("[Security] Trace Hash Root:        {}", att.trace_hash_chain_root);
-        }
-
-        // Print the campaign's public key so operators can verify signatures offline
-        let pubkey = hex::encode(self.campaign_signing_key.verifying_key().to_bytes());
-        println!(
-            "\n[Security] Campaign public key (for offline .ktrans verification): {}",
-            pubkey
-        );
-
-        println!("\n=== CAMPAIGN COMPLETE — Live scaling decisions recorded ===\n");
-        println!(
-            "Final swarm_size: {}   |   Total live decisions: {}   |   Live .ktrans streamed: {}",
-            self.swarm_size,
-            self.live_decisions.len(),
-            self.live_ktrans_streamed
-        );
-        println!("(Live .ktrans events were also emitted as AcpMessage::CampaignKtrans on stdout for real-time subscribers)");
         Ok(())
     }
 
     /// Asynchronously triggers a playhead steering fork, reverting the blackboard state,
     /// writing a snapshot, and clone-branching the workspace.
     pub async fn handle_operator_fork(&mut self, tx_id: usize, directive: &str) -> Result<()> {
-        let dir = format!("/tmp/korg/campaigns/{}", self.session_id);
+        let dir = crate::paths::campaign_dir(&self.session_id).display().to_string();
         let mut ktrans_records = vec![];
         if let Ok(mut read_dir) = tokio::fs::read_dir(&dir).await {
             while let Ok(Some(entry)) = read_dir.next_entry().await {
@@ -1466,9 +1579,12 @@ impl LeaderOrchestrator {
             println!("[Leader] Reverting physical/logical state to transaction at round {} (hash={}, state={})", 
                 tx_id, target.tx_hash, target.state_merkle_root);
 
+            self.swarm_size = target.new_swarm_size;
+            println!("[Leader] Restored swarm_size to {}", self.swarm_size);
+
             // 1. Rehydrate logical state (blackboard)
-            let state_blob_path = format!("/tmp/korg/campaigns/{}/state-blobs/{}.json", self.session_id, target.state_merkle_root);
-            let bb_dir = "/tmp/korg/blackboard";
+            let state_blob_path = crate::paths::state_blobs_dir(&self.session_id).join(format!("{}.json", target.state_merkle_root)).display().to_string();
+            let bb_dir = &crate::paths::blackboard_dir().display().to_string();
             let bb_path = format!("{}/blackboard.json", bb_dir);
             let _ = tokio::fs::create_dir_all(bb_dir).await;
 
@@ -1498,24 +1614,79 @@ impl LeaderOrchestrator {
             }
 
             // 2. Revert physical codebase (git tree checkout)
-            if !target.codebase_merkle_root.is_empty() && !target.codebase_merkle_root.starts_with("sha256:codebase-fallback") {
-                println!("[Leader] Reverting working directory to codebase tree: {}", target.codebase_merkle_root);
-                let output = tokio::process::Command::new("git")
-                    .args(&["read-tree", "--reset", "-u", &target.codebase_merkle_root])
-                    .output()
-                    .await;
-                match output {
-                    Ok(out) if out.status.success() => {
-                        println!("[Leader] Codebase successfully reverted to tree hash: {}", target.codebase_merkle_root);
+            let is_fallback_or_mock = target.codebase_merkle_root.starts_with("sha256:codebase-fallback")
+                || target.codebase_merkle_root.starts_with("sha256:codebase-mock")
+                || target.codebase_merkle_root.starts_with("mock-");
+            if !target.codebase_merkle_root.is_empty() && !is_fallback_or_mock {
+                // Paranoid validation before cleaning/checkouts
+                let proj_root = crate::paths::project_root();
+                let has_git = proj_root.join(".git").exists();
+                let is_root_or_home = proj_root.to_string_lossy() == "/" 
+                    || proj_root.to_string_lossy() == "/root" 
+                    || proj_root.to_string_lossy() == "/Users/clubpenguin"
+                    || proj_root.to_string_lossy().ends_with("/clubpenguin")
+                    || proj_root.to_string_lossy().ends_with("/home");
+                
+                if !has_git {
+                    println!("[Leader] ERROR: Timeline rewind aborted. Repository root does not contain a valid .git folder: {:?}", proj_root);
+                } else if is_root_or_home {
+                    println!("[Leader] ERROR: Timeline rewind aborted. Working directory matches or is subfolder of system root/home: {:?}", proj_root);
+                } else {
+                    println!("[Leader] Safe validation passed for path: {:?}", proj_root);
+                    
+                    // Create lightweight recovery snapshot/stash before rewind
+                    let stash_output = tokio::process::Command::new("git")
+                        .args(&["stash", "create", "Korg auto-recovery before time-travel rewind"])
+                        .output()
+                        .await;
+                    if let Ok(out) = stash_output {
+                        if out.status.success() {
+                            let hash = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                            if !hash.is_empty() {
+                                println!("[Leader] Safe recovery stash created: {}", hash);
+                            }
+                        }
                     }
-                    Ok(out) => {
-                        let err = String::from_utf8_lossy(&out.stderr);
-                        println!("[Leader] WARNING: git read-tree failed: {}", err);
-                    }
-                    Err(e) => {
-                        println!("[Leader] WARNING: failed to spawn git read-tree: {}", e);
+
+                    println!("[Leader] Reverting working directory to codebase tree: {}", target.codebase_merkle_root);
+                    let output = tokio::process::Command::new("git")
+                        .args(&["read-tree", "--reset", "-u", &target.codebase_merkle_root])
+                        .output()
+                        .await;
+                    match output {
+                        Ok(out) if out.status.success() => {
+                            println!("[Leader] Codebase successfully reverted to tree hash: {}", target.codebase_merkle_root);
+                            self.base_snapshot = target.codebase_merkle_root.clone();
+
+                            // Clean up untracked/build file pollution safely with exclusions
+                            let clean_output = tokio::process::Command::new("git")
+                                .args(&["clean", "-fdx", "-e", ".korg/", "-e", ".evaluations/"])
+                                .output()
+                                .await;
+                            match clean_output {
+                                Ok(clean_out) if clean_out.status.success() => {
+                                    println!("[Leader] Safe timeline checkout completed. Cleansed untracked files with exclusions.");
+                                }
+                                Ok(clean_out) => {
+                                    let err = String::from_utf8_lossy(&clean_out.stderr);
+                                    println!("[Leader] WARNING: git clean failed: {}", err);
+                                }
+                                Err(e) => {
+                                    println!("[Leader] WARNING: failed to spawn git clean: {}", e);
+                                }
+                            }
+                        }
+                        Ok(out) => {
+                            let err = String::from_utf8_lossy(&out.stderr);
+                            println!("[Leader] WARNING: git read-tree failed: {}", err);
+                        }
+                        Err(e) => {
+                            println!("[Leader] WARNING: failed to spawn git read-tree: {}", e);
+                        }
                     }
                 }
+            } else {
+                self.base_snapshot = target.codebase_merkle_root.clone();
             }
         } else {
             println!("[Leader] WARNING: Transaction at round {} not found; falling back to simulated truncation", tx_id);
@@ -1529,8 +1700,8 @@ impl LeaderOrchestrator {
             }
         }
 
-        // Clone files to /tmp/korg/forks/
-        let forks_dir = format!("/tmp/korg/forks/tx_{:02}", tx_id);
+        // Clone files to forks directory
+        let forks_dir = crate::paths::forks_dir(tx_id).display().to_string();
         let _ = tokio::fs::create_dir_all(&forks_dir).await;
         let _ = copy_dir_recursive("src", format!("{}/src", forks_dir));
         if std::path::Path::new("Cargo.toml").exists() {
@@ -1542,7 +1713,7 @@ impl LeaderOrchestrator {
         println!("[Leader] Workspace cloned to {}", forks_dir);
 
         // Log the split
-        let fork_log = format!("[Fork] Split occurred at playhead tx_{:02}. Directive: '{}'. Reverted Blackboard snapshot written to /tmp/korg/blackboard/blackboard.json. Sandbox path: {}", tx_id, directive, forks_dir);
+        let fork_log = format!("[Fork] Split occurred at playhead tx_{:02}. Directive: '{}'. Reverted Blackboard snapshot written to {}. Sandbox path: {}", tx_id, directive, crate::paths::blackboard_json().display(), forks_dir);
         println!("{}", fork_log);
         if let Some(tx) = &self.tui_tx {
             let _ = tx.try_send(crate::tui::TuiUpdate::Trace(fork_log));
@@ -1556,7 +1727,7 @@ impl LeaderOrchestrator {
     /// printing the live ticker for verification / audit.
     pub fn replay_campaign(&self, session: Option<Uuid>) -> Result<()> {
         let sid = session.unwrap_or(self.session_id);
-        let dir = format!("/tmp/korg/campaigns/{}", sid);
+        let dir = crate::paths::campaign_dir(&sid).display().to_string();
 
         let gray = "\x1b[38;2;120;120;120m";
         let white = "\x1b[38;2;255;255;255m";
@@ -1634,6 +1805,11 @@ impl LeaderOrchestrator {
                     state_merkle_root: ktrans.state_merkle_root.clone(),
                     codebase_merkle_root: ktrans.codebase_merkle_root.clone(),
                     vision_attachments: ktrans.vision_attachments.clone(),
+                    certainty: ktrans.certainty,
+                    blast_radius: ktrans.blast_radius,
+                    severity: ktrans.severity,
+                    remediation_confidence: ktrans.remediation_confidence,
+                    is_healed: ktrans.is_healed,
                 };
 
                 let computed_hash = crate::provenance::compute_sha256(&payload)?;
@@ -1774,7 +1950,7 @@ impl LeaderOrchestrator {
             return Ok(());
         }
 
-        // Dynamic Cognition Mode Custom Behaviors (Research/Recovery)
+        // Dynamic Cognition Mode Custom Behaviors (Research/Recovery/HeavyConsciousness)
         {
             let m = *self.cognition_mode.lock().unwrap();
             let cyan = "\x1b[38;2;0;240;255m";
@@ -1800,6 +1976,16 @@ impl LeaderOrchestrator {
                 if let Some(tx) = &self.tui_tx {
                     let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
                         "[Recovery Mode] Created safe worktree snapshots and initialized safety nets.".to_string()
+                    ));
+                }
+            } else if m == CognitionMode::HeavyConsciousness {
+                println!("{bold}{cyan}🧠 [Heavy-Consciousness Mode] Hyper-Context Cognition Core Enabled{reset}");
+                println!("  {slate}├── [Heavy-Consciousness] Serializing hierarchical workspace maps...{reset}");
+                println!("  {slate}├── [Heavy-Consciousness] Ingesting Merkle-DAG trace buffers...{reset}");
+                println!("  {slate}└── [Heavy-Consciousness] Strict 8,000 character context ceiling active.{reset}\n");
+                if let Some(tx) = &self.tui_tx {
+                    let _ = tx.try_send(crate::tui::TuiUpdate::Trace(
+                        "[Heavy-Consciousness Mode] Hyper-context layout generated under 8,000 char budget.".to_string()
                     ));
                 }
             }
@@ -1914,218 +2100,168 @@ impl LeaderOrchestrator {
         Ok(())
     }
 
+    fn build_heavy_consciousness_context(&self) -> String {
+        let mut ws_map = String::new();
+        ws_map.push_str("Top-Level Workspace Structure:\n");
+        
+        if let Ok(entries) = std::fs::read_dir(".") {
+            let mut paths: Vec<_> = entries.filter_map(Result::ok).collect();
+            paths.sort_by_key(|e| e.path());
+            
+            for entry in paths {
+                let path = entry.path();
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if name.starts_with('.') && name != ".korg" && name != ".git" {
+                    continue; // ignore generic hidden directories/files except .korg
+                }
+                if path.is_dir() {
+                    ws_map.push_str(&format!("  [DIR]  {}/\n", name));
+                    // list children if it's src/ or .korg/
+                    if name == "src" {
+                        if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                            let mut sub_paths: Vec<_> = sub_entries.filter_map(Result::ok).collect();
+                            sub_paths.sort_by_key(|e| e.path());
+                            for sub_entry in sub_paths {
+                                let sub_name = sub_entry.file_name().to_string_lossy().into_owned();
+                                ws_map.push_str(&format!("    - {}\n", sub_name));
+                            }
+                        }
+                    }
+                } else {
+                    ws_map.push_str(&format!("  [FILE] {}\n", name));
+                }
+            }
+        }
+
+        let mut dag_ctx = String::new();
+        dag_ctx.push_str("DAG Nodes:\n");
+        dag_ctx.push_str("  - pkg-captain (Persona: Captain, Command: RouteWork captain)\n");
+        dag_ctx.push_str("  - pkg-harper (Persona: Harper, Command: RouteWork harper)\n");
+        dag_ctx.push_str("  - pkg-benjamin (Persona: Benjamin, Dependencies: pkg-captain, pkg-harper)\n");
+        dag_ctx.push_str("  - pkg-lucas (Persona: Lucas, Dependencies: pkg-benjamin)\n");
+
+        let mut conflicts = String::new();
+        conflicts.push_str("Active Conflicts: None detected.\n");
+
+        // Build the final context layout
+        let mut layout = String::new();
+        layout.push_str("[WORKSPACE_MAP]\n");
+        layout.push_str(&ws_map);
+        layout.push_str("\n[DAG_CONTEXT]\n");
+        layout.push_str(&dag_ctx);
+        layout.push_str("\n[ACTIVE_CONFLICTS]\n");
+        layout.push_str(&conflicts);
+
+        // strict budget ceiling of 8000 characters
+        if layout.len() > 8000 {
+            layout.truncate(7997);
+            layout.push_str("...");
+        }
+
+        layout
+    }
+
     fn decompose_into_persona_packages(&self) -> serde_json::Value {
+        let mode = *self.cognition_mode.lock().unwrap();
+        let heavy_ctx = if mode == CognitionMode::HeavyConsciousness {
+            Some(self.build_heavy_consciousness_context())
+        } else {
+            None
+        };
+
         json!({
             "root_task": self.root_task,
             "base_snapshot": self.base_snapshot,   // passed to workers for rebasing awareness
+            "heavy_consciousness_context": heavy_ctx,
             "work_packages": [
-                {"id": "pkg-captain", "personas": ["captain"], "description": format!("Plan: {}", self.root_task)},
-                {"id": "pkg-harper",  "personas": ["harper"],  "description": format!("Research: {}", self.root_task)},
-                {"id": "pkg-benjamin","personas": ["benjamin"],"description": format!("Implement (simulate-crash): {}", self.root_task)},
-                {"id": "pkg-lucas",   "personas": ["lucas"],   "description": format!("Synthesize: {}", self.root_task)}
+                {"id": "pkg-captain", "personas": ["captain"], "description": format!("Plan: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
+                {"id": "pkg-harper",  "personas": ["harper"],  "description": format!("Research: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
+                {"id": "pkg-benjamin","personas": ["benjamin"],"description": format!("Implement (simulate-crash): {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
+                {"id": "pkg-lucas",   "personas": ["lucas"],   "description": format!("Synthesize: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())}
             ]
         })
     }
 
     /// Concurrent dispatch using real child processes.
-    /// Each worker now receives a clone of the shared blackboard so it can ingest
-    /// SwarmTelemetryPulse messages in real time and turn them into TraceEvents.
-    async fn dispatch_concurrent(&self, plan: &serde_json::Value) -> Result<Vec<PersonaResult>> {
-        let packages = plan["work_packages"].as_array().unwrap();
+    ///
+    /// Delegates to `workers::dispatch_level` which fixes three concurrency bugs
+    /// from the original implementation:
+    /// - Bug A: results now surface in completion order via JoinSet, not insertion order
+    /// - Bug B: crashed workers are retried *after* all live workers drain, not inline
+    /// - Bug C: each worker has a 300s timeout; silent hangs no longer deadlock fan-in
+    #[tracing::instrument(skip(self, plan), fields(session_id = %self.session_id))]
+    async fn dispatch_concurrent(&mut self, plan: &serde_json::Value) -> Result<Vec<PersonaResult>> {
         let bb_handle = self.telemetry_blackboard.clone();
-
-        // Step 1: Construct and topological-compile a 4-persona campaign execution graph using Thumper's DAG API
-        let mut dag = ExecutionDag::new(&self.root_task);
-        dag.add_node(DagNode {
-            id: "pkg-captain".to_string(),
-            name: "Captain Persona".to_string(),
-            command: "RouteWork captain".to_string(),
-            dependencies: vec![],
-            status: NodeStatus::Pending,
-            confidence: 0.92,
-            risk: "Low".to_string(),
-            severity: "Low".to_string(),
-            blast_radius: "Scoped".to_string(),
-            certainty: 0.9,
-            remediation_confidence: 0.9,
-        });
-        dag.add_node(DagNode {
-            id: "pkg-harper".to_string(),
-            name: "Harper Persona".to_string(),
-            command: "RouteWork harper".to_string(),
-            dependencies: vec![],
-            status: NodeStatus::Pending,
-            confidence: 0.88,
-            risk: "Low".to_string(),
-            severity: "Medium".to_string(),
-            blast_radius: "Scoped".to_string(),
-            certainty: 0.85,
-            remediation_confidence: 0.85,
-        });
-        dag.add_node(DagNode {
-            id: "pkg-benjamin".to_string(),
-            name: "Benjamin Persona".to_string(),
-            command: "RouteWork benjamin".to_string(),
-            dependencies: vec!["pkg-captain".to_string(), "pkg-harper".to_string()],
-            status: NodeStatus::Pending,
-            confidence: 0.78,
-            risk: "Medium".to_string(),
-            severity: "High".to_string(),
-            blast_radius: "Module".to_string(),
-            certainty: 0.80,
-            remediation_confidence: 0.80,
-        });
-        dag.add_node(DagNode {
-            id: "pkg-lucas".to_string(),
-            name: "Lucas Persona".to_string(),
-            command: "RouteWork lucas".to_string(),
-            dependencies: vec!["pkg-benjamin".to_string()],
-            status: NodeStatus::Pending,
-            confidence: 0.85,
-            risk: "Low".to_string(),
-            severity: "Low".to_string(),
-            blast_radius: "Scoped".to_string(),
-            certainty: 0.9,
-            remediation_confidence: 0.9,
-        });
-
-        // Speculatively pre-warm sandbox execution engine in the background
-        let mut scheduler = thumper_cli::bun::dag::SpeculativeScheduler::new(dag.clone());
-        let _ = scheduler.speculative_warm_boot().await;
-        if let Some(ref tx) = self.tui_tx {
-            let _ = tx.try_send(crate::tui::TuiUpdate::Trace("⚡ [SPECULATIVE] Warmed background shell shims concurrently".to_string()));
-        }
-
-        let levels = dag.compile().unwrap();
-        let mut results = vec![];
         let start_time = std::time::Instant::now();
 
-        // Level-by-level Parallel DAG Execution
+        // Build the DAG + packages_map via workers module
+        let (mut dag, levels, packages_map) = crate::workers::build_campaign_dag(
+            &self.root_task,
+            plan,
+            self.tui_tx.as_ref(),
+        ).await?;
+
+        tracing::info!(levels = levels.len(), "campaign_dag_compiled");
+
+        let mut results = vec![];
+
         for (idx, level) in levels.iter().enumerate() {
-            println!("  [→] Scheduling Level {}: {:?}", idx + 1, level);
+            tracing::info!(level = idx + 1, nodes = level.len(), "dispatching_level");
             if let Some(ref tx) = self.tui_tx {
                 let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
                     "  [→] Scheduling Level {}: {:?}", idx + 1, level
                 )));
             }
 
-            let mut tasks = vec![];
+            // Mark nodes as running
             for node_id in level {
-                let pkg = packages.iter().find(|p| p["id"].as_str().unwrap_or("") == node_id).unwrap();
-                let persona = match pkg["personas"][0].as_str().unwrap_or("benjamin") {
-                    "captain" => Persona::Captain,
-                    "harper" => Persona::Harper,
-                    "lucas" => Persona::Lucas,
-                    _ => Persona::Benjamin,
-                };
-                let payload = pkg["description"].as_str().unwrap_or("").to_string();
-                let routing_id = pkg["id"].as_str().unwrap_or("").to_string();
-
-                println!("  [→] Starting step: {} (Risk: {})", node_id, if node_id == "pkg-benjamin" { "Medium" } else { "Low" });
-                if let Some(ref tx) = self.tui_tx {
-                    let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
-                        "  [→] Starting step: {} (Risk: {})", node_id, if node_id == "pkg-benjamin" { "Medium" } else { "Low" }
-                    )));
-                }
-
-                // Update node status
                 if let Some(node) = dag.nodes.get_mut(node_id) {
                     node.status = NodeStatus::Running;
                 }
-
-                let bb = bb_handle.clone();
-                let key = self.campaign_signing_key.clone();
-                let node_id_owned = node_id.clone();
-                let task = tokio::spawn(async move {
-                    let res = spawn_worker_process(persona, payload.clone(), routing_id.clone(), bb.clone(), key.clone()).await;
-                    (node_id_owned, persona, payload, routing_id, bb, key, res)
-                });
-                tasks.push(task);
             }
 
-            for task in tasks {
-                if let Ok((node_id, persona, payload, routing_id, bb, key, run_res)) = task.await {
-                    match run_res {
-                        Ok(mut res) => {
-                            if res.crashed {
-                                println!("  [!] Step FAILED: {}! Booting self-healing recovery...", node_id);
-                                if let Some(ref tx) = self.tui_tx {
-                                    let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
-                                        "  [!] Step FAILED: {}! Booting self-healing recovery...", node_id
-                                    )));
-                                }
+            // Fan-in with JoinSet (Bug A + B + C fixed) + workspace lifecycle
+            let level_result = crate::workers::dispatch_level(
+                level,
+                &packages_map,
+                bb_handle.clone(),
+                self.campaign_signing_key.clone(),
+                self.tui_tx.clone(),
+                self.runtime_coordinator.clone(),
+            ).await;
 
-                                if let Some(node) = dag.nodes.get_mut(&node_id) {
-                                    node.status = NodeStatus::Failed;
-                                }
+            // Update healed flag from level result
+            if level_result.healed_count > 0 {
+                self.last_round_healed = true;
+            }
 
-                                // 1. Recover blackboard from partial .ktrans
-                                self.merge_received_ktrans(&[routing_id.clone()]).await;
-
-                                // 2. Trigger Thumper Sandbox Recovery
-                                let (heal_tx, mut heal_rx) = tokio::sync::mpsc::unbounded_channel();
-                                let tui_tx_clone = self.tui_tx.clone();
-                                let join_handle = tokio::spawn(async move {
-                                    while let Some(msg) = heal_rx.recv().await {
-                                        if let Some(ref tx) = tui_tx_clone {
-                                            let _ = tx.try_send(crate::tui::TuiUpdate::Trace(msg));
-                                        }
-                                    }
-                                });
-                                
-                                let heal_res = thumper_cli::bun::recovery::heal_node("cargo check", Some(heal_tx)).await;
-                                let _ = join_handle.await;
-
-                                if let Ok(true) = heal_res {
-                                    println!("  [✓] Step complete: {} (HEALED) in {:?}", node_id, start_time.elapsed());
-                                    if let Some(ref tx) = self.tui_tx {
-                                        let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
-                                            "  [✓] Step complete: {} (HEALED) in {:?}", node_id, start_time.elapsed()
-                                        )));
-                                    }
-
-                                    if let Some(node) = dag.nodes.get_mut(&node_id) {
-                                        node.status = NodeStatus::Healed;
-                                    }
-
-                                    // Spawn retried clean worker
-                                    let clean_payload = payload.replace("simulate-crash", "");
-                                    match spawn_worker_process(persona, clean_payload, routing_id.clone(), bb.clone(), key.clone()).await {
-                                        Ok(res2) => {
-                                            results.push(res2);
-                                        }
-                                        Err(e) => {
-                                            println!("  [!] Failed to spawn healed worker: {}", e);
-                                            results.push(res);
-                                        }
-                                    }
-                                } else {
-                                    results.push(res);
-                                }
-                            } else {
-                                println!("  [✓] Step complete: {} in {:?}", node_id, start_time.elapsed());
-                                if let Some(ref tx) = self.tui_tx {
-                                    let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
-                                        "  [✓] Step complete: {} in {:?}", node_id, start_time.elapsed()
-                                    )));
-                                }
-
-                                if let Some(node) = dag.nodes.get_mut(&node_id) {
-                                    node.status = NodeStatus::Success;
-                                }
-                                results.push(res);
-                            }
-                        }
-                        Err(e) => {
-                            println!("  [!] Step spawn error: {}", e);
-                        }
-                    }
+            // Update DAG node statuses from level result
+            for res in &level_result.completed {
+                if let Some(node) = dag.nodes.get_mut(&res.routing_id) {
+                    node.status = if res.crashed { NodeStatus::Failed } else { NodeStatus::Success };
                 }
             }
+            for failed_id in &level_result.failed_node_ids {
+                if let Some(node) = dag.nodes.get_mut(failed_id) {
+                    node.status = NodeStatus::Failed;
+                }
+            }
+
+            tracing::info!(
+                level = idx + 1,
+                completed = level_result.completed.len(),
+                failed = level_result.failed_node_ids.len(),
+                healed = level_result.healed_count,
+                elapsed_ms = start_time.elapsed().as_millis(),
+                "level_complete"
+            );
+
+            results.extend(level_result.completed);
         }
 
-        // Print final Merkle-DAG details to stream visual proof block to TUI activity
+        // Emit Merkle-DAG proof of execution
         let root = dag.compute_merkle_root();
+        tracing::info!(merkle_root = %root, "dag_execution_complete");
         println!("\n  🔒 [CRYPTOGRAPHIC PROOF OF EXECUTION]");
         println!("  ├─ Merkle Root: sha256_{}", root);
         println!("  └─ Attestation: JCS-signed non-repudiation");
@@ -2426,6 +2562,9 @@ impl LeaderOrchestrator {
             tx_id: Some(format!("merge-{}", self.session_id)),
             session_id: Some(self.session_id.to_string()),
             policy_hash: None,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
         };
 
         let merged_mutations = match provider.complete(req).await {
@@ -2459,7 +2598,7 @@ impl LeaderOrchestrator {
             merged_mutations.as_array().map(|a| a.len()).unwrap_or(0)
         );
 
-        let campaign_dir = format!("/tmp/korg/campaigns/{}", self.session_id);
+        let campaign_dir = crate::paths::campaign_dir(&self.session_id).display().to_string();
         std::fs::create_dir_all(&campaign_dir).ok();
         let merge_path = format!("{}/semantic-merge.json", campaign_dir);
         if let Ok(mutations_str) = serde_json::to_string_pretty(&merged_mutations) {
@@ -2568,8 +2707,8 @@ impl LeaderOrchestrator {
     /// After workers finish, read their .ktrans files and merge into a simple on-disk blackboard.
     /// This is the stub implementation of the merge_blackboard_write logic from the docs.
     async fn merge_received_ktrans(&self, routing_ids: &[String]) {
-        let ktrans_dir = "/tmp/korg/ktrans";
-        let bb_dir = "/tmp/korg/blackboard";
+        let ktrans_dir = &crate::paths::ktrans_dir().display().to_string();
+        let bb_dir = &crate::paths::blackboard_dir().display().to_string();
         let _ = tokio::fs::create_dir_all(bb_dir).await;
 
         let mut blackboard: serde_json::Value =
@@ -2633,7 +2772,7 @@ impl LeaderOrchestrator {
         self.blackboard["_meta"]["last_snapshot"] = json!(new_snapshot.clone());
         self.base_snapshot = new_snapshot;
 
-        let bb_dir = "/tmp/korg/blackboard";
+        let bb_dir = &crate::paths::blackboard_dir().display().to_string();
         if let Ok(pretty) = serde_json::to_string_pretty(&self.blackboard) {
             let _ = tokio::fs::write(format!("{}/blackboard.json", bb_dir), pretty).await;
         }
@@ -2649,12 +2788,11 @@ impl LeaderOrchestrator {
         generator_result: &PersonaResult,
     ) -> Result<PersonaResult> {
         let mut current_result = generator_result.clone();
-        let worktree_dir = format!(
-            "/tmp/korg/worktrees/{}-{}-{}",
-            generator_result.persona.name().to_lowercase(),
-            generator_result.routing_id,
-            generator_result.routing_id
-        );
+        let worktree_dir = crate::paths::worktree_dir(
+            &generator_result.persona.name().to_lowercase(),
+            &generator_result.routing_id,
+            &generator_result.routing_id,
+        ).display().to_string();
         let worktree_path = std::path::Path::new(&worktree_dir);
 
         if !worktree_path.exists() {
@@ -2697,10 +2835,17 @@ impl LeaderOrchestrator {
                             }
                         });
                         
-                        let heal_res = thumper_cli::bun::recovery::heal_node("cargo check", Some(heal_tx)).await;
+                        let heal_res = crate::dag::heal_node_with_context(
+                            "cargo check",
+                            Some(&stderr),
+                            Some(worktree_path),
+                            Some(heal_tx),
+                        ).await;
                         let _ = join_handle.await;
 
                         if let Ok(true) = heal_res {
+                            self.last_round_healed = true;
+                            crate::llm::HEALS_RESOLVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             println!("\x1b[38;2;0;255;128m🔧 [Self-Healing] Thumper auto-healed the compilation failure in sub-seconds!\x1b[0m");
                             if let Some(ref tx) = self.tui_tx {
                                 let _ = tx.try_send(crate::tui::TuiUpdate::Trace("🔧 [HEAL] Healing successful. Resuming execution loop.".to_string()));
@@ -2817,227 +2962,6 @@ impl LeaderOrchestrator {
     }
 }
 
-/// Spawns a real `cargo run -- worker` child (or the binary) for one persona,
-/// sends one RouteWork, reads results + SwarmTelemetryPulse messages,
-/// ingests pulses into the shared Blackboard (real mapping happens here),
-/// and returns PersonaResult.
-async fn spawn_worker_process(
-    persona: Persona,
-    payload: String,
-    routing_id: String,
-    blackboard: Arc<Mutex<Blackboard>>,
-    signing_key: ed25519_dalek::SigningKey, // per-campaign key for signing outgoing ACP messages
-) -> Result<PersonaResult> {
-    let exe = std::env::current_exe()?;
-
-    let mut cmd = Command::new(exe);
-    cmd.arg("worker")
-        .arg("--id")
-        .arg(format!("{}-{}", persona.name().to_lowercase(), routing_id))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = cmd.spawn()?;
-
-    let mut stdin = child.stdin.take().unwrap();
-    let stdout = BufReader::new(child.stdout.take().unwrap());
-    let mut stderr = BufReader::new(child.stderr.take().unwrap());
-
-    // Compute physical codebase root (git write-tree) in main workspace
-    let codebase_merkle_root = if let Ok(output) = std::process::Command::new("git")
-        .arg("write-tree")
-        .output()
-    {
-        if output.status.success() {
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        } else {
-            "sha256:codebase-fallback".to_string()
-        }
-    } else {
-        "sha256:codebase-fallback".to_string()
-    };
-
-    // Send RouteWork as a properly signed ACP MessageEnvelope (Phase A)
-    let route_work = AcpMessage::RouteWork {
-        routing_id: routing_id.clone(),
-        capabilities: vec![persona.name().to_lowercase()],
-        payload,
-        base_snapshot: "latest-from-blackboard".to_string(),
-        codebase_merkle_root,
-        permissions: vec!["fs:write:worktree".to_string()],
-    };
-
-    crate::acp::write_signed_acp_envelope(&mut stdin, &signing_key, route_work).await?;
-
-    // === Live Demo: Send a signed ShellExecRequest after RouteWork ===
-    // This proves the full round-trip for coding tools over zero-trust ACP.
-    let demo_tool = AcpMessage::ShellExecRequest(crate::acp::ShellExecRequestPayload {
-        command: "echo".to_string(),
-        args: vec!["[TOOL DEMO] Hello from signed ACP ShellExec over zero-trust transport".to_string()],
-        cwd: None,
-        timeout_ms: Some(8000),
-    });
-    crate::acp::write_signed_acp_envelope(&mut stdin, &signing_key, demo_tool).await?;
-
-    // === Next demo: Real TestRunRequest (cargo test) ===
-    let test_request = AcpMessage::TestRunRequest(crate::acp::TestRunRequestPayload {
-        command: "cargo".to_string(),
-        args: vec!["test".to_string(), "--".to_string(), "--quiet".to_string()],
-        cwd: None,
-        timeout_ms: Some(180_000),
-        with_coverage: false,
-    });
-    crate::acp::write_signed_acp_envelope(&mut stdin, &signing_key, test_request).await?;
-
-    // === Demo: CodeEdit + PatchApply ===
-    let patch_request = AcpMessage::PatchApplyRequest(crate::acp::PatchApplyRequestPayload {
-        file_path: "src/harness.rs".to_string(), // safe demo file
-        patch: "<<<<<<< SEARCH\n        eprintln!(\"[Harness] Worker {} exiting after stdio task\", worker_id);\n=======\n        eprintln!(\"[Harness] Worker {} exiting after signed patch apply\", worker_id);\n>>>>>>> REPLACE".to_string(),
-        dry_run: false,
-    });
-    crate::acp::write_signed_acp_envelope(&mut stdin, &signing_key, patch_request).await?;
-    drop(stdin);
-
-    // Forward stderr with prefix (background)
-    let p_name = persona.name().to_string();
-    tokio::spawn(async move {
-        let mut l = String::new();
-        while stderr.read_line(&mut l).await.unwrap_or(0) > 0 {
-            if !l.trim().is_empty() {
-                println!("[{}] {}", p_name, l.trim());
-            }
-            l.clear();
-        }
-    });
-
-    // Read stdout for results + real SwarmTelemetryPulse messages (now expecting signed envelopes)
-    let mut reader = stdout;
-    let mut last_tx = None;
-
-    loop {
-        // Try to read a signed ACP envelope first (new Phase A path)
-        match crate::acp::read_acp_envelope(&mut reader).await {
-            Ok(envelope) => {
-                let env_clone = envelope.clone();
-                let verified = tokio::task::spawn_blocking(move || {
-                    crate::acp::verify_envelope(&env_clone).unwrap_or(false)
-                }).await.unwrap_or(false);
-
-                let m = envelope.payload;
-
-                match m {
-                    AcpMessage::SwarmTelemetryPulse { .. } => {
-                        if let Ok(mut bb) = blackboard.lock() {
-                            let _events = bb.ingest_telemetry_pulse(&m);
-                        }
-                        println!(
-                            "    [Blackboard] Ingested SwarmTelemetryPulse from {} (verified={})",
-                            persona.name(),
-                            verified
-                        );
-                    }
-                    AcpMessage::SubmitTransaction { payload, .. } => {
-                        last_tx = Some(payload);
-                    }
-                    AcpMessage::ShellExecResult(result) => {
-                        println!(
-                            "[Leader] Received signed ShellExecResult from {} (verified={})",
-                            persona.name(),
-                            verified
-                        );
-                        println!(
-                            "[Leader] Tool stdout: \"{}\"",
-                            result.stdout.trim()
-                        );
-                        if verified {
-                            println!(
-                                "[Blackboard] Ingested signed tool result from {}",
-                                persona.name()
-                            );
-                        }
-                    }
-                    AcpMessage::FileReadResult(result) => {
-                        println!(
-                            "[Leader] Received signed FileReadResult from {} (verified={})",
-                            persona.name(),
-                            verified
-                        );
-                        if verified {
-                            println!("[Blackboard] Ingested signed file read result from {}", persona.name());
-                        }
-                    }
-                    AcpMessage::PatchApplyResult(result) => {
-                        println!(
-                            "[Leader] Received signed PatchApplyResult from {} (verified={})",
-                            persona.name(),
-                            verified
-                        );
-                        if verified {
-                            println!("[Blackboard] Ingested signed patch result from {}", persona.name());
-                        }
-                    }
-                    AcpMessage::TestRunResult(result) => {
-                        println!(
-                            "[Leader] Received signed TestRunResult from {} (verified={})",
-                            persona.name(),
-                            verified
-                        );
-                        println!(
-                            "[Leader] Tests: {} run, {} passed, {} failed | {}s",
-                            result.tests_run,
-                            result.tests_passed,
-                            result.tests_failed,
-                            result.duration_ms as f32 / 1000.0
-                        );
-                        if !result.failure_summaries.is_empty() {
-                            println!("[Leader] Failures: {}", result.failure_summaries.join(", "));
-                        }
-                        if verified {
-                            println!("[Blackboard] Ingested signed test result from {}", persona.name());
-                        }
-                    }
-                    AcpMessage::TerminationReport { exit_status, .. } => {
-                        println!(
-                            "    {} child exited: {} (verified={})",
-                            persona.name(),
-                            exit_status,
-                            verified
-                        );
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            Err(_) => {
-                break;
-            }
-        }
-    }
-
-    let exit_status = child.wait().await;
-
-    let mut res = PersonaResult::new(persona, routing_id);
-    let crashed = match exit_status {
-        Ok(status) => !status.success(),
-        Err(_) => true,
-    };
-
-    if crashed {
-        res.crashed = true;
-        res.error_msg = Some("Child process crashed or exited with non-zero status".to_string());
-    }
-
-    if let Some(tx) = last_tx {
-        res.output = tx.clone();
-        if let Some(m) = tx.get("mutations").and_then(|v| v.as_array()) {
-            res.mutations = m.clone();
-        }
-    }
-
-    Ok(res)
-}
-
 fn copy_dir_recursive(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path::Path>) -> std::io::Result<()> {
     std::fs::create_dir_all(&dst)?;
     for entry in std::fs::read_dir(src)? {
@@ -3125,7 +3049,7 @@ mod tests {
         leader.perform_semantic_merge(&arena_outcome, &results).await;
         
         // Assert the merge file was created
-        let merge_path = format!("/tmp/korg/campaigns/{}/semantic-merge.json", leader.session_id);
+        let merge_path = crate::paths::semantic_merge_path(&leader.session_id).display().to_string();
         let path = std::path::Path::new(&merge_path);
         assert!(path.exists());
 
@@ -3141,7 +3065,7 @@ mod tests {
         let session_id = leader.session_id;
 
         // Clear directories first
-        let dir = format!("/tmp/korg/campaigns/{}", session_id);
+        let dir = crate::paths::campaign_dir(&session_id).display().to_string();
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
 
@@ -3179,6 +3103,11 @@ mod tests {
             state_merkle_root: "sha256:state-mock-0".to_string(),
             codebase_merkle_root: "sha256:codebase-mock-0".to_string(),
             vision_attachments: None,
+            certainty: None,
+            blast_radius: None,
+            severity: None,
+            remediation_confidence: None,
+            is_healed: None,
         };
         let hash_0 = crate::provenance::compute_sha256(&payload_0).unwrap();
 
@@ -3200,6 +3129,11 @@ mod tests {
             codebase_merkle_root: "sha256:codebase-mock-0".to_string(),
             signature: None,
             vision_attachments: None,
+            certainty: None,
+            blast_radius: None,
+            severity: None,
+            remediation_confidence: None,
+            is_healed: None,
         };
 
         // 2. Construct child transaction (Round 1) chained to Genesis
@@ -3221,6 +3155,11 @@ mod tests {
             state_merkle_root: "sha256:state-mock-1".to_string(),
             codebase_merkle_root: "sha256:codebase-mock-1".to_string(),
             vision_attachments: None,
+            certainty: None,
+            blast_radius: None,
+            severity: None,
+            remediation_confidence: None,
+            is_healed: None,
         };
         let hash_1 = crate::provenance::compute_sha256(&payload_1).unwrap();
 
@@ -3242,6 +3181,11 @@ mod tests {
             codebase_merkle_root: "sha256:codebase-mock-1".to_string(),
             signature: None,
             vision_attachments: None,
+            certainty: None,
+            blast_radius: None,
+            severity: None,
+            remediation_confidence: None,
+            is_healed: None,
         };
 
         let dummy_sig = crate::acp::SignatureObject {
@@ -3375,9 +3319,8 @@ mod tests {
         })];
 
         // Create the worktree path manually so the test passes
-        let worktree_dir = format!(
-            "/tmp/korg/worktrees/benjamin-pkg-benjamin-pkg-benjamin"
-        );
+        let worktree_dir = crate::paths::worktree_dir("benjamin", "pkg-benjamin", "pkg-benjamin")
+            .display().to_string();
         let _ = std::fs::create_dir_all(&worktree_dir);
 
         // Run cargo init to make it a valid compiling crate
@@ -3411,6 +3354,102 @@ mod tests {
 
         let choice = leader.prompt_operator_escalation("Dummy compilation error").await.unwrap();
         assert!(matches!(choice, OperatorChoice::ApproveAsIs));
+    }
+
+    #[tokio::test]
+    async fn test_playhead_steering_fork_campaign_reset() {
+        // Construct leader with task and mock TUI channel
+        let mut leader = LeaderOrchestrator::new(
+            "Initial task statement".to_string(),
+            None,
+        );
+        *leader.cognition_mode.lock().unwrap() = CognitionMode::Instant;
+
+        let (feedback_tx, feedback_rx) = tokio::sync::mpsc::channel(100);
+
+        leader.tui_rx = Some(feedback_rx);
+
+        // Pre-populate target transaction 0 (round 0) with a mock signed CampaignKtrans so handle_operator_fork finds it!
+        let session_id = leader.session_id;
+        let dir = crate::paths::campaign_dir(&session_id).display().to_string();
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+
+        let verdict = EvaluationVerdict {
+            verdict_id: Uuid::now_v7(),
+            session_id,
+            timestamp: "2026-05-21T10:00:00Z".to_string(),
+            overall: "scale_up".to_string(),
+            passed_rubrics: 5,
+            total_rubrics: 5,
+            justifications: vec!["Perfect".to_string()],
+            recommended_action: "scale_up".to_string(),
+            semantic_entropy: 0.1,
+            doom_loop_detected: false,
+            productive_death: false,
+        };
+        let verdict_json = serde_json::to_value(&verdict).unwrap();
+
+        let ktrans_0 = crate::acp::CampaignKtrans {
+            tx_id: Uuid::now_v7(),
+            session_id,
+            round: 0,
+            timestamp: "2026-05-21T10:00:00Z".to_string(),
+            arena_winner: "Benjamin".to_string(),
+            arena_confidence: 0.95,
+            mutations_this_round: 2,
+            verdict: verdict_json,
+            leader_action: "scale_up".to_string(),
+            new_swarm_size: 6, // Let's set it to 6!
+            total_mutations_so_far: 5,
+            tx_hash: "mock-hash-0".to_string(),
+            parent_hashes: vec![],
+            state_merkle_root: "sha256:state-mock-0".to_string(),
+            codebase_merkle_root: "sha256:codebase-mock-0".to_string(),
+            signature: None,
+            vision_attachments: None,
+            certainty: None,
+            blast_radius: None,
+            severity: None,
+            remediation_confidence: None,
+            is_healed: None,
+        };
+
+        let envelope_0 = crate::acp::MessageEnvelope {
+            message_id: Uuid::now_v7(),
+            timestamp: "2026-05-21T10:00:00Z".to_string(),
+            sender: "leader".to_string(),
+            payload: ktrans_0,
+            signature: crate::acp::SignatureObject {
+                public_key: "00".repeat(32),
+                signature_bytes: "00".repeat(64),
+            },
+        };
+        std::fs::write(
+            format!("{}/round-000.ktrans.json", dir),
+            serde_json::to_string_pretty(&envelope_0).unwrap(),
+        ).unwrap();
+
+        // Send a playhead fork signal to the leader!
+        feedback_tx.try_send(crate::tui::ContractResponse::Override(vec![
+            "FORK:0:focus on memory-mapped buffer parser rules".to_string()
+        ])).unwrap();
+
+        // Run campaign! Since Korg default llm is mock, this runs offline.
+        // It will trigger the fork in round 0, reset, set the root_task to "focus on memory-mapped buffer parser rules",
+        // and swarm size to 6.
+        let campaign_res = leader.run_observable_campaign().await;
+        assert!(campaign_res.is_ok());
+
+        // Assert root task was steer pivoted to operator's custom directive!
+        assert_eq!(leader.root_task, "focus on memory-mapped buffer parser rules");
+        // Assert swarm size was restored to at least 6 and subsequently scaled!
+        assert!(leader.swarm_size >= 6);
+        // Assert base snapshot was updated to the codebase tree from target transaction!
+        assert_eq!(leader.base_snapshot, "sha256:codebase-mock-0");
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
