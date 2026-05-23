@@ -11,6 +11,10 @@
 
 ---
 
+![korg demo — rewind, fork, and replay AI agent decisions in real time](demo.gif)
+
+---
+
 > AI agents are black boxes. When they fail, you can't debug. When they succeed, you can't reproduce it.
 > When they do something wrong, you can't undo it.
 >
