@@ -34,7 +34,6 @@ mod ax_sse {
 struct AppState {
     broadcaster: broadcast::Sender<TuiUpdate>,
     feedback_tx: Mutex<Option<mpsc::Sender<ContractResponse>>>,
-    cognition_mode: Arc<std::sync::Mutex<crate::leader::CognitionMode>>,
     capability_resolver: Arc<tokio::sync::Mutex<crate::registry::CapabilityResolver>>,
     runtime_coordinator: Arc<std::sync::Mutex<Option<Arc<crate::runtime::RuntimeCoordinator>>>>,
 }
@@ -59,7 +58,7 @@ fn open_browser(url: &str) {
 pub async fn run_web_with_campaign(
     prompt: String,
     session: Option<Uuid>,
-    mode: Option<crate::leader::CognitionMode>,
+    mode: Option<&str>,
 ) -> anyhow::Result<()> {
     let (tui_tx, mut tui_rx) = mpsc::channel::<TuiUpdate>(128);
     let (feedback_tx, feedback_rx) = mpsc::channel::<ContractResponse>(1);
@@ -67,24 +66,24 @@ pub async fn run_web_with_campaign(
     // 1. Create the broadcast channel for multi-subscriber SSE mapping
     let (broadcaster_tx, _) = broadcast::channel::<TuiUpdate>(256);
 
-    let cognition_mode_arc = Arc::new(std::sync::Mutex::new(mode.unwrap_or(crate::leader::CognitionMode::Balanced)));
-
     let runtime_coordinator_container = Arc::new(std::sync::Mutex::new(None));
     let capability_resolver_container = Arc::new(tokio::sync::Mutex::new(crate::registry::CapabilityResolver::default_resolver()));
 
+    // Initialise the resolver's cognition mode from the caller-supplied mode argument.
+    if let Some(m) = mode {
+        let _ = capability_resolver_container.try_lock().map(|mut r| r.set_cognition_mode(m));
+    }
+
     // 2. Spawn the leader process campaign in the background
     let campaign_tx = tui_tx.clone();
-    let cognition_mode_leader = cognition_mode_arc.clone();
     let cap_res_leader = capability_resolver_container.clone();
     let coord_leader = runtime_coordinator_container.clone();
     tokio::spawn(async move {
         let mut leader = LeaderOrchestrator::new(prompt, session);
         leader.tui_tx = Some(campaign_tx.clone());
         leader.tui_rx = Some(feedback_rx);
-        leader.cognition_mode = cognition_mode_leader;
         leader.capability_resolver = cap_res_leader;
         *coord_leader.lock().unwrap() = Some(leader.runtime_coordinator.clone());
-
         let _ = leader.run_observable_campaign().await;
 
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -123,7 +122,6 @@ pub async fn run_web_with_campaign(
     let app_state = Arc::new(AppState {
         broadcaster: broadcaster_tx,
         feedback_tx: Mutex::new(Some(feedback_tx)),
-        cognition_mode: cognition_mode_arc,
         capability_resolver: capability_resolver_container,
         runtime_coordinator: runtime_coordinator_container,
     });
@@ -176,7 +174,7 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
     leader.tui_rx = Some(feedback_rx);
 
     let (broadcaster_tx, _) = broadcast::channel::<TuiUpdate>(256);
-    let cognition_mode_arc = leader.cognition_mode.clone();
+
 
     // Authoritatively extract runtime coordinator and capability resolver BEFORE moving leader
     let runtime_coordinator = leader.runtime_coordinator.clone();
@@ -219,7 +217,6 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
     let app_state = Arc::new(AppState {
         broadcaster: broadcaster_tx,
         feedback_tx: Mutex::new(Some(feedback_tx)),
-        cognition_mode: cognition_mode_arc,
         capability_resolver,
         runtime_coordinator: runtime_coordinator_container,
     });
@@ -307,8 +304,8 @@ async fn state_handler(
     State(state): State<Arc<AppState>>,
 ) -> Json<serde_json::Value> {
     let mode = {
-        let m = state.cognition_mode.lock().unwrap();
-        format!("{:?}", *m)
+        let resolver = state.capability_resolver.lock().await;
+        format!("{:?}", resolver.cognition_mode())
     };
     let path = crate::paths::blackboard_json();
     if let Ok(content) = tokio::fs::read_to_string(path).await {
@@ -456,32 +453,19 @@ async fn mode_handler(
 
     if response.status == crate::registry::TransitionState::Applied {
         // Read the authoritative mode string back from registry active_states.
-        // The web layer does NOT interpret -- it mirrors what the resolver decided.
+        // The web layer does NOT interpret — it mirrors what the resolver decided.
         let canonical_mode_str = match resolver.active_states.get("cognition_mode") {
             Some(crate::registry::CapabilityState::Mode(m)) => m.clone(),
             _ => mode_str.clone(),
         };
         drop(resolver);
 
-        let mode = match canonical_mode_str.as_str() {
-            "instant"                               => crate::leader::CognitionMode::Instant,
-            "heavy"                                 => crate::leader::CognitionMode::Heavy,
-            "research"                              => crate::leader::CognitionMode::Research,
-            "recovery"                              => crate::leader::CognitionMode::Recovery,
-            "autonomous"                            => crate::leader::CognitionMode::Autonomous,
-            "heavy-consciousness" | "consciousness" => crate::leader::CognitionMode::HeavyConsciousness,
-            _                                       => crate::leader::CognitionMode::Balanced,
-        };
-        {
-            let mut m = state.cognition_mode.lock().unwrap();
-            *m = mode;
-        }
-        tracing::info!(mode = ?mode, canonical = %canonical_mode_str, "cognition_mode_updated");
+        tracing::info!(canonical = %canonical_mode_str, "cognition_mode_updated");
 
         // Broadcast trace event to live console log stream
         let _ = state.broadcaster.send(TuiUpdate::Trace(format!(
-            "[cognition-mode] Dynamically switched active mode to: {:?}",
-            mode
+            "[cognition-mode] Dynamically switched active mode to: {}",
+            canonical_mode_str
         )));
 
         (

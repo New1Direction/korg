@@ -1,139 +1,257 @@
-# korg — Autonomous Software Engineering Runtime
+# korg
 
+**The first deterministic cognitive runtime.**
+*Every decision your AI agent makes is logged, causally ordered, and reversible — like Git, but for cognition.*
+
+[![Crates.io](https://img.shields.io/crates/v/korg.svg?style=flat-square&color=fc8d62)](https://crates.io/crates/korg)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Build](https://img.shields.io/badge/build-passing-brightgreen.svg?style=flat-square)](https://github.com/New1Direction/korg)
 [![Rust 2021](https://img.shields.io/badge/rust-2021-93450a.svg?style=flat-square)](https://www.rust-lang.org)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg?style=flat-square)](https://github.com/example/grok-acp-harness)
-[![Security Audit](https://img.shields.io/badge/audit-passing-brightgreen.svg?style=flat-square)](https://github.com/example/grok-acp-harness)
-[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg?style=flat-square)](https://github.com/example/grok-acp-harness)
-[![Discord](https://img.shields.io/discord/872512263093514240?color=%237289DA&label=community&logo=discord&logoColor=white&style=flat-square)](https://discord.gg/xai)
-
-**Korg** is a zero-trust, cryptographically-verifiable runtime for autonomous multi-agent software engineering swarms. It operates on a **Blackboard Architecture** modeled as a **Gravitational Well**, where specialized agents (Architect, Coder, Tester) concurrently propose, validate, and debate code modifications against a shared, observable state.
-
-Every transaction is physically recorded onto a local, content-addressed **Merkle Directed Acyclic Graph (DAG)**, creating an immutable ledger of AI reasoning. When consensus fails or security policies are breached, Korg intercepts the swarm, opening a **Zero-Overlap Inline Security Gateway** that allows human operators to inject criteria, execute a **Playhead Steering Fork** (`korg rewind --seq <id>`), or capture and restore **Deterministic Execution Checkpoints** (Git-powered zero-copy filesystem and clock restoration) to physically reset the codebase to any prior state signature.
+[![130 tests](https://img.shields.io/badge/tests-130%20passing-brightgreen.svg?style=flat-square)](https://github.com/New1Direction/korg)
 
 ---
 
-## ⚡ Live Operator Dashboard
+> AI agents are black boxes. When they fail, you can't debug. When they succeed, you can't reproduce it.
+> When they do something wrong, you can't undo it.
+>
+> **Korg fixes this.**
 
-The Korg runtime provides a high-tempo, real-time TUI dashboard for complete operational observability. It is designed with a **zero-overlap** inline layout, ensuring critical telemetry and log streams are never obscured by modal dialogs.
+---
 
-```ascii
-  ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-  │ 𝗸𝗼𝗿𝗴 𝘃𝟬.𝟭.𝟬 │ session: 018f7b11-a8b1-7002-88b1-04b128a7b128 │ [●] TELEMETRY ACTIVE             │
-  ├──────────────────────────────────────────┬───────────────────────────────────────────────────────┤
-  │ 🗂️  SWARM PLAN & STATUS                  │ ⛓️  LIVE MERKLE DAG & PROVENANCE                        │
-  │    ├─ [●] Captain   [PLANNING]          │    (tx_00) → (tx_01) → [tx_02] → (tx_03)                │
-  │    ├─ [●] Harper    [RESEARCH]          │                                                        │
-  │    ├─ [●] Benjamin  [SYNTHESIS]         │ 📊 REAL-TIME TELEMETRY                                 │
-  │    └─ [○] Lucas     [IDLE]              │    ├─ Velocity  [ 85.2 t/s]  ▇▆▄▂█▃▅▆                  │
-  │                                          │    ├─ Risk      [  0.18   ]  ▂▃▄▃▂▂▂                   │
-  │ 💎 ZERO-OVERLAP WORKSPACE                │    ├─ Progress  [ 68.7 % ]  ▂▃▄▅▆▇▇█                  │
-  │    ├─ 🟡 Amber Security Gate [IDLE]     │    └─ Entropy   [  0.451  ]  ▄▃▂▃▄▅▄▃                  │
-  │    ├─ 🟢 Emerald Consensus   [ACTIVE]   │                                                        │
-  │    │  └ Approve Swarm Contract? [Y/n]   │ 📜 STDOUT CONSOLE STREAM                               │
-  │    └─ 🔵 Cyan Steering Fork  [IDLE]     │    [Leader] Spawning 4 concurrent persona workers...   │
-  │                                          │    [Benjamin] Synthesizing patch for src/db.rs...      │
-  │ 📝 ACTIVE WORKSPACE: src/leader.rs       │    [Lucas] Running adversarial test suite...           │
-  │    22 | let mut arena_outcome = self.    │    [Evaluator] HARSH FAIL — high semantic churn.       │
-  │    23 |     run_arena(&results).await;   │    [Leader] REVISION requested by Evaluator critic.    │
-  └──────────────────────────────────────────┴───────────────────────────────────────────────────────┘
+## What Korg Does
+
+Korg is a **cognitive hypervisor** — a runtime layer that sits beneath your AI agents and governs every decision they make.
+
+It doesn't replace your LLM. It governs what the LLM does.
+
+```
+Foundation Model          →  predicts, suggests, generates
+────────────────────────────────────────────────────────────
+Korg Cognitive Runtime    →  schedules, validates, isolates,
+                             reconciles, replays, heals, governs
+```
+
+Every agent action is:
+- **Appended** to an immutable, cryptographically-signed ledger
+- **Ordered** with Hybrid Logical Clocks (causal, deterministic, globally consistent)
+- **Replayable** — rebuild exact state at any point in history
+- **Reversible** — rewind, fork, or branch any decision
+
+---
+
+## The Demo
+
+```bash
+# Run an autonomous agent campaign
+korg run "Fix the authentication bug in src/auth.rs"
+
+# Every decision is logged with a causal timestamp
+# Watch the ktrans ledger stream in real time...
+
+# Agent goes down a wrong path? Rewind it.
+korg rewind --seq 4
+# Workspace snaps back instantly (Git Merkle O(1) restore)
+
+# Fork from that point with a different strategy
+korg fork --from 4 --goal "Try a stateless JWT approach"
+
+# Both branches run. Best result wins. Full audit trail.
+korg merge --winner branch-2
+```
+
+> *No other AI agent runtime lets you do this.*
+
+---
+
+## Core Architecture
+
+Korg is built on the same theoretical foundations that make databases and operating systems reliable — applied to AI cognition for the first time.
+
+| Invariant | What it means |
+|:---|:---|
+| **Append-only WAL** | Every cognitive event is a ledger entry. Nothing is mutated, only appended. Like a database WAL, but for AI thought. |
+| **HLC Causal Ordering** | Hybrid Logical Clocks guarantee globally consistent, causally ordered event streams — even across distributed swarm workers. |
+| **Deterministic Replay** | Any campaign can be replayed byte-for-byte from the ledger. Same inputs, same outputs, every time. |
+| **Speculative Branches** | Fork execution into parallel hypothetical paths. Preview before committing. Discard freely. |
+| **Execution Checkpoints** | Snapshot the entire runtime state: ledger offset, projection views, lease maps, workspace tree. Restore in O(1). |
+| **Micro-Healing** | Transient failures (lock conflicts, stale state) are automatically healed at the effect level, with full retry audit trails. |
+| **Semantic Governance** | Swarm actions are validated against BERT embedding cosine similarity — semantic alignment, not keyword matching. |
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  korg v0.1.0  │  session: 019e5333-efc9-7c70  │  ● ACTIVE      │
+├───────────────────────────────┬────────────────────────────────┤
+│  SWARM PLAN                   │  LIVE MERKLE LEDGER            │
+│  ├─ [●] Captain  [PLANNING]   │  (tx_00)→(tx_01)→[tx_02]→...  │
+│  ├─ [●] Harper   [RESEARCH]   │                                │
+│  ├─ [●] Benjamin [SYNTHESIS]  │  TELEMETRY                     │
+│  └─ [○] Lucas    [IDLE]       │  ├─ Velocity  85.2 t/s  ▇▆▄▂█  │
+│                               │  ├─ Entropy    0.451     ▄▃▂▃▄  │
+│  GOVERNANCE GATES             │  └─ Progress  68.7 %    ▂▃▄▅▆▇  │
+│  ├─ 🟡 Amber Security [IDLE]  │                                │
+│  ├─ 🟢 Consensus     [ACTIVE] │  LEDGER STREAM                 │
+│  └─ 🔵 Steering Fork [IDLE]   │  [tx_03] Benjamin: patch auth  │
+└───────────────────────────────┴────────────────────────────────┘
 ```
 
 ---
 
-## 🏗️ Architecture & Core Theoretical Pillars
+## Quick Start
 
-Korg is engineered for deterministic, high-assurance software synthesis. Its architecture is founded on three core mathematical and cryptographic principles.
-
-| Pillar | Description |
-| :--- | :--- |
-| **Semantic Contract Negotiation** | Swarm actions are governed by contracts negotiated between agents. Acceptance is determined not by keywords, but by the cosine similarity of BERT embeddings between the proposed action and the established goal, ensuring semantic alignment. |
-| **Canonical Merkle-DAG Ledger** | Every state change is serialized into a content-addressed transaction block using **RFC 8785 (JCS)** canonicalization. These blocks are chained via parent hashes into a Merkle-DAG, creating a tamper-proof, auditable history of the swarm's entire thought process. |
-| **Fail-Secure Visual Firewall** | Korg's agents operate with full GUI context, continuously taking screenshots. A fail-secure OCR firewall scans these images for sensitive patterns (API keys, PII). If a leak is detected, the image is redacted *before* being committed to the log stream, preventing accidental data exposure. |
-
-### Mathematical Foundations (LaTeX)
-
-1.  **BERT Cosine Contract Negotiation:** An action contract `C` is accepted against a goal `G` only if the cosine similarity of their BERT embeddings `E(·)` exceeds a negotiated threshold `τ`.
-
-    $$
-    \text{Accept}(C, G) := \frac{E(C) \cdot E(G)}{\|E(C)\| \|E(G)\|} \ge \tau_{\text{accept}}
-    $$
-
-2.  **RFC 8785 Canonical Merkle-DAG Chain Serialization:** The hash of a transaction `tx_n` is the SHA-256 digest of its canonicalized payload `JCS(tx_n^{\text{payload}})` XORed with the aggregate hash of its `k` parents, ensuring content-addressability and structural integrity.
-
-    $$
-    H(tx_n) = \text{SHA-256} \left( \text{JCS}(tx_n^{\text{payload}}) \oplus \bigoplus_{i=1}^{k} H(tx_{p_i}) \right)
-    $$
-
-3.  **Fail-Secure Visual OCR Firewall:** The redaction function `R` is applied to every captured image `I`. It is redacted if any regular expression `p` from the policy set `P` matches the `OCR(I)` text content.
-
-    $$
-    R(I, P) = \begin{cases} \text{REDACT}(I) & \text{if } \exists p \in P \text{ s.t. } p \text{ matches } \text{OCR}(I) \\ I & \text{otherwise} \end{cases}
-    $$
-
----
-
-## 🚀 Quick Start
-
-### 1. Clone & Build
-
-Clone the repository and build the `korg` binary. This will compile all Rust components, including the Axum web server, Ratatui TUI, and the core orchestration logic.
+### Install
 
 ```bash
-git clone https://github.com/example/grok-acp-harness.git
-cd grok-acp-harness
+cargo install korg
+```
+
+### Or build from source
+
+```bash
+git clone https://github.com/New1Direction/korg
+cd korg
 cargo build --release
+./target/release/korg --help
 ```
 
-### 2. Launch a Campaign (Web Cockpit)
-
-Initiate an autonomous software engineering campaign and launch the real-time web cockpit to monitor swarm activity, telemetry, and security gates.
+### Run your first campaign
 
 ```bash
-cargo run --release -- campaign --web --prompt "Refactor the authentication layer to use JWTs"
+# Interactive TUI dashboard
+korg campaign --tui --prompt "Refactor the auth layer to use JWTs"
+
+# Web cockpit at localhost:8080
+korg campaign --web --prompt "Optimize the database connection pool"
+
+# Pure autonomous goal mode
+korg goal "Write and validate a full test suite for src/parser.rs"
+
+# Preview without committing (speculative sandbox)
+korg run --preview "Refactor the main event loop"
 ```
 
-Once active, navigate your browser to **`http://localhost:8080`**.
-
-### 3. Launch a Campaign (Terminal UI)
-
-For a pure terminal-based experience, launch the campaign with the Ratatui-based TUI dashboard.
+### Rewind & Fork
 
 ```bash
-cargo run --release -- campaign --tui --prompt "Optimize the database connection pool"
-```
+# Rewind to a specific ledger sequence point
+korg rewind --seq 4
 
-### 4. Verify Provenance
+# List all checkpoints in the current session
+korg checkpoints list
 
-After a campaign, you can cryptographically verify the integrity of the entire execution trace using the generated attestation certificate.
-
-```bash
-cargo run --release -- verify-provenance /tmp/korg/campaigns/<session-id>/provenance-attestation.json
+# Restore from a specific checkpoint
+korg checkpoints restore --id <checkpoint-uuid>
 ```
 
 ---
 
-## ⚖️ Comparative Analysis: Korg vs. Traditional AI Tools
+## Cognition Modes
 
-Korg introduces a paradigm shift from simple code completion to a fully autonomous, secure, and observable software engineering environment.
+Korg adapts its intelligence tier based on task complexity. Modes are governed exclusively through the capability resolver — every switch is ledger-logged.
 
-| Capability | korg Swarm Runtime | Traditional AI IDEs (e.g., Cursor) | Standard CLI Bots |
-| :--- | :---: | :---: | :---: |
-| **Autonomous Execution**<br/><sub>(Writes, builds, tests, and heals code)</sub> | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> | <g-emoji class="g-emoji" alias="heavy_minus_sign" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2796.png">➖</g-emoji> | <g-emoji class="g-emoji" alias="heavy_minus_sign" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2796.png">➖</g-emoji> |
-| **Built-in Adversarial Testing**<br/><sub>(Tests changes in isolated sandboxes)</sub> | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> | <g-emoji class="g-emoji" alias="x" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/274c.png">❌</g-emoji> | <g-emoji class="g-emoji" alias="x" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/274c.png">❌</g-emoji> |
-| **Zero-Trust Security Guardrails**<br/><sub>(Visual OCR firewall for secrets)</sub> | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> | <g-emoji class="g-emoji" alias="x" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/274c.png">❌</g-emoji> | <g-emoji class="g-emoji" alias="x" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/274c.png">❌</g-emoji> |
-| **Cryptographically Verifiable Ledger**<br/><sub>(Tamper-proof Merkle-DAG history)</sub> | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> | <g-emoji class="g-emoji" alias="x" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/274c.png">❌</g-emoji> | <g-emoji class="g-emoji" alias="x" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/274c.png">❌</g-emoji> |
-| **Playhead Steering Forks**<br/><sub>(Rollback and redirect swarm execution)</sub> | <g-emoji class="g-emoji" alias="heavy_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2714.png">✔️</g-emoji> | <g-emoji class="g-emoji" alias="x" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/274c.png">❌</g-emoji> | <g-emoji class="g-emoji" alias="x" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/274c.png">❌</g-emoji> |
+| Mode | Best for |
+|:---|:---|
+| `instant` | Ultra-low latency. Bypasses negotiation. Optimistic execution. |
+| `balanced` | Default. Structured multi-round contract negotiation. |
+| `heavy` | Deep multi-agent deliberation. Multiple evaluation rounds. |
+| `research` | Wide divergent exploration. Semantic index scanning across all crates. |
+| `recovery` | Safe rollback mode. Creates checkpoints before every mutation. |
+| `autonomous` | Full goal-mode. Self-steering with automatic re-planning. |
+| `heavy-consciousness` | Maximum depth. Full HeavyConsciousness context injection. |
+
+```bash
+korg run --mode research "Explore alternative approaches to the rate limiter"
+korg run --mode recovery "Carefully migrate the database schema"
+```
 
 ---
 
-## ⚙️ Core Technologies
+## Why Korg Exists
 
-Korg is built on a foundation of high-performance, memory-safe, and concurrent systems technologies.
+Current AI coding agents are probabilistic black boxes. They:
+- **Can't be replayed** — same prompt, different output, every time
+- **Can't be rewound** — one wrong action and you're manually diffing git history
+- **Can't be audited** — no record of what the agent decided and why
+- **Can't be governed** — no way to set policy boundaries at runtime
 
-- **[Rust](https://www.rust-lang.org/)**: The core language, providing memory safety and zero-cost abstractions for high-performance systems programming.
-- **[Tokio](https://tokio.rs/)**: An asynchronous runtime for writing reliable, non-blocking network and system applications.
-- **[Axum](https://github.com/tokio-rs/axum)**: A hyper-performant, ergonomic web framework for building the real-time operator cockpit and SSE telemetry streams.
-- **[Ratatui](https://ratatui.rs/)**: A library for building rich, interactive terminal user interfaces, powering the TUI dashboard.
-- **[Candle](https://github.com/huggingface/candle)**: A minimalist ML framework from Hugging Face, used for the optional local BERT embedding backend that powers semantic contract negotiation.
-- **[ed25519-dalek](https://crates.io/crates/ed25519-dalek)**: A pure-Rust implementation of the Ed25519 digital signature algorithm, used for signing and verifying all cryptographic attestations.
+Korg treats AI cognition the same way a hypervisor treats compute and Git treats code:
+
+> **If it's not in the ledger, it didn't happen.**
+
+---
+
+## Comparison
+
+| Capability | Korg | LangChain / LangGraph | CrewAI | Standard CLI Agents |
+|:---|:---:|:---:|:---:|:---:|
+| Deterministic replay | ✅ | ❌ | ❌ | ❌ |
+| Causal HLC ordering | ✅ | ❌ | ❌ | ❌ |
+| Rewind execution | ✅ | ❌ | ❌ | ❌ |
+| Speculative branches | ✅ | ❌ | ❌ | ❌ |
+| Execution checkpoints | ✅ | ❌ | ❌ | ❌ |
+| Cryptographic audit trail | ✅ | ❌ | ❌ | ❌ |
+| Micro-healing | ✅ | ❌ | ❌ | ❌ |
+| Model-agnostic | ✅ | ✅ | ✅ | ✅ |
+
+> **Korg is not an agent framework. It's the governance kernel that runs beneath all of them.**
+
+---
+
+## Technical Stack
+
+| Component | Technology |
+|:---|:---|
+| Core runtime | Rust 2021, Tokio async |
+| Ledger ordering | Hybrid Logical Clocks (HLC) |
+| Workspace snapshots | Git Merkle tree (O(1) restore via `write-tree` / `read-tree`) |
+| Cryptographic attestation | Ed25519 (ed25519-dalek) |
+| Semantic governance | BERT cosine similarity (Candle / Hugging Face) |
+| TUI dashboard | Ratatui + Crossterm |
+| Web cockpit | Axum + SSE |
+| Syntax highlighting | Syntect + tree-sitter |
+
+---
+
+## Architecture Deep Dive
+
+→ **[Read the full technical write-up](https://github.com/New1Direction/korg/blob/main/ARCHITECTURE.md)** *(coming soon)*
+
+The short version:
+
+1. **CapabilityResolver** — the single authority for all runtime state. All reads and writes flow through it. No secondary state stores.
+2. **CapabilityJournal** — the append-only WAL. Every cognitive event is sealed here with an HLC timestamp, causation chain, and cryptographic signature.
+3. **ProjectionEngine** — pure state folds over the journal. Any read model can be rebuilt deterministically from the raw event stream.
+4. **ExecutionCheckpoint** — snapshot of `{ledger_offset, projection_state, lease_map, workspace_tree_hash}`. Restores full runtime state in O(1) without replaying the entire event stream.
+5. **CapabilityExecutor** — executes the physical effect DAG. Failures trigger automatic micro-healing before escalating.
+
+---
+
+## Status
+
+Korg is in active development. Current test coverage: **130 tests, 0 failures**.
+
+- [x] Append-only cognitive ledger with HLC ordering
+- [x] Deterministic replay and projection rebuilds
+- [x] Speculative execution + preview mode
+- [x] Execution checkpoints (O(1) restore)
+- [x] Micro-healing effect layer
+- [x] Multi-agent swarm orchestration (Captain, Harper, Benjamin, Lucas)
+- [x] TUI dashboard + Web cockpit
+- [x] Cryptographic provenance attestation
+- [x] Single-authority CognitionMode governance
+- [ ] `cargo install korg` on crates.io
+- [ ] Remote swarm workers
+- [ ] WASM backends
+- [ ] IDE language server integration
+- [ ] Distributed checkpoint synchronization
+
+---
+
+## License
+
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
+
+---
+
+<p align="center">
+  <sub>Built with Rust. Governed by invariants. No black boxes.</sub>
+</p>

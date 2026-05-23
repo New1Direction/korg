@@ -290,15 +290,15 @@ fn print_welcome_banner() {
     println!();
 }
 
-fn parse_cognition_mode(mode_str: &str) -> crate::leader::CognitionMode {
+fn parse_cognition_mode(mode_str: &str) -> &'static str {
     match mode_str.to_lowercase().as_str() {
-        "instant" => crate::leader::CognitionMode::Instant,
-        "heavy" => crate::leader::CognitionMode::Heavy,
-        "research" => crate::leader::CognitionMode::Research,
-        "recovery" => crate::leader::CognitionMode::Recovery,
-        "autonomous" => crate::leader::CognitionMode::Autonomous,
-        "heavy-consciousness" | "consciousness" => crate::leader::CognitionMode::HeavyConsciousness,
-        _ => crate::leader::CognitionMode::Balanced,
+        "instant"                               => "instant",
+        "heavy"                                 => "heavy",
+        "research"                              => "research",
+        "recovery"                              => "recovery",
+        "autonomous"                            => "autonomous",
+        "heavy-consciousness" | "consciousness" => "heavy-consciousness",
+        _                                       => "balanced",
     }
 }
 
@@ -381,7 +381,7 @@ async fn main() -> Result<()> {
             println!("{slate}├──{reset} Prompt: {bold}{pink}{}{reset}", prompt);
             let mut leader = LeaderOrchestrator::new(prompt, None);
             leader.goal_mode = true;
-            *leader.cognition_mode.lock().unwrap() = crate::leader::CognitionMode::Autonomous;
+            leader.set_cognition_mode("autonomous").await;
             println!("{slate}├──{reset} Session: {bold}{cyan}{}{reset}", leader.session_id());
             println!("{slate}└──{reset} Base snapshot: {bold}{cyan}{}{reset}\n", leader.base_snapshot());
             leader.run_observable_campaign().await?;
@@ -486,9 +486,9 @@ async fn main() -> Result<()> {
             );
             if goal || cli.goal {
                 leader.goal_mode = true;
-                *leader.cognition_mode.lock().unwrap() = crate::leader::CognitionMode::Autonomous;
+                leader.set_cognition_mode("autonomous").await;
             } else {
-                *leader.cognition_mode.lock().unwrap() = parse_cognition_mode(&mode);
+                leader.set_cognition_mode(parse_cognition_mode(&mode)).await;
             }
 
             if let Some(replay_arg) = replay {
@@ -548,9 +548,9 @@ async fn main() -> Result<()> {
                 );
                 if goal || cli.goal {
                     leader.goal_mode = true;
-                    *leader.cognition_mode.lock().unwrap() = crate::leader::CognitionMode::Autonomous;
+                    leader.set_cognition_mode("autonomous").await;
                 } else {
-                    *leader.cognition_mode.lock().unwrap() = parse_cognition_mode(&mode);
+                    leader.set_cognition_mode(parse_cognition_mode(&mode)).await;
                 }
 
                 let cyan = "\x1b[38;2;0;240;255m";
@@ -721,7 +721,7 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
             println!("\n{}⚡ Launching autonomous goal: {}{}", bold, goal_prompt, reset);
             let mut leader = LeaderOrchestrator::new(goal_prompt.to_string(), None);
             leader.goal_mode = true;
-            *leader.cognition_mode.lock().unwrap() = crate::leader::CognitionMode::Autonomous;
+            leader.set_cognition_mode("autonomous").await;
 
             println!("{}├──{} Goal Session: {}{}", slate, reset, leader.session_id(), reset);
             println!("{}└──{} Base snapshot: {}{}\n", slate, reset, leader.base_snapshot(), reset);

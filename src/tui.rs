@@ -1927,7 +1927,7 @@ async fn run_tui_event_loop(
                                                     tokio::spawn(async move {
                                                         let mut leader = LeaderOrchestrator::new(goal_prompt.clone(), None);
                                                         leader.goal_mode = true;
-                                                        *leader.cognition_mode.lock().unwrap() = crate::leader::CognitionMode::Autonomous;
+                                                        leader.set_cognition_mode("autonomous").await;
                                                         let res = leader.run_full_campaign().await;
                                                         match res {
                                                             Ok(_) => {
