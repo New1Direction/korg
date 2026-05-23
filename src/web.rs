@@ -261,20 +261,20 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
 
 /// Serves the embedded glassmorphism SPA index.html
 async fn index_handler() -> impl IntoResponse {
-    Html(INDEX_HTML)
+    Html(LANDING_HTML)
 }
 
 async fn wasm_js_handler() -> impl IntoResponse {
     (
         [("content-type", "application/javascript")],
-        WASM_JS,
+        "",
     )
 }
 
 async fn wasm_bytes_handler() -> impl IntoResponse {
     (
         [("content-type", "application/wasm")],
-        WASM_BYTES,
+        &[] as &[u8],
     )
 }
 
@@ -2784,6 +2784,4 @@ async fn test_adversarial_security_leaks() {
 </html>
 "##;
 
-const INDEX_HTML: &str = include_str!("../frontend/dist/index.html");
-const WASM_JS: &str = include_str!("../frontend/dist/korg-frontend.js");
-const WASM_BYTES: &[u8] = include_bytes!("../frontend/dist/korg-frontend_bg.wasm");
+
