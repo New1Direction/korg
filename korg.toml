@@ -4,3 +4,62 @@ default_model = "llama3-70b-monochrome"
 
 [ollama]
 base_url = "http://localhost:11434/v1"
+
+# ─────────────────────────────────────────────────────────────
+# Per-Persona LLM Overrides
+#
+# Each persona can use a different provider and model.
+# If not specified, falls back to default_llm / default_model.
+#
+# Example: heterogeneous swarm using multiple vendors
+# ─────────────────────────────────────────────────────────────
+
+# [openai]
+# api_key = "sk-..."
+
+# [anthropic]
+# api_key = "sk-ant-..."
+
+# [personas.captain]
+# provider = "openai"
+# model = "o3"               # Deep reasoning for planning & decomposition
+# temperature = 0.2
+
+# [personas.harper]
+# provider = "anthropic"
+# model = "claude-sonnet-4-20250514"  # Thorough critique & research
+# temperature = 0.5
+
+# [personas.benjamin]
+# provider = "anthropic"
+# model = "claude-sonnet-4-20250514"  # Fast, reliable code generation
+# temperature = 0.3
+
+# [personas.lucas]
+# provider = "openai"
+# model = "gpt-4o"            # Synthesis & reconciliation
+# temperature = 0.4
+
+# [personas.evaluator]
+# provider = "anthropic"
+# model = "claude-sonnet-4-20250514"  # Adversarial judge, low temperature
+# temperature = 0.1
+
+# ─────────────────────────────────────────────────────────────
+# Free-Tier LLM Rotator Layer Configuration
+#
+# The rotator provider implements automatic failover, dynamic 60s cooldowns,
+# and round-robin fallback across free-tier or alternative endpoints.
+#
+# To use the rotator as the global default or for a specific persona, set:
+# default_llm = "rotator"
+# ─────────────────────────────────────────────────────────────
+
+# [rotator]
+# candidates = [
+#     { name = "groq-free", provider = "openai", api_key = "gsk_...", base_url = "https://api.groq.com/openai/v1", model = "llama3-70b-8192" },
+#     { name = "cerebras-free", provider = "openai", api_key = "csk_...", base_url = "https://api.cerebras.ai/v1", model = "llama3.1-70b" },
+#     { name = "sambanova-free", provider = "openai", api_key = "...", base_url = "https://api.sambanova.ai/v1", model = "Meta-Llama-3.1-70B-Instruct" },
+#     { name = "gemini-free", provider = "openai", api_key = "...", base_url = "https://generativelanguage.googleapis.com/v1beta/openai", model = "gemini-1.5-flash" }
+# ]
+

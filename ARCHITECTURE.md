@@ -156,6 +156,35 @@ Since Korg personas can interact with GUIs and web browsers, a critical security
 
 -   **Temporal Analysis for Transient & Split Leaks**: The most advanced feature is its temporal analysis, which uses a `VISUAL_HISTORY` buffer to compare the current frame (N) with the previous one (N-1).
     -   **Transient Leak**: If a secret appears in frame N-1 but disappears in frame N, the engine retrospectively redacts frame N-1. This catches secrets that are only visible for a fraction of a second.
-    -   **Split-Credential Leak**: The engine concatenates the text from frames N-1 and N to check if a secret was split across two consecutive screenshots to evade detection.
-
 -   **Pixel Redaction**: Upon detecting an infraction, the engine does not simply discard the image. It replaces the `data_base64` payload with a constant, opaque placeholder (e.g., `BLACKOUT_PNG_BASE64`, a 1x1 black pixel). This maintains the integrity of the event stream (an attachment was still captured) while ensuring no sensitive data is persisted or broadcast. This redaction is enforced again at the web-server level in `src/web.rs` before being sent over SSE, providing a second layer of defense.
+
+## 7. Tauri Native Desktop Shell & System Tray Switcher
+
+Korg features a premium native desktop client powered by **Tauri v2**. This integration shifts the swarm cockpit from a standard browser tab to a zero-trust, glassmorphic native desktop shell, drawing architectural inspiration from `cc-switch` for immediate control of running agents.
+
+### 7.1. Glassmorphism & High-Aesthetics GUI
+The Tauri desktop window is designed with modern premium aesthetics:
+- **Transparent Backdrop Filtering**: Utilizing custom platform-level blurred backdrops (`transparent: true`, `decorations: false`, and hidden title bars). This produces a sleek, floatable glassmorphic dashboard that sits cleanly on the operator's workspace.
+- **Micro-Animations & Telemetry Updates**: Dynamic performance telemetry (Active Workers, Transaction Count, Latency) is piped over a highly responsive IPC layer (`invoke_handler` in `src-tauri/src/main.rs`).
+
+### 7.2. System Tray Preset-Centric Architecture
+Following the `cc-switch` pattern, the application runs a background loop connected to a macOS/Windows system tray icon. This provides real-time ambient monitoring and hot-swappable settings:
+- **Swarm Preset Switching**: An operator can right-click the Korg tray icon to instantly toggle active persona configurations (e.g., switching the swarm from using Groq to Cerebras, Gemini, or a local Ollama instance) without interrupting active execution.
+- **Campaign Execution State**: Start, pause, and exit controls are wired directly into the operating system's menu bar for low-latency operational oversight.
+
+---
+
+## 8. Free-Tier LLM API Rotator Layer (`src/llm.rs`)
+
+To optimize cognitive cost and operational resilience, Korg integrates a native free-tier API rotator inside the model-agnostic provider layer.
+
+### 8.1. Architecture and Fallback Engine
+The `RotatorProvider` holds a vector of configured candidates (`RotatorCandidateState`), representing custom API keys and endpoints (e.g., Groq, Cerebras, SambaNova, Google Gemini) which are queried as standard OpenAI-compatible endpoints.
+
+### 8.2. Resilience & Thread-Safe State Management
+- **Round-Robin & Quick Failover**: When a request is dispatched, Korg selects the most active candidate. If a candidate returns a transient error (e.g. HTTP 429 Rate Limit, 503 Service Unavailable), the rotator immediately catches the error, marks the candidate, and fails over to the next candidate in less than 50 milliseconds.
+- **Persistent Global Cooldowns**: Because persona processes are ephemeral and rebuilt by the `LeaderOrchestrator` on each task execution, local candidate state would be lost. Korg resolves this by persisting cooldown states in a thread-safe, global registry:
+  ```rust
+  static ROTATOR_COOLDOWNS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Instant>>> = std::sync::OnceLock::new();
+  ```
+  Any failed candidate is placed on a strict 60-second cooldown, preventing subsequent runs from retrying depleted endpoints and guaranteeing ultra-low-latency execution.

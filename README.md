@@ -9,7 +9,7 @@
 
 **Korg** is a zero-trust, cryptographically-verifiable runtime for autonomous multi-agent software engineering swarms. It operates on a **Blackboard Architecture** modeled as a **Gravitational Well**, where specialized agents (Architect, Coder, Tester) concurrently propose, validate, and debate code modifications against a shared, observable state.
 
-Every transaction is physically recorded onto a local, content-addressed **Merkle Directed Acyclic Graph (DAG)**, creating an immutable ledger of AI reasoning. When consensus fails or security policies are breached, Korg intercepts the swarm, opening a **Zero-Overlap Inline Security Gateway** that allows human operators to inject criteria or execute a **Playhead Steering Fork**, physically resetting the codebase to any prior state signature.
+Every transaction is physically recorded onto a local, content-addressed **Merkle Directed Acyclic Graph (DAG)**, creating an immutable ledger of AI reasoning. When consensus fails or security policies are breached, Korg intercepts the swarm, opening a **Zero-Overlap Inline Security Gateway** that allows human operators to inject criteria, execute a **Playhead Steering Fork** (`korg rewind --seq <id>`), or capture and restore **Deterministic Execution Checkpoints** (Git-powered zero-copy filesystem and clock restoration) to physically reset the codebase to any prior state signature.
 
 ---
 

@@ -149,8 +149,7 @@ pub async fn generate_attestation(
 pub fn verify_attestation(attestation: &CampaignAttestation) -> Result<bool> {
     // 1. Verify top-level signature
     let sig_obj = attestation.signature.as_ref()
-        .ok_ok_or(anyhow!("Missing attestation signature"))
-        .map_err(|e| e)?;
+        .ok_or(anyhow!("Missing attestation signature"))?;
     
     let pubkey_bytes: [u8; 32] = hex::decode(&attestation.leader_public_key)?
         .try_into()
@@ -295,6 +294,11 @@ pub fn verify_cli_command(path: &Path) -> Result<()> {
                     state_merkle_root: ktrans.state_merkle_root.clone(),
                     codebase_merkle_root: ktrans.codebase_merkle_root.clone(),
                     vision_attachments: ktrans.vision_attachments.clone(),
+                    certainty: ktrans.certainty,
+                    blast_radius: ktrans.blast_radius,
+                    severity: ktrans.severity,
+                    remediation_confidence: ktrans.remediation_confidence,
+                    is_healed: ktrans.is_healed,
                 };
 
                 match compute_sha256(&payload) {
@@ -354,17 +358,101 @@ pub fn verify_cli_command(path: &Path) -> Result<()> {
     Ok(())
 }
 
-trait AttestationOptionExt<T> {
-    fn ok_ok_or(self, err: anyhow::Error) -> std::result::Result<T, anyhow::Error>;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionEvent {
+    pub event_id: String,
+    pub parent_event: Option<String>,
+    pub agent_id: String,
+    pub capability_hash: String,
+    pub tool_invocation: String,
+    pub output_digest: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-impl<T> AttestationOptionExt<T> for Option<T> {
-    fn ok_ok_or(self, err: anyhow::Error) -> std::result::Result<T, anyhow::Error> {
-        match self {
-            Some(v) => Ok(v),
-            None => Err(err),
+pub fn log_execution_event(event: ExecutionEvent) -> Result<()> {
+    let korg_dir = std::path::Path::new(".korg");
+    if !korg_dir.exists() {
+        std::fs::create_dir_all(korg_dir)?;
+    }
+    
+    let journal_path = korg_dir.join("execution_journal.jsonl");
+    let lock_path = korg_dir.join("execution_journal.lock");
+    
+    // Open/create lock file
+    let lock_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&lock_path)?;
+    
+    // Exclusive advisory lock
+    fs2::FileExt::lock_exclusive(&lock_file)?;
+    
+    let mut events = Vec::new();
+    if journal_path.exists() {
+        let content = std::fs::read_to_string(&journal_path)?;
+        for line in content.lines() {
+            if !line.trim().is_empty() {
+                if let Ok(existing_event) = serde_json::from_str::<serde_json::Value>(line) {
+                    events.push(existing_event);
+                }
+            }
         }
     }
+    
+    events.push(serde_json::to_value(&event)?);
+    
+    let tmp_path = korg_dir.join("execution_journal.tmp");
+    let mut tmp_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tmp_path)?;
+        
+    for ev in events {
+        let line = serde_json::to_string(&ev)?;
+        use std::io::Write as _;
+        writeln!(tmp_file, "{}", line)?;
+    }
+    
+    tmp_file.sync_all()?;
+    drop(tmp_file);
+    
+    std::fs::rename(&tmp_path, &journal_path)?;
+    
+    // Unlock
+    fs2::FileExt::unlock(&lock_file)?;
+    
+    Ok(())
+}
+
+pub fn log_tool_invocation(
+    agent_id: &str,
+    tool_name: &str,
+    args: &str,
+    output: &str,
+) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    
+    let mut cap_hasher = Sha256::new();
+    cap_hasher.update(tool_name.as_bytes());
+    let capability_hash = hex::encode(cap_hasher.finalize());
+    
+    let mut out_hasher = Sha256::new();
+    out_hasher.update(output.as_bytes());
+    let output_digest = hex::encode(out_hasher.finalize());
+    
+    let event = ExecutionEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        parent_event: None,
+        agent_id: agent_id.to_string(),
+        capability_hash,
+        tool_invocation: format!("{} {}", tool_name, args),
+        output_digest,
+        timestamp: chrono::Utc::now(),
+    };
+    
+    log_execution_event(event)
 }
 
 #[cfg(test)]

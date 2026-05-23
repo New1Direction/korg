@@ -246,68 +246,18 @@ pub fn check_attachment(
     verdict
 }
 
-/// Helper to decode base64 without external crate dependencies if possible,
-/// or using a safe standard approach.
+/// Helper to decode base64 using the `base64` crate.
 fn base64_decode(input: &str) -> Result<Vec<u8>, &'static str> {
-    // Clean input of any padding or formatting
-    let cleaned = input.trim();
-    
-    // Standard library approach: Rust's hex or base64 decoding.
-    // Since Korg has no base64 crate in dependencies, let's write a simple standard decoder!
-    // Or check if we can decode via a standard method.
-    // Let's implement a clean, lightweight base64 decoder in pure Rust.
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut map = [0u8; 256];
-    for (i, &c) in ALPHABET.iter().enumerate() {
-        map[c as usize] = i as u8;
-    }
-
-    let mut buf = Vec::new();
-    let mut accum = 0u32;
-    let mut bits = 0;
-
-    for &byte in cleaned.as_bytes() {
-        if byte == b'=' {
-            break;
-        }
-        let val = map[byte as usize];
-        if val == 0 && byte != b'A' {
-            continue; // Skip whitespace or invalid chars
-        }
-        accum = (accum << 6) | (val as u32);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            buf.push(((accum >> bits) & 0xFF) as u8);
-        }
-    }
-    Ok(buf)
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(input.trim())
+        .map_err(|_| "base64 decode failed")
 }
 
-/// Helper to encode bytes to base64.
+/// Helper to encode bytes to base64 using the `base64` crate.
 pub fn base64_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::new();
-    let mut accum = 0u32;
-    let mut bits = 0;
-    for &byte in input {
-        accum = (accum << 8) | (byte as u32);
-        bits += 8;
-        while bits >= 6 {
-            bits -= 6;
-            let val = (accum >> bits) & 0x3F;
-            result.push(ALPHABET[val as usize] as char);
-        }
-    }
-    if bits > 0 {
-        accum <<= 6 - bits;
-        let val = accum & 0x3F;
-        result.push(ALPHABET[val as usize] as char);
-    }
-    while result.len() % 4 != 0 {
-        result.push('=');
-    }
-    result
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(input)
 }
 
 #[cfg(test)]

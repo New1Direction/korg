@@ -79,6 +79,10 @@ pub struct LlmRequest {
     pub tx_id: Option<String>,
     pub session_id: Option<String>,
     pub policy_hash: Option<String>,
+
+    pub top_p: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub frequency_penalty: Option<f32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,7 +101,7 @@ pub enum FinishReason {
     Other(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LlmResponse {
     pub content: String,
     pub usage: TokenUsage,
@@ -356,6 +360,15 @@ impl OpenAIProvider {
         if let Some(stop) = req.stop_sequences {
             body["stop"] = serde_json::json!(stop);
         }
+        if let Some(tp) = req.top_p {
+            body["top_p"] = serde_json::json!(tp);
+        }
+        if let Some(pp) = req.presence_penalty {
+            body["presence_penalty"] = serde_json::json!(pp);
+        }
+        if let Some(fp) = req.frequency_penalty {
+            body["frequency_penalty"] = serde_json::json!(fp);
+        }
 
         body
     }
@@ -594,6 +607,9 @@ impl AnthropicProvider {
 
         if let Some(stop) = req.stop_sequences {
             body["stop_sequences"] = serde_json::json!(stop);
+        }
+        if let Some(tp) = req.top_p {
+            body["top_p"] = serde_json::json!(tp);
         }
 
         body
@@ -852,6 +868,307 @@ impl LlmProvider for LocalOllamaProvider {
 }
 
 // =========================================================================
+// Free-Tier LLM Rotator Layer
+// =========================================================================
+
+static ROTATOR_COOLDOWNS_MUTEX: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+
+fn get_cooldowns_mutex() -> &'static Mutex<()> {
+    ROTATOR_COOLDOWNS_MUTEX.get_or_init(|| Mutex::new(()))
+}
+
+fn read_persisted_cooldowns() -> std::collections::HashMap<String, chrono::DateTime<chrono::Utc>> {
+    use fs2::FileExt;
+    use std::io::Read;
+
+    let proj_root = crate::paths::project_root();
+    let korg_dir = proj_root.join(".korg");
+    let _ = std::fs::create_dir_all(&korg_dir);
+    let file_path = korg_dir.join("rotator_cooldowns.json");
+    let lock_path = korg_dir.join("rotator_cooldowns.lock");
+
+    // Open lock file
+    let lock_file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(&lock_path)
+    {
+        Ok(f) => f,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+
+    // Shared lock for reading
+    if lock_file.lock_shared().is_err() {
+        return std::collections::HashMap::new();
+    }
+
+    let mut result: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>> = std::collections::HashMap::new();
+    if file_path.exists() {
+        if let Ok(mut f) = std::fs::File::open(&file_path) {
+            let mut content = String::new();
+            if f.read_to_string(&mut content).is_ok() {
+                if let Ok(parsed) = serde_json::from_str::<std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>>(&content) {
+                    result = parsed;
+                }
+            }
+        }
+    }
+
+    let _ = lock_file.unlock();
+
+    // 3. Expiration sweep on read & clock drift clamping
+    let now = chrono::Utc::now();
+    let max_future = now + chrono::Duration::seconds(60);
+    result.retain(|_, &mut until| {
+        // Sweep if already expired
+        if until <= now {
+            return false;
+        }
+        // Clamp clock drift if it is set way in the future
+        if until > max_future {
+            return false;
+        }
+        true
+    });
+
+    result
+}
+
+fn write_persisted_cooldowns(cooldowns: &std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>) {
+    use fs2::FileExt;
+    use std::io::Write;
+
+    let proj_root = crate::paths::project_root();
+    let korg_dir = proj_root.join(".korg");
+    let _ = std::fs::create_dir_all(&korg_dir);
+    let file_path = korg_dir.join("rotator_cooldowns.json");
+    let tmp_path = korg_dir.join("rotator_cooldowns.tmp");
+    let lock_path = korg_dir.join("rotator_cooldowns.lock");
+
+    // Open lock file
+    let lock_file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(&lock_path)
+    {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+
+    // Exclusive lock for writing
+    if lock_file.lock_exclusive().is_err() {
+        return;
+    }
+
+    if let Ok(content) = serde_json::to_string_pretty(cooldowns) {
+        // Write to tmp path first (atomic write)
+        if let Ok(mut tmp_file) = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path)
+        {
+            if tmp_file.write_all(content.as_bytes()).is_ok() {
+                let _ = tmp_file.sync_all(); // Hard fsync call
+                drop(tmp_file);
+                // Atomic rename
+                let _ = std::fs::rename(&tmp_path, &file_path);
+            }
+        }
+    }
+
+    let _ = lock_file.unlock();
+}
+
+pub struct RotatorCandidateState {
+    pub name: String,
+    pub provider: Arc<dyn LlmProvider>,
+    pub default_model: Option<String>,
+}
+
+pub struct RotatorProvider {
+    pub candidates: Vec<RotatorCandidateState>,
+}
+
+impl RotatorProvider {
+    pub fn new(candidates: Vec<RotatorCandidateState>) -> Self {
+        Self { candidates }
+    }
+
+    /// Selects the best candidate to try.
+    /// Returns the index of the selected candidate.
+    fn select_candidate(&self) -> Option<usize> {
+        if self.candidates.is_empty() {
+            return None;
+        }
+
+        let now = chrono::Utc::now();
+        let _guard = get_cooldowns_mutex().lock().unwrap();
+        let registry = read_persisted_cooldowns();
+        
+        // 1. First, try to find a candidate not on cooldown.
+        for (i, cand) in self.candidates.iter().enumerate() {
+            match registry.get(&cand.name) {
+                None => return Some(i),
+                Some(&until) if now >= until => {
+                    // Cooldown has expired!
+                    return Some(i);
+                }
+                _ => {}
+            }
+        }
+
+        // 2. If all candidates are on cooldown, fall back to the one whose cooldown expires first.
+        let mut best_idx = 0;
+        let mut min_remaining = chrono::Duration::seconds(999999);
+
+        for (i, cand) in self.candidates.iter().enumerate() {
+            if let Some(&until) = registry.get(&cand.name) {
+                if until > now {
+                    let remaining = until.signed_duration_since(now);
+                    if remaining < min_remaining {
+                        min_remaining = remaining;
+                        best_idx = i;
+                    }
+                } else {
+                    return Some(i);
+                }
+            } else {
+                return Some(i);
+            }
+        }
+
+        Some(best_idx)
+    }
+
+    /// Place a candidate on a 60-second cooldown due to failure.
+    fn trigger_cooldown(&self, idx: usize) {
+        if let Some(cand) = self.candidates.get(idx) {
+            let cooldown_dur = chrono::Duration::seconds(60);
+            let _guard = get_cooldowns_mutex().lock().unwrap();
+            let mut registry = read_persisted_cooldowns();
+            registry.insert(cand.name.clone(), chrono::Utc::now() + cooldown_dur);
+            write_persisted_cooldowns(&registry);
+            
+            // Console warning in dynamic colors
+            let gold = "\x1b[38;2;255;215;0m";
+            let reset = "\x1b[0m";
+            eprintln!(
+                "{gold}⚠️  [rotator] Candidate '{}' encountered a transient failure. Placing on cooldown for 60 seconds.{reset}",
+                cand.name
+            );
+        }
+    }
+}
+
+#[async_trait]
+impl LlmProvider for RotatorProvider {
+    fn name(&self) -> &'static str {
+        "rotator"
+    }
+
+    async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
+        if self.candidates.is_empty() {
+            return Err(LlmError::Unknown("No rotator candidates configured".to_string()));
+        }
+
+        let mut attempted = std::collections::HashSet::new();
+
+        loop {
+            if attempted.len() >= self.candidates.len() {
+                break;
+            }
+
+            let idx = self.select_candidate().unwrap_or(0);
+            let mut selected_idx = idx;
+            if attempted.contains(&selected_idx) {
+                let mut found = false;
+                for i in 0..self.candidates.len() {
+                    if !attempted.contains(&i) {
+                        selected_idx = i;
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    break;
+                }
+            }
+
+            attempted.insert(selected_idx);
+            let candidate = &self.candidates[selected_idx];
+
+            let mut request = req.clone();
+            if let Some(ref custom_model) = candidate.default_model {
+                // If the candidate has a customized default model (e.g. from the rotator),
+                // it is already hardcoded inside the candidate's provider if it's OpenAIProvider.
+                // But in case the request is direct or other providers, we let it carry.
+            }
+
+            match candidate.provider.complete(request).await {
+                Ok(resp) => {
+                    ROTATOR_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return Ok(resp);
+                }
+                Err(err) => {
+                    self.trigger_cooldown(selected_idx);
+                }
+            }
+        }
+
+        Err(LlmError::Unknown("All rotator candidates failed".to_string()))
+    }
+
+    async fn complete_stream(
+        &self,
+        req: LlmRequest,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmDelta, LlmError>> + Send>>, LlmError> {
+        if self.candidates.is_empty() {
+            return Err(LlmError::Unknown("No rotator candidates configured".to_string()));
+        }
+
+        let mut attempted = std::collections::HashSet::new();
+
+        loop {
+            if attempted.len() >= self.candidates.len() {
+                break;
+            }
+
+            let idx = self.select_candidate().unwrap_or(0);
+            let mut selected_idx = idx;
+            if attempted.contains(&selected_idx) {
+                let mut found = false;
+                for i in 0..self.candidates.len() {
+                    if !attempted.contains(&i) {
+                        selected_idx = i;
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    break;
+                }
+            }
+
+            attempted.insert(selected_idx);
+            let candidate = &self.candidates[selected_idx];
+
+            match candidate.provider.complete_stream(req.clone()).await {
+                Ok(stream) => {
+                    ROTATOR_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return Ok(stream);
+                }
+                Err(_err) => {
+                    self.trigger_cooldown(selected_idx);
+                }
+            }
+        }
+
+        Err(LlmError::Unknown("All rotator candidates failed to establish stream".to_string()))
+    }
+}
+
+// =========================================================================
 // Resilient Decorator (Retry with Exponential Backoff & Circuit Breaker)
 // =========================================================================
 
@@ -908,7 +1225,135 @@ impl CircuitBreaker {
     }
 }
 
+pub struct SemanticLlmCache;
+
+impl SemanticLlmCache {
+    fn cache_path() -> std::path::PathBuf {
+        crate::paths::project_root().join(".korg").join("semantic_llm_cache.json")
+    }
+
+    fn lock_path() -> std::path::PathBuf {
+        crate::paths::project_root().join(".korg").join("semantic_cache.lock")
+    }
+
+    pub fn get(req: &LlmRequest) -> Option<LlmResponse> {
+        let key_hash = match Self::compute_hash(req) {
+            Ok(h) => h,
+            Err(_) => return None,
+        };
+
+        let lock_path = Self::lock_path();
+        let _ = std::fs::create_dir_all(lock_path.parent().unwrap());
+        
+        let lock_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&lock_path)
+            .ok()?;
+
+        use fs2::FileExt;
+        if lock_file.lock_shared().is_ok() {
+            let cache_file_path = Self::cache_path();
+            let mut cache: std::collections::HashMap<String, LlmResponse> = std::collections::HashMap::new();
+            if cache_file_path.exists() {
+                if let Ok(mut f) = std::fs::File::open(&cache_file_path) {
+                    let mut content = String::new();
+                    use std::io::Read;
+                    if f.read_to_string(&mut content).is_ok() {
+                        if let Ok(parsed) = serde_json::from_str(&content) {
+                            cache = parsed;
+                        }
+                    }
+                }
+            }
+            let _ = lock_file.unlock();
+            cache.get(&key_hash).cloned()
+        } else {
+            None
+        }
+    }
+
+    pub fn insert(req: &LlmRequest, resp: &LlmResponse) {
+        let key_hash = match Self::compute_hash(req) {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+
+        let lock_path = Self::lock_path();
+        let _ = std::fs::create_dir_all(lock_path.parent().unwrap());
+
+        let lock_file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&lock_path)
+        {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+
+        use fs2::FileExt;
+        if lock_file.lock_exclusive().is_ok() {
+            let cache_file_path = Self::cache_path();
+            let tmp_path = cache_file_path.with_extension("tmp");
+            
+            let mut cache: std::collections::HashMap<String, LlmResponse> = std::collections::HashMap::new();
+            if cache_file_path.exists() {
+                if let Ok(mut f) = std::fs::File::open(&cache_file_path) {
+                    let mut content = String::new();
+                    use std::io::Read;
+                    if f.read_to_string(&mut content).is_ok() {
+                        if let Ok(parsed) = serde_json::from_str(&content) {
+                            cache = parsed;
+                        }
+                    }
+                }
+            }
+
+            cache.insert(key_hash, resp.clone());
+
+            if let Ok(content) = serde_json::to_string_pretty(&cache) {
+                if let Ok(mut tmp_file) = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&tmp_path)
+                {
+                    use std::io::Write;
+                    if tmp_file.write_all(content.as_bytes()).is_ok() {
+                        if tmp_file.sync_all().is_ok() {
+                            let _ = std::fs::rename(&tmp_path, &cache_file_path);
+                        }
+                    }
+                }
+            }
+            let _ = lock_file.unlock();
+        }
+    }
+
+    fn compute_hash(req: &LlmRequest) -> Result<String, serde_json::Error> {
+        use sha2::Digest;
+        let key_val = serde_json::json!({
+            "messages": req.messages,
+            "temperature": req.temperature,
+            "max_tokens": req.max_tokens,
+            "tools": req.tools,
+            "stop_sequences": req.stop_sequences,
+            "top_p": req.top_p,
+            "presence_penalty": req.presence_penalty,
+            "frequency_penalty": req.frequency_penalty,
+        });
+        let serialized = serde_json::to_vec(&key_val)?;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(&serialized);
+        Ok(hex::encode(hasher.finalize()))
+    }
+}
+
 pub static CAMPAIGN_TOKENS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub static ROTATOR_HITS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub static HEALS_RESOLVED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub static COMPLETIONS_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub static TOTAL_LATENCY_MS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub struct ResilientLlmProvider {
     pub inner: Arc<dyn LlmProvider>,
@@ -920,11 +1365,12 @@ pub struct ResilientLlmProvider {
 
 impl ResilientLlmProvider {
     pub fn new(inner: Arc<dyn LlmProvider>) -> Self {
+        let config = KorgConfig::load();
         Self {
             inner,
-            max_retries: 3,
-            initial_delay: Duration::from_millis(500),
-            max_delay: Duration::from_secs(5),
+            max_retries: config.resilience.max_retries as usize,
+            initial_delay: Duration::from_millis(config.resilience.initial_delay_ms),
+            max_delay: Duration::from_millis(config.resilience.max_delay_ms),
             circuit_breaker: Arc::new(CircuitBreaker::new(5, Duration::from_secs(10))),
         }
     }
@@ -942,6 +1388,15 @@ impl LlmProvider for ResilientLlmProvider {
         }
 
         let config = KorgConfig::load();
+        if config.resilience.enable_semantic_cache {
+            if let Some(cached) = SemanticLlmCache::get(&req) {
+                let gold = "\x1b[38;2;255;215;0m";
+                let reset = "\x1b[0m";
+                println!("{gold}⚡ [semantic-cache] Bypassing LLM call. Returning cached response.{reset}");
+                return Ok(cached);
+            }
+        }
+
         let current_campaign_tokens = CAMPAIGN_TOKENS.load(std::sync::atomic::Ordering::Relaxed);
         if current_campaign_tokens >= config.security_tokens.max_campaign_tokens as usize {
             let gold = "\x1b[38;2;255;215;0m";
@@ -963,9 +1418,18 @@ impl LlmProvider for ResilientLlmProvider {
                 delay = std::cmp::min(delay * 2, self.max_delay);
             }
 
+            let start_inst = std::time::Instant::now();
             match self.inner.complete(req.clone()).await {
                 Ok(resp) => {
+                    let elapsed_ms = start_inst.elapsed().as_millis() as usize;
+                    COMPLETIONS_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    TOTAL_LATENCY_MS.fetch_add(elapsed_ms, std::sync::atomic::Ordering::Relaxed);
+
                     self.circuit_breaker.record_success();
+
+                    if config.resilience.enable_semantic_cache {
+                        SemanticLlmCache::insert(&req, &resp);
+                    }
                     
                     let usage_total = resp.usage.total_tokens;
                     if usage_total > config.security_tokens.max_request_tokens {
@@ -1098,7 +1562,8 @@ impl Default for PathsPolicyConfig {
     fn default() -> Self {
         Self {
             allowed_directories: vec![
-                "/Users/clubpenguin/Documents/Korg".to_string(),
+                crate::paths::project_root_string(),
+                crate::paths::cache_dir().display().to_string(),
                 "/tmp".to_string(),
             ],
             blocked_paths: vec![
@@ -1156,6 +1621,8 @@ impl Default for TokensPolicyConfig {
 #[derive(Clone, Debug, Deserialize)]
 pub struct TomlSecuritySection {
     pub policies: Option<TomlPoliciesSection>,
+    pub allow_unsafe_commands: Option<bool>,
+    pub sandbox_mode: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1194,6 +1661,28 @@ pub struct TomlVisionPolicySection {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct TomlRotatorCandidate {
+    pub name: String,
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlRotatorSection {
+    pub candidates: Option<Vec<TomlRotatorCandidate>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlResilienceSection {
+    pub enable_semantic_cache: Option<bool>,
+    pub max_retries: Option<u32>,
+    pub initial_delay_ms: Option<u64>,
+    pub max_delay_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct TomlConfig {
     pub default_llm: Option<String>,
     pub default_model: Option<String>,
@@ -1202,6 +1691,70 @@ pub struct TomlConfig {
     pub grok: Option<TomlLlmSection>,
     pub ollama: Option<TomlOllamaSection>,
     pub security: Option<TomlSecuritySection>,
+    pub personas: Option<TomlPersonasSection>,
+    pub rotator: Option<TomlRotatorSection>,
+    pub resilience: Option<TomlResilienceSection>,
+}
+
+
+/// Per-persona LLM overrides.
+///
+/// Example korg.toml:
+/// ```toml
+/// [personas.captain]
+/// provider = "openai"
+/// model = "o3"               # Deep reasoning for planning & decomposition
+/// temperature = 0.2
+/// ```
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct TomlPersonasSection {
+    pub captain: Option<TomlPersonaOverride>,
+    pub harper: Option<TomlPersonaOverride>,
+    pub benjamin: Option<TomlPersonaOverride>,
+    pub lucas: Option<TomlPersonaOverride>,
+    pub evaluator: Option<TomlPersonaOverride>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TomlPersonaOverride {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub max_tokens: Option<u32>,
+}
+
+/// Per-persona provider + model override (resolved at runtime).
+#[derive(Clone, Debug, Default)]
+pub struct PersonaLlmOverride {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub max_tokens: Option<u32>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ResilienceConfig {
+    pub enable_semantic_cache: bool,
+    pub max_retries: u32,
+    pub initial_delay_ms: u64,
+    pub max_delay_ms: u64,
+}
+
+impl Default for ResilienceConfig {
+    fn default() -> Self {
+        Self {
+            enable_semantic_cache: false,
+            max_retries: 3,
+            initial_delay_ms: 500,
+            max_delay_ms: 5000,
+        }
+    }
 }
 
 pub struct KorgConfig {
@@ -1218,6 +1771,12 @@ pub struct KorgConfig {
     pub security_paths: PathsPolicyConfig,
     pub security_network: NetworkPolicyConfig,
     pub security_tokens: TokensPolicyConfig,
+    pub allow_unsafe_commands: bool,
+    pub sandbox_mode: String,
+    /// Per-persona provider/model overrides (keyed by lowercase persona name).
+    pub persona_overrides: std::collections::HashMap<String, PersonaLlmOverride>,
+    pub rotator_candidates: Vec<TomlRotatorCandidate>,
+    pub resilience: ResilienceConfig,
 }
 
 impl KorgConfig {
@@ -1236,6 +1795,11 @@ impl KorgConfig {
             security_paths: PathsPolicyConfig::default(),
             security_network: NetworkPolicyConfig::default(),
             security_tokens: TokensPolicyConfig::default(),
+            allow_unsafe_commands: std::env::var("KORG_ALLOW_UNSAFE_COMMANDS").map(|v| v == "true").unwrap_or(false),
+            sandbox_mode: std::env::var("KORG_SANDBOX_MODE").unwrap_or_else(|_| "strict".to_string()),
+            persona_overrides: std::collections::HashMap::new(),
+            rotator_candidates: Vec::new(),
+            resilience: ResilienceConfig::default(),
         }
     }
 
@@ -1253,6 +1817,12 @@ impl KorgConfig {
         let mut security_paths = PathsPolicyConfig::default();
         let mut security_network = NetworkPolicyConfig::default();
         let mut security_tokens = TokensPolicyConfig::default();
+        let mut allow_unsafe_commands = std::env::var("KORG_ALLOW_UNSAFE_COMMANDS").map(|v| v == "true").ok();
+        let mut sandbox_mode = std::env::var("KORG_SANDBOX_MODE").ok();
+
+        let mut persona_overrides = std::collections::HashMap::new();
+        let mut rotator_candidates = Vec::new();
+        let mut resilience = ResilienceConfig::default();
 
         let mut toml_content = None;
         if std::path::Path::new("korg.toml").exists() {
@@ -1290,6 +1860,34 @@ impl KorgConfig {
                 }
                 if let Some(sec) = parsed.ollama {
                     if ollama_base_url.is_none() { ollama_base_url = sec.base_url; }
+                }
+                // Parse per-persona overrides
+                if let Some(personas) = parsed.personas {
+                    let pairs: Vec<(&str, Option<TomlPersonaOverride>)> = vec![
+                        ("captain", personas.captain),
+                        ("harper", personas.harper),
+                        ("benjamin", personas.benjamin),
+                        ("lucas", personas.lucas),
+                        ("evaluator", personas.evaluator),
+                    ];
+                    for (name, maybe_override) in pairs {
+                        if let Some(ov) = maybe_override {
+                            persona_overrides.insert(name.to_string(), PersonaLlmOverride {
+                                provider: ov.provider,
+                                model: ov.model,
+                                temperature: ov.temperature,
+                                top_p: ov.top_p,
+                                presence_penalty: ov.presence_penalty,
+                                frequency_penalty: ov.frequency_penalty,
+                                max_tokens: ov.max_tokens,
+                            });
+                        }
+                    }
+                }
+                if let Some(rot) = parsed.rotator {
+                    if let Some(cands) = rot.candidates {
+                        rotator_candidates = cands;
+                    }
                 }
                 if let Some(sec) = parsed.security {
                     if let Some(pols) = sec.policies {
@@ -1335,6 +1933,26 @@ impl KorgConfig {
                             }
                         }
                     }
+                    if allow_unsafe_commands.is_none() {
+                        allow_unsafe_commands = sec.allow_unsafe_commands;
+                    }
+                    if sandbox_mode.is_none() {
+                        sandbox_mode = sec.sandbox_mode;
+                    }
+                }
+                if let Some(sec) = parsed.resilience {
+                    if let Some(val) = sec.enable_semantic_cache {
+                        resilience.enable_semantic_cache = val;
+                    }
+                    if let Some(val) = sec.max_retries {
+                        resilience.max_retries = val;
+                    }
+                    if let Some(val) = sec.initial_delay_ms {
+                        resilience.initial_delay_ms = val;
+                    }
+                    if let Some(val) = sec.max_delay_ms {
+                        resilience.max_delay_ms = val;
+                    }
                 }
             }
         }
@@ -1353,26 +1971,95 @@ impl KorgConfig {
             security_paths,
             security_network,
             security_tokens,
+            allow_unsafe_commands: allow_unsafe_commands.unwrap_or(false),
+            sandbox_mode: sandbox_mode.unwrap_or_else(|| "strict".to_string()),
+            persona_overrides,
+            rotator_candidates,
+            resilience,
         }
     }
 }
 
 pub fn build_provider(config: &KorgConfig) -> Arc<dyn LlmProvider> {
-    let raw_provider: Arc<dyn LlmProvider> = match config.default_llm.as_str() {
+    build_provider_with(config, &config.default_llm, config.default_model.as_deref())
+}
+
+/// Build a provider for a specific persona, using per-persona overrides if configured.
+///
+/// Falls back to the default provider if no override is set for the persona.
+pub fn build_provider_for_persona(config: &KorgConfig, persona_name: &str) -> (Arc<dyn LlmProvider>, Option<f32>) {
+    let key = persona_name.to_lowercase();
+    if let Some(ov) = config.persona_overrides.get(&key) {
+        let provider_name = ov.provider.as_deref().unwrap_or(&config.default_llm);
+        let model = ov.model.as_deref().or(config.default_model.as_deref());
+        (build_provider_with(config, provider_name, model), ov.temperature)
+    } else {
+        (build_provider(config), None)
+    }
+}
+
+/// Internal: build a provider given explicit provider name and model.
+fn build_provider_with(config: &KorgConfig, provider_name: &str, model: Option<&str>) -> Arc<dyn LlmProvider> {
+    let model_owned = model.map(|m| m.to_string());
+    let raw_provider: Arc<dyn LlmProvider> = match provider_name {
         "openai" => {
             let key = config.openai_api_key.clone().unwrap_or_else(|| "mock-key".to_string());
-            Arc::new(OpenAIProvider::new(key, config.openai_base_url.clone(), config.default_model.clone()))
+            Arc::new(OpenAIProvider::new(key, config.openai_base_url.clone(), model_owned))
         }
         "anthropic" => {
             let key = config.anthropic_api_key.clone().unwrap_or_else(|| "mock-key".to_string());
-            Arc::new(AnthropicProvider::new(key, config.anthropic_base_url.clone(), config.default_model.clone()))
+            Arc::new(AnthropicProvider::new(key, config.anthropic_base_url.clone(), model_owned))
         }
         "grok" => {
             let key = config.grok_api_key.clone().unwrap_or_else(|| "mock-key".to_string());
-            Arc::new(GrokProvider::new(key, config.grok_base_url.clone(), config.default_model.clone()))
+            Arc::new(GrokProvider::new(key, config.grok_base_url.clone(), model_owned))
         }
         "ollama" => {
-            Arc::new(LocalOllamaProvider::new(config.ollama_base_url.clone(), config.default_model.clone()))
+            Arc::new(LocalOllamaProvider::new(config.ollama_base_url.clone(), model_owned))
+        }
+        "rotator" => {
+            let mut candidates = Vec::new();
+            for cand in &config.rotator_candidates {
+                let inner_provider: Arc<dyn LlmProvider> = match cand.provider.as_str() {
+                    "openai" => {
+                        let key = cand.api_key.clone()
+                            .or_else(|| config.openai_api_key.clone())
+                            .unwrap_or_else(|| "mock-key".to_string());
+                        let base_url = cand.base_url.clone().or_else(|| config.openai_base_url.clone());
+                        let model = cand.model.clone().or_else(|| model_owned.clone());
+                        Arc::new(OpenAIProvider::new(key, base_url, model))
+                    }
+                    "anthropic" => {
+                        let key = cand.api_key.clone()
+                            .or_else(|| config.anthropic_api_key.clone())
+                            .unwrap_or_else(|| "mock-key".to_string());
+                        let base_url = cand.base_url.clone().or_else(|| config.anthropic_base_url.clone());
+                        let model = cand.model.clone().or_else(|| model_owned.clone());
+                        Arc::new(AnthropicProvider::new(key, base_url, model))
+                    }
+                    "grok" => {
+                        let key = cand.api_key.clone()
+                            .or_else(|| config.grok_api_key.clone())
+                            .unwrap_or_else(|| "mock-key".to_string());
+                        let base_url = cand.base_url.clone().or_else(|| config.grok_base_url.clone());
+                        let model = cand.model.clone().or_else(|| model_owned.clone());
+                        Arc::new(GrokProvider::new(key, base_url, model))
+                    }
+                    "ollama" => {
+                        let base_url = cand.base_url.clone().or_else(|| config.ollama_base_url.clone());
+                        let model = cand.model.clone().or_else(|| model_owned.clone());
+                        Arc::new(LocalOllamaProvider::new(base_url, model))
+                    }
+                    _ => Arc::new(MockProvider::new()),
+                };
+
+                candidates.push(RotatorCandidateState {
+                    name: cand.name.clone(),
+                    provider: inner_provider,
+                    default_model: cand.model.clone(),
+                });
+            }
+            Arc::new(RotatorProvider::new(candidates))
         }
         _ => Arc::new(MockProvider::new()),
     };
@@ -1406,6 +2093,9 @@ mod tests {
             tx_id: None,
             session_id: None,
             policy_hash: None,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
         };
 
         let response = provider.complete(request).await.unwrap();
@@ -1453,6 +2143,9 @@ mod tests {
             tx_id: None,
             session_id: None,
             policy_hash: None,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
         };
 
         let payload = provider.serialize_request(request, false);
@@ -1506,6 +2199,9 @@ mod tests {
             tx_id: None,
             session_id: None,
             policy_hash: None,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
         };
 
         let payload = provider.serialize_request(request, false);
@@ -1553,6 +2249,9 @@ mod tests {
             tx_id: None,
             session_id: None,
             policy_hash: None,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
         };
 
         let res = resilient.complete(request).await;
@@ -1587,4 +2286,213 @@ mod tests {
         assert_eq!(parsed.openai.unwrap().api_key.unwrap(), "openai-key");
         assert_eq!(parsed.ollama.unwrap().base_url.unwrap(), "http://localhost:11434/v1");
     }
+
+    #[tokio::test]
+    async fn test_rotator_failover_on_429() {
+        let mock_fail = Arc::new(MockProvider::new());
+        mock_fail.set_response(Err(LlmError::RateLimit("429 Too Many Requests".to_string())));
+
+        let mock_success = Arc::new(MockProvider::new());
+        mock_success.set_response(Ok(LlmResponse {
+            content: "Success response".to_string(),
+            usage: TokenUsage {
+                prompt_tokens: 10,
+                completion_tokens: 10,
+                total_tokens: 20,
+            },
+            model: "model-2".to_string(),
+            finish_reason: FinishReason::Stop,
+            tool_calls: None,
+        }));
+
+        let candidates = vec![
+            RotatorCandidateState {
+                name: "candidate-fail-1".to_string(),
+                provider: mock_fail,
+                default_model: None,
+            },
+            RotatorCandidateState {
+                name: "candidate-success-2".to_string(),
+                provider: mock_success,
+                default_model: None,
+            },
+        ];
+
+        let rotator = RotatorProvider::new(candidates);
+        let request = LlmRequest {
+            messages: vec![],
+            temperature: 0.7,
+            max_tokens: None,
+            tools: None,
+            stop_sequences: None,
+            multimodal: None,
+            tx_id: None,
+            session_id: None,
+            policy_hash: None,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+        };
+
+        // This should try candidate-fail-1 first, trigger a cooldown, and then try candidate-success-2 and succeed!
+        let resp = rotator.complete(request).await.unwrap();
+        assert_eq!(resp.content, "Success response");
+
+        // Verify candidate-fail-1 has a cooldown
+        let cooldowns = read_persisted_cooldowns();
+        assert!(cooldowns.contains_key("candidate-fail-1"));
+    }
+
+    #[tokio::test]
+    async fn test_rotator_cooldown_skips() {
+        // Place candidate-1 on a manual cooldown
+        {
+            let mut cooldowns = read_persisted_cooldowns();
+            cooldowns.insert("candidate-cooldown-1".to_string(), chrono::Utc::now() + chrono::Duration::seconds(60));
+            write_persisted_cooldowns(&cooldowns);
+        }
+
+        let mock_cooldown = Arc::new(MockProvider::new());
+        // If it gets called, fail the test
+        mock_cooldown.set_response(Err(LlmError::Unknown("Should not be called!".to_string())));
+
+        let mock_active = Arc::new(MockProvider::new());
+        mock_active.set_response(Ok(LlmResponse {
+            content: "Active candidate".to_string(),
+            usage: TokenUsage {
+                prompt_tokens: 5,
+                completion_tokens: 5,
+                total_tokens: 10,
+            },
+            model: "model-active".to_string(),
+            finish_reason: FinishReason::Stop,
+            tool_calls: None,
+        }));
+
+        let candidates = vec![
+            RotatorCandidateState {
+                name: "candidate-cooldown-1".to_string(),
+                provider: mock_cooldown,
+                default_model: None,
+            },
+            RotatorCandidateState {
+                name: "candidate-active-2".to_string(),
+                provider: mock_active,
+                default_model: None,
+            },
+        ];
+
+        let rotator = RotatorProvider::new(candidates);
+        let request = LlmRequest {
+            messages: vec![],
+            temperature: 0.7,
+            max_tokens: None,
+            tools: None,
+            stop_sequences: None,
+            multimodal: None,
+            tx_id: None,
+            session_id: None,
+            policy_hash: None,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+        };
+
+        // This should skip candidate-cooldown-1 and return success from candidate-active-2 immediately!
+        let resp = rotator.complete(request).await.unwrap();
+        assert_eq!(resp.content, "Active candidate");
+    }
+
+    #[test]
+    fn test_semantic_llm_cache_insert_and_get() {
+        let cache_file = SemanticLlmCache::cache_path();
+        let backup_file = cache_file.with_extension("backup_test");
+        
+        if cache_file.exists() {
+            let _ = std::fs::rename(&cache_file, &backup_file);
+        }
+        
+        let request = LlmRequest {
+            messages: vec![Message {
+                role: Role::User,
+                content: "Semantic cache test message".to_string(),
+                name: None,
+                tool_calls: None,
+            }],
+            temperature: 0.88,
+            max_tokens: Some(123),
+            tools: None,
+            stop_sequences: None,
+            multimodal: None,
+            tx_id: None,
+            session_id: None,
+            policy_hash: None,
+            top_p: Some(0.99),
+            presence_penalty: Some(0.12),
+            frequency_penalty: Some(0.34),
+        };
+        
+        let response = LlmResponse {
+            content: "Cached response content".to_string(),
+            usage: TokenUsage {
+                prompt_tokens: 10,
+                completion_tokens: 20,
+                total_tokens: 30,
+            },
+            model: "cache-test-model".to_string(),
+            finish_reason: FinishReason::Stop,
+            tool_calls: None,
+        };
+        
+        // Assert empty cache get returns None
+        let get_before = SemanticLlmCache::get(&request);
+        assert!(get_before.is_none());
+        
+        // Insert response
+        SemanticLlmCache::insert(&request, &response);
+        
+        // Get response and assert equality
+        let get_after = SemanticLlmCache::get(&request);
+        assert!(get_after.is_some());
+        let get_after_resp = get_after.unwrap();
+        assert_eq!(get_after_resp.content, "Cached response content");
+        assert_eq!(get_after_resp.model, "cache-test-model");
+        
+        // Cleanup test cache file and restore backup
+        let _ = std::fs::remove_file(&cache_file);
+        let _ = std::fs::remove_file(SemanticLlmCache::lock_path());
+        if backup_file.exists() {
+            let _ = std::fs::rename(&backup_file, &cache_file);
+        }
+    }
+
+    #[test]
+    fn test_custom_overrides_serialization() {
+        let provider = OpenAIProvider::new(
+            "test_key".to_string(),
+            None,
+            Some("gpt-4o".to_string()),
+        );
+
+        let request = LlmRequest {
+            messages: vec![],
+            temperature: 0.1,
+            max_tokens: Some(10),
+            tools: None,
+            stop_sequences: None,
+            multimodal: None,
+            tx_id: None,
+            session_id: None,
+            policy_hash: None,
+            top_p: Some(0.85),
+            presence_penalty: Some(0.45),
+            frequency_penalty: Some(0.65),
+        };
+
+        let payload = provider.serialize_request(request, false);
+        assert!((payload["top_p"].as_f64().unwrap() - 0.85).abs() < 1e-5);
+        assert!((payload["presence_penalty"].as_f64().unwrap() - 0.45).abs() < 1e-5);
+        assert!((payload["frequency_penalty"].as_f64().unwrap() - 0.65).abs() < 1e-5);
+    }
 }
+

@@ -206,10 +206,10 @@ pub async fn run_reconcile(topic: Option<String>) -> Result<()> {
     let wiki_dir = vault_root.join("wiki");
     
     // === SUGGESTION 1: Scan recent .ktrans logs to isolate touched files ===
-    let ktrans_dir = Path::new("/tmp/korg/ktrans");
+    let ktrans_dir = crate::paths::ktrans_dir();
     let mut recent_ktrans_files = std::collections::HashSet::new();
     if ktrans_dir.exists() {
-        println!("[Yvaeh reconcile] Scanning recent .ktrans transactions in /tmp/korg/ktrans/...");
+        println!("[Yvaeh reconcile] Scanning recent .ktrans transactions in {}...", ktrans_dir.display());
         if let Ok(entries) = fs::read_dir(ktrans_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();

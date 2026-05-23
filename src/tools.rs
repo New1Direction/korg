@@ -17,6 +17,40 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
+#[cfg(unix)]
+extern "C" {
+    fn setsid() -> i32;
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+
+#[cfg(unix)]
+unsafe fn start_process_group(cmd: &mut tokio::process::Command) {
+    use std::os::unix::process::CommandExt;
+    cmd.pre_exec(|| {
+        unsafe {
+            setsid();
+        }
+        Ok(())
+    });
+}
+
+#[cfg(not(unix))]
+unsafe fn start_process_group(_cmd: &mut tokio::process::Command) {}
+
+#[cfg(unix)]
+fn kill_process_group(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id() {
+        unsafe {
+            kill(-(pid as i32), 9); // SIGKILL = 9
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(child: &mut tokio::process::Child) {
+    let _ = child.start_kill();
+}
+
 /// Maximum bytes we'll read from a file or command output for safety.
 const MAX_OUTPUT_BYTES: u64 = 512 * 1024; // 512 KiB
 
@@ -211,7 +245,7 @@ pub fn check_path_policy(path_str: &str) -> Result<(), String> {
         let abs_path = if normalized.is_absolute() {
             normalized.clone()
         } else {
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/Users/clubpenguin/Documents/Korg")).join(&normalized)
+            std::env::current_dir().unwrap_or_else(|_| crate::paths::project_root()).join(&normalized)
         };
         let abs_normalized = normalize_path(&abs_path);
 
@@ -221,7 +255,7 @@ pub fn check_path_policy(path_str: &str) -> Result<(), String> {
             let abs_allowed = if allowed_path.is_absolute() {
                 allowed_path.to_path_buf()
             } else {
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/Users/clubpenguin/Documents/Korg")).join(allowed_path)
+                std::env::current_dir().unwrap_or_else(|_| crate::paths::project_root()).join(allowed_path)
             };
             let abs_allowed_normalized = normalize_path(&abs_allowed);
             
@@ -260,7 +294,7 @@ pub async fn execute_file_read(req: FileReadRequestPayload) -> FileReadResultPay
     let path = Path::new(&req.path);
 
     // Very basic sandbox: only allow relative paths or under /tmp
-    if path.is_absolute() && !path.starts_with("/tmp") && !path.starts_with("/Users/clubpenguin/Documents/Korg") {
+    if path.is_absolute() && !path.starts_with("/tmp") && !path.starts_with(&crate::paths::project_root()) && !path.starts_with(&crate::paths::cache_dir()) {
         return FileReadResultPayload {
             path: req.path,
             content: String::new(),
@@ -337,47 +371,139 @@ pub async fn execute_shell(req: ShellExecRequestPayload) -> ShellExecResultPaylo
     cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
     cmd.env("HOME", std::env::var("HOME").unwrap_or_default());
 
+    // Configure process group
+    unsafe {
+        start_process_group(&mut cmd);
+    }
+
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return ShellExecResultPayload {
+                command: format!("{} {}", req.command, req.args.join(" ")),
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: String::new(),
+                duration_ms: 0,
+                error: Some(format!("Failed to spawn process: {}", e)),
+            };
+        }
+    };
+
     let timeout_ms = req.timeout_ms.unwrap_or(30_000);
     let timeout_duration = Duration::from_millis(timeout_ms);
 
-    let result = timeout(timeout_duration, cmd.output()).await;
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+
+    let stdout_limit = MAX_OUTPUT_BYTES as usize;
+    let stderr_limit = MAX_OUTPUT_BYTES as usize;
+
+    let mut stdout_buf = Vec::new();
+    let mut stderr_buf = Vec::new();
+
+    let mut stdout_exceeded = false;
+    let mut stderr_exceeded = false;
+
+    let mut stdout_done = false;
+    let mut stderr_done = false;
+
+    let mut stdout_read_buf = vec![0u8; 8192];
+    let mut stderr_read_buf = vec![0u8; 8192];
+
+    let mut timed_out = false;
+    let cancellation_token = crate::agent::get_cancellation_token().clone();
+
+    loop {
+        let elapsed = start.elapsed();
+        if elapsed >= timeout_duration {
+            timed_out = true;
+            break;
+        }
+        let time_left = timeout_duration - elapsed;
+
+        tokio::select! {
+            _ = tokio::time::sleep(time_left) => {
+                timed_out = true;
+                break;
+            }
+            _ = cancellation_token.cancelled() => {
+                break;
+            }
+            res = stdout.read(&mut stdout_read_buf), if !stdout_done => {
+                match res {
+                    Ok(0) => {
+                        stdout_done = true;
+                    }
+                    Ok(n) => {
+                        stdout_buf.extend_from_slice(&stdout_read_buf[..n]);
+                        if stdout_buf.len() > stdout_limit {
+                            stdout_exceeded = true;
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        break;
+                    }
+                }
+            }
+            res = stderr.read(&mut stderr_read_buf), if !stderr_done => {
+                match res {
+                    Ok(0) => {
+                        stderr_done = true;
+                    }
+                    Ok(n) => {
+                        stderr_buf.extend_from_slice(&stderr_read_buf[..n]);
+                        if stderr_buf.len() > stderr_limit {
+                            stderr_exceeded = true;
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        break;
+                    }
+                }
+            }
+        }
+        if stdout_done && stderr_done {
+            break;
+        }
+    }
+
+    if timed_out || stdout_exceeded || stderr_exceeded {
+        kill_process_group(&mut child);
+    }
+
+    let exit_code = match child.wait().await {
+        Ok(s) => s.code().unwrap_or(-1),
+        Err(_) => -1,
+    };
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
-    match result {
-        Ok(Ok(output)) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout_str = String::from_utf8_lossy(&stdout_buf).to_string();
+    let stderr_str = String::from_utf8_lossy(&stderr_buf).to_string();
 
-            // Truncate if too large
-            let (stdout, _) = truncate_output(stdout);
-            let (stderr, _) = truncate_output(stderr);
+    let error_msg = if timed_out {
+        Some(format!("command timed out after {} ms", timeout_ms))
+    } else if stdout_exceeded {
+        Some("command stdout exceeded output limit".to_string())
+    } else if stderr_exceeded {
+        Some("command stderr exceeded output limit".to_string())
+    } else {
+        None
+    };
 
-            ShellExecResultPayload {
-                command: format!("{} {}", req.command, req.args.join(" ")),
-                exit_code: output.status.code().unwrap_or(-1),
-                stdout,
-                stderr,
-                duration_ms,
-                error: None,
-            }
-        }
-        Ok(Err(e)) => ShellExecResultPayload {
-            command: format!("{} {}", req.command, req.args.join(" ")),
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: String::new(),
-            duration_ms,
-            error: Some(e.to_string()),
-        },
-        Err(_) => ShellExecResultPayload {
-            command: format!("{} {}", req.command, req.args.join(" ")),
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: String::new(),
-            duration_ms,
-            error: Some(format!("command timed out after {} ms", timeout_ms)),
-        },
+    ShellExecResultPayload {
+        command: format!("{} {}", req.command, req.args.join(" ")),
+        exit_code,
+        stdout: stdout_str,
+        stderr: stderr_str,
+        duration_ms,
+        error: error_msg,
     }
 }
 
@@ -393,32 +519,47 @@ fn truncate_output(mut s: String) -> (String, bool) {
 
 /// Dispatch a tool request to the appropriate executor and return the corresponding result message.
 /// This is the main entry point used by the worker harness.
-pub async fn dispatch_tool(msg: AcpMessage) -> Option<AcpMessage> {
+pub async fn dispatch_tool(msg: AcpMessage, agent_id: &str) -> Option<AcpMessage> {
     match msg {
         AcpMessage::FileReadRequest(payload) => {
+            let path = payload.path.clone();
             let result = execute_file_read(payload).await;
+            let output_str = format!("{:?}", result);
+            let _ = crate::provenance::log_tool_invocation(agent_id, "file_read", &path, &output_str);
             Some(AcpMessage::FileReadResult(result))
         }
         AcpMessage::ShellExecRequest(payload) => {
+            let cmd = format!("{} {}", payload.command, payload.args.join(" "));
             let result = execute_shell(payload).await;
+            let output_str = format!("exit: {}, stdout: {}, stderr: {}", result.exit_code, result.stdout, result.stderr);
+            let _ = crate::provenance::log_tool_invocation(agent_id, "shell_exec", &cmd, &output_str);
             Some(AcpMessage::ShellExecResult(result))
         }
         AcpMessage::PatchApplyRequest(payload) => {
+            let file_path = payload.file_path.clone();
             let result = execute_patch_apply(payload).await;
+            let output_str = format!("{:?}", result);
+            let _ = crate::provenance::log_tool_invocation(agent_id, "patch_apply", &file_path, &output_str);
             Some(AcpMessage::PatchApplyResult(result))
         }
         AcpMessage::TestRunRequest(payload) => {
+            let cmd = format!("{} {}", payload.command, payload.args.join(" "));
             let result = execute_test_run(payload).await;
+            let output_str = format!("{:?}", result);
+            let _ = crate::provenance::log_tool_invocation(agent_id, "test_run", &cmd, &output_str);
             Some(AcpMessage::TestRunResult(result))
         }
         AcpMessage::CodeEditProposal(payload) => {
-            // For this slice we just acknowledge the proposal.
-            // Real usage would store it for later review / Arena scoring.
+            let path = payload.file_path.clone();
+            let _ = crate::provenance::log_tool_invocation(agent_id, "code_edit_proposal", &path, "acknowledged");
             eprintln!("[ToolExecutor] Received CodeEditProposal for {}", payload.file_path);
             None // No direct result — the proposal is informational
         }
         AcpMessage::ScreenshotRequest(payload) => {
+            let path = payload.target_name.clone();
             let result = execute_screenshot(payload).await;
+            let output_str = format!("{:?}", result);
+            let _ = crate::provenance::log_tool_invocation(agent_id, "screenshot", &path, &output_str);
             Some(AcpMessage::ScreenshotResult(result))
         }
         _ => None,
@@ -458,65 +599,156 @@ pub async fn execute_test_run(req: TestRunRequestPayload) -> TestRunResultPayloa
     cmd.env("HOME", std::env::var("HOME").unwrap_or_default());
     cmd.env("RUST_BACKTRACE", "0");
 
+    // Configure process group
+    unsafe {
+        start_process_group(&mut cmd);
+    }
+
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return TestRunResultPayload {
+                command: format!("{} {}", req.command, req.args.join(" ")),
+                exit_code: -1,
+                duration_ms: 0,
+                tests_run: 0,
+                tests_passed: 0,
+                tests_failed: 0,
+                tests_ignored: 0,
+                coverage_percent: None,
+                failure_summaries: vec![],
+                stdout: String::new(),
+                stderr: String::new(),
+                error: Some(format!("Failed to spawn process: {}", e)),
+            };
+        }
+    };
+
     let timeout_ms = req.timeout_ms.unwrap_or(180_000);
     let timeout_duration = Duration::from_millis(timeout_ms);
 
-    let result = timeout(timeout_duration, cmd.output()).await;
-    let duration_ms = start.elapsed().as_millis() as u64;
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
 
-    match result {
-        Ok(Ok(output)) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout_limit = 4 * 1024 * 1024; // 4 MB limit
+    let stderr_limit = 4 * 1024 * 1024;
 
-            let (tests_run, tests_passed, tests_failed, tests_ignored, failure_summaries) =
-                parse_test_output(&stdout, &stderr);
+    let mut stdout_buf = Vec::new();
+    let mut stderr_buf = Vec::new();
 
-            let coverage_percent = detect_coverage(&stdout, &stderr);
+    let mut stdout_exceeded = false;
+    let mut stderr_exceeded = false;
 
-            TestRunResultPayload {
-                command: format!("{} {}", req.command, req.args.join(" ")),
-                exit_code: output.status.code().unwrap_or(-1),
-                duration_ms,
-                tests_run,
-                tests_passed,
-                tests_failed,
-                tests_ignored,
-                coverage_percent,
-                failure_summaries,
-                stdout: truncate_output_string(stdout, 64 * 1024),
-                stderr: truncate_output_string(stderr, 64 * 1024),
-                error: None,
+    let mut stdout_done = false;
+    let mut stderr_done = false;
+
+    let mut stdout_read_buf = vec![0u8; 8192];
+    let mut stderr_read_buf = vec![0u8; 8192];
+
+    let mut timed_out = false;
+    let cancellation_token = crate::agent::get_cancellation_token().clone();
+
+    loop {
+        let elapsed = start.elapsed();
+        if elapsed >= timeout_duration {
+            timed_out = true;
+            break;
+        }
+        let time_left = timeout_duration - elapsed;
+
+        tokio::select! {
+            _ = tokio::time::sleep(time_left) => {
+                timed_out = true;
+                break;
+            }
+            _ = cancellation_token.cancelled() => {
+                break;
+            }
+            res = stdout.read(&mut stdout_read_buf), if !stdout_done => {
+                match res {
+                    Ok(0) => {
+                        stdout_done = true;
+                    }
+                    Ok(n) => {
+                        stdout_buf.extend_from_slice(&stdout_read_buf[..n]);
+                        if stdout_buf.len() > stdout_limit {
+                            stdout_exceeded = true;
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        break;
+                    }
+                }
+            }
+            res = stderr.read(&mut stderr_read_buf), if !stderr_done => {
+                match res {
+                    Ok(0) => {
+                        stderr_done = true;
+                    }
+                    Ok(n) => {
+                        stderr_buf.extend_from_slice(&stderr_read_buf[..n]);
+                        if stderr_buf.len() > stderr_limit {
+                            stderr_exceeded = true;
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        break;
+                    }
+                }
             }
         }
-        Ok(Err(e)) => TestRunResultPayload {
-            command: format!("{} {}", req.command, req.args.join(" ")),
-            exit_code: -1,
-            duration_ms,
-            tests_run: 0,
-            tests_passed: 0,
-            tests_failed: 0,
-            tests_ignored: 0,
-            coverage_percent: None,
-            failure_summaries: vec![],
-            stdout: String::new(),
-            stderr: String::new(),
-            error: Some(e.to_string()),
-        },
-        Err(_) => TestRunResultPayload {
-            command: format!("{} {}", req.command, req.args.join(" ")),
-            exit_code: -1,
-            duration_ms,
-            tests_run: 0,
-            tests_passed: 0,
-            tests_failed: 0,
-            tests_ignored: 0,
-            coverage_percent: None,
-            failure_summaries: vec![],
-            stdout: String::new(),
-            stderr: String::new(),
-            error: Some(format!("test run timed out after {} ms", timeout_ms)),
-        },
+        if stdout_done && stderr_done {
+            break;
+        }
+    }
+
+    if timed_out || stdout_exceeded || stderr_exceeded {
+        kill_process_group(&mut child);
+    }
+
+    let exit_code = match child.wait().await {
+        Ok(s) => s.code().unwrap_or(-1),
+        Err(_) => -1,
+    };
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    let stdout_str = String::from_utf8_lossy(&stdout_buf).to_string();
+    let stderr_str = String::from_utf8_lossy(&stderr_buf).to_string();
+
+    let (tests_run, tests_passed, tests_failed, tests_ignored, failure_summaries) =
+        parse_test_output(&stdout_str, &stderr_str);
+
+    let coverage_percent = detect_coverage(&stdout_str, &stderr_str);
+
+    let error_msg = if timed_out {
+        Some(format!("test run timed out after {} ms", timeout_ms))
+    } else if stdout_exceeded {
+        Some("test run stdout exceeded limit".to_string())
+    } else if stderr_exceeded {
+        Some("test run stderr exceeded limit".to_string())
+    } else {
+        None
+    };
+
+    TestRunResultPayload {
+        command: format!("{} {}", req.command, req.args.join(" ")),
+        exit_code,
+        duration_ms,
+        tests_run,
+        tests_passed,
+        tests_failed,
+        tests_ignored,
+        coverage_percent,
+        failure_summaries,
+        stdout: truncate_output_string(stdout_str, 64 * 1024),
+        stderr: truncate_output_string(stderr_str, 64 * 1024),
+        error: error_msg,
     }
 }
 
@@ -615,7 +847,7 @@ pub async fn execute_patch_apply(req: PatchApplyRequestPayload) -> PatchApplyRes
     let target_path = Path::new(&req.file_path);
 
     // Basic sandbox: only relative paths or under current dir / /tmp
-    if target_path.is_absolute() && !target_path.starts_with("/tmp") && !target_path.starts_with("/Users/clubpenguin/Documents/Korg") {
+    if target_path.is_absolute() && !target_path.starts_with("/tmp") && !target_path.starts_with(&crate::paths::project_root()) && !target_path.starts_with(&crate::paths::cache_dir()) {
         return PatchApplyResultPayload {
             file_path: req.file_path,
             success: false,
@@ -1104,7 +1336,7 @@ fn apply_simple_unified_diff(original: &str, patch: &str) -> Result<String, Stri
 
 /// Helper function to apply a patch using the system's `git apply` command.
 async fn try_git_apply(file_path: &Path, patch: &str) -> Result<(), String> {
-    let temp_patch_path = format!("/tmp/korg-patch-{}.patch", uuid::Uuid::new_v4());
+    let temp_patch_path = crate::paths::temp_patch_path().display().to_string();
     if let Err(e) = tokio::fs::write(&temp_patch_path, patch).await {
         return Err(format!("Failed to write temporary patch file: {}", e));
     }
