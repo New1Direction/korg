@@ -11,6 +11,15 @@
 //!
 //! See https://github.com/New1Direction/korg for full documentation.
 
+// v0.x: rich API surface intentionally exceeds current CLI usage.
+// Dead-code and unused-import lints suppressed crate-wide until stable API surface
+// is defined in v1.0. Clippy enforces all other lints.
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_mut)]
+#![allow(unused_variables)]
+#![allow(unused_assignments)]
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
