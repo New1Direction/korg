@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use super::plan::{SafetyCheck, TransitionPlan};
 use super::types::{CapabilityNode, CapabilityState};
-use super::plan::{TransitionPlan, SafetyCheck};
+use std::collections::{HashMap, HashSet};
 
 pub struct CapabilityValidator;
 
@@ -18,7 +18,10 @@ impl CapabilityValidator {
 
         for node_id in nodes.keys() {
             if Self::dfs_detect_cycle(node_id, nodes, &mut visited, &mut rec_stack) {
-                return Err(format!("Circular capability dependency detected involving '{}'", node_id));
+                return Err(format!(
+                    "Circular capability dependency detected involving '{}'",
+                    node_id
+                ));
             }
         }
         Ok(())
@@ -36,7 +39,9 @@ impl CapabilityValidator {
 
             if let Some(node) = nodes.get(node_id) {
                 for dep in &node.dependencies {
-                    if !visited.contains(dep) && Self::dfs_detect_cycle(dep, nodes, visited, rec_stack) {
+                    if !visited.contains(dep)
+                        && Self::dfs_detect_cycle(dep, nodes, visited, rec_stack)
+                    {
                         return true;
                     } else if rec_stack.contains(dep) {
                         return true;
@@ -85,16 +90,18 @@ impl CapabilityValidator {
                     let active = active_states.get(dep).unwrap_or(&CapabilityState::Disabled);
                     if active == &CapabilityState::Disabled {
                         return Err(format!(
-                            "Dynamic validation failed: dependency '{}' is disabled", 
+                            "Dynamic validation failed: dependency '{}' is disabled",
                             dep
                         ));
                     }
                 }
                 SafetyCheck::CheckConflict(conflict) => {
-                    let active = active_states.get(conflict).unwrap_or(&CapabilityState::Disabled);
+                    let active = active_states
+                        .get(conflict)
+                        .unwrap_or(&CapabilityState::Disabled);
                     if active != &CapabilityState::Disabled {
                         return Err(format!(
-                            "Dynamic validation failed: active capability conflicts with '{}'", 
+                            "Dynamic validation failed: active capability conflicts with '{}'",
                             conflict
                         ));
                     }
@@ -103,7 +110,7 @@ impl CapabilityValidator {
                     let active = active_states.get(req).unwrap_or(&CapabilityState::Disabled);
                     if active == &CapabilityState::Disabled {
                         return Err(format!(
-                            "Dynamic validation failed: required capability '{}' is disabled", 
+                            "Dynamic validation failed: required capability '{}' is disabled",
                             req
                         ));
                     }
@@ -113,14 +120,19 @@ impl CapabilityValidator {
 
         // Validate plan steps constraints dynamically
         for step in &plan.steps {
-            let node = nodes.get(&step.target_id)
-                .ok_or_else(|| format!("Capability '{}' does not exist in registry", step.target_id))?;
+            let node = nodes.get(&step.target_id).ok_or_else(|| {
+                format!("Capability '{}' does not exist in registry", step.target_id)
+            })?;
 
             // If enabling this capability, make sure all its dependencies will be active
             if step.target_state != CapabilityState::Disabled {
                 for dep in &node.dependencies {
-                    let is_dep_being_enabled = plan.steps.iter().any(|s| s.target_id == *dep && s.target_state != CapabilityState::Disabled);
-                    let is_dep_currently_active = active_states.get(dep).unwrap_or(&CapabilityState::Disabled) != &CapabilityState::Disabled;
+                    let is_dep_being_enabled = plan.steps.iter().any(|s| {
+                        s.target_id == *dep && s.target_state != CapabilityState::Disabled
+                    });
+                    let is_dep_currently_active =
+                        active_states.get(dep).unwrap_or(&CapabilityState::Disabled)
+                            != &CapabilityState::Disabled;
                     if !is_dep_being_enabled && !is_dep_currently_active {
                         return Err(format!(
                             "Dynamic validation failed: active capability '{}' has disabled dependency '{}'",
@@ -131,8 +143,13 @@ impl CapabilityValidator {
 
                 // Check conflict constraints
                 for conflict in &node.conflicts {
-                    let is_conflict_being_disabled = plan.steps.iter().any(|s| s.target_id == *conflict && s.target_state == CapabilityState::Disabled);
-                    let is_conflict_currently_active = active_states.get(conflict).unwrap_or(&CapabilityState::Disabled) != &CapabilityState::Disabled;
+                    let is_conflict_being_disabled = plan.steps.iter().any(|s| {
+                        s.target_id == *conflict && s.target_state == CapabilityState::Disabled
+                    });
+                    let is_conflict_currently_active = active_states
+                        .get(conflict)
+                        .unwrap_or(&CapabilityState::Disabled)
+                        != &CapabilityState::Disabled;
                     if !is_conflict_being_disabled && is_conflict_currently_active {
                         return Err(format!(
                             "Dynamic validation failed: active capability '{}' conflicts with active '{}'",
@@ -144,8 +161,13 @@ impl CapabilityValidator {
                 // If disabling this capability, make sure no active or remaining active capability depends on it
                 for (other_id, other_node) in nodes {
                     if other_node.dependencies.contains(&step.target_id) {
-                        let is_other_active = active_states.get(other_id).unwrap_or(&CapabilityState::Disabled) != &CapabilityState::Disabled;
-                        let is_other_being_disabled = plan.steps.iter().any(|s| s.target_id == *other_id && s.target_state == CapabilityState::Disabled);
+                        let is_other_active = active_states
+                            .get(other_id)
+                            .unwrap_or(&CapabilityState::Disabled)
+                            != &CapabilityState::Disabled;
+                        let is_other_being_disabled = plan.steps.iter().any(|s| {
+                            s.target_id == *other_id && s.target_state == CapabilityState::Disabled
+                        });
                         if is_other_active && !is_other_being_disabled {
                             return Err(format!(
                                 "Dynamic validation failed: cannot disable '{}' because active '{}' depends on it",

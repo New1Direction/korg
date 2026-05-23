@@ -1,6 +1,6 @@
-use super::types::EffectNode;
-use super::plan::{TransitionPlan, MutationStep};
 use super::log::{CapabilityEvent, CapabilityJournal};
+use super::plan::{MutationStep, TransitionPlan};
+use super::types::EffectNode;
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -49,7 +49,10 @@ impl CapabilityExecutor {
                 }
 
                 // If all dependency steps are executed, we can trigger execution
-                let dependencies_met = node.depends_on.iter().all(|dep_id| executed.contains(dep_id));
+                let dependencies_met = node
+                    .depends_on
+                    .iter()
+                    .all(|dep_id| executed.contains(dep_id));
                 if dependencies_met {
                     journal.append(CapabilityEvent::EffectStarted {
                         plan_id,
@@ -95,7 +98,9 @@ impl CapabilityExecutor {
                                         timestamp: Utc::now(),
                                     });
 
-                                    eprintln!("[Executor] Micro-healing succeeded. Retrying execution...");
+                                    eprintln!(
+                                        "[Executor] Micro-healing succeeded. Retrying execution..."
+                                    );
                                     match Self::run_effect(&node.effect) {
                                         Ok(_) => {
                                             journal.append(CapabilityEvent::EffectCompleted {
@@ -111,7 +116,10 @@ impl CapabilityExecutor {
                                                 plan_id,
                                                 step_target: target_id.to_string(),
                                                 effect_id: node.id,
-                                                reason: format!("{} (Retry failed: {})", e, retry_err),
+                                                reason: format!(
+                                                    "{} (Retry failed: {})",
+                                                    e, retry_err
+                                                ),
                                                 timestamp: Utc::now(),
                                             });
                                             return Err(retry_err);
@@ -140,10 +148,14 @@ impl CapabilityExecutor {
         Ok(())
     }
 
-    fn attempt_micro_healing(effect: &super::types::CapabilityEffect, error: &str) -> Result<(), String> {
+    fn attempt_micro_healing(
+        effect: &super::types::CapabilityEffect,
+        error: &str,
+    ) -> Result<(), String> {
         // Milliseconds-fast self-correction patterns
         if error.contains("already in use") || error.contains("conflict") {
-            if let super::types::CapabilityEffect::InitializeSandbox { container_name, .. } = effect {
+            if let super::types::CapabilityEffect::InitializeSandbox { container_name, .. } = effect
+            {
                 eprintln!("[Micro-Heal] Container collision detected for '{}'. Initiating fast teardown...", container_name);
                 // Run immediate teardown to clear the collision
                 let _ = std::process::Command::new("docker")
@@ -155,7 +167,9 @@ impl CapabilityExecutor {
 
         if error.contains("lock file exists") || error.contains("stuck_lock") {
             eprintln!("[Micro-Heal] Stale lockfile detected. Automatically removing lock file...");
-            let lock_path = crate::paths::project_root().join(".korg").join("capability_journal.lock");
+            let lock_path = crate::paths::project_root()
+                .join(".korg")
+                .join("capability_journal.lock");
             let _ = std::fs::remove_file(lock_path);
             return Ok(());
         }
@@ -167,7 +181,10 @@ impl CapabilityExecutor {
         // Execute dynamic side effects (Mocked safely for sandbox integration tests)
         match effect {
             super::types::CapabilityEffect::InitializeSandbox { container_name, .. } => {
-                eprintln!("[Executor] Spawn isolated Docker sandbox container: {}", container_name);
+                eprintln!(
+                    "[Executor] Spawn isolated Docker sandbox container: {}",
+                    container_name
+                );
                 if container_name.contains("fail_first") {
                     thread_local! {
                         static RETRY_COUNT: std::cell::Cell<usize> = std::cell::Cell::new(0);

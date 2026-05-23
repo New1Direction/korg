@@ -67,11 +67,15 @@ pub async fn run_web_with_campaign(
     let (broadcaster_tx, _) = broadcast::channel::<TuiUpdate>(256);
 
     let runtime_coordinator_container = Arc::new(std::sync::Mutex::new(None));
-    let capability_resolver_container = Arc::new(tokio::sync::Mutex::new(crate::registry::CapabilityResolver::default_resolver()));
+    let capability_resolver_container = Arc::new(tokio::sync::Mutex::new(
+        crate::registry::CapabilityResolver::default_resolver(),
+    ));
 
     // Initialise the resolver's cognition mode from the caller-supplied mode argument.
     if let Some(m) = mode {
-        let _ = capability_resolver_container.try_lock().map(|mut r| r.set_cognition_mode(m));
+        let _ = capability_resolver_container
+            .try_lock()
+            .map(|mut r| r.set_cognition_mode(m));
     }
 
     // 2. Spawn the leader process campaign in the background
@@ -99,12 +103,18 @@ pub async fn run_web_with_campaign(
             if !config.security_vision.allow_raw_screenshots {
                 if let TuiUpdate::Ktrans(ref mut s) = update {
                     if let Ok(mut ktrans) = serde_json::from_str::<serde_json::Value>(s) {
-                        if let Some(attachments) = ktrans.get_mut("vision_attachments").and_then(|a| a.as_array_mut()) {
+                        if let Some(attachments) = ktrans
+                            .get_mut("vision_attachments")
+                            .and_then(|a| a.as_array_mut())
+                        {
                             for att in attachments {
-                                let verdict = att.get("verdict").and_then(|v| v.as_str()).unwrap_or("");
+                                let verdict =
+                                    att.get("verdict").and_then(|v| v.as_str()).unwrap_or("");
                                 if verdict == "REDACTED" || verdict == "BLOCKED" {
                                     if let Some(data) = att.get_mut("data_base64") {
-                                        *data = serde_json::Value::String(crate::vision_policy::BLACKOUT_PNG_BASE64.to_string());
+                                        *data = serde_json::Value::String(
+                                            crate::vision_policy::BLACKOUT_PNG_BASE64.to_string(),
+                                        );
                                     }
                                 }
                             }
@@ -141,7 +151,10 @@ pub async fn run_web_with_campaign(
         .route("/api/override", post(override_handler))
         .route("/api/mode", post(mode_handler))
         .route("/api/capabilities", get(capabilities_handler))
-        .route("/api/capabilities/toggle", post(capabilities_toggle_handler))
+        .route(
+            "/api/capabilities/toggle",
+            post(capabilities_toggle_handler),
+        )
         .route("/api/diff", get(diff_handler))
         .route("/api/input", post(input_handler))
         .route("/api/semantic_search", post(semantic_search_handler))
@@ -149,9 +162,11 @@ pub async fn run_web_with_campaign(
         .route("/api/metrics", get(metrics_handler))
         .route("/api/workspaces", get(workspaces_handler))
         .route("/api/campaign/abort", post(campaign_abort_handler))
-        .route("/api/projections/campaign", get(campaign_projection_handler))
+        .route(
+            "/api/projections/campaign",
+            get(campaign_projection_handler),
+        )
         .with_state(app_state);
-
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     println!("\n\x1b[1m[korg] Axum server listening on http://localhost:8080\x1b[0m");
@@ -175,7 +190,6 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
 
     let (broadcaster_tx, _) = broadcast::channel::<TuiUpdate>(256);
 
-
     // Authoritatively extract runtime coordinator and capability resolver BEFORE moving leader
     let runtime_coordinator = leader.runtime_coordinator.clone();
     let capability_resolver = leader.capability_resolver.clone();
@@ -194,12 +208,18 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
             if !config.security_vision.allow_raw_screenshots {
                 if let TuiUpdate::Ktrans(ref mut s) = update {
                     if let Ok(mut ktrans) = serde_json::from_str::<serde_json::Value>(s) {
-                        if let Some(attachments) = ktrans.get_mut("vision_attachments").and_then(|a| a.as_array_mut()) {
+                        if let Some(attachments) = ktrans
+                            .get_mut("vision_attachments")
+                            .and_then(|a| a.as_array_mut())
+                        {
                             for att in attachments {
-                                let verdict = att.get("verdict").and_then(|v| v.as_str()).unwrap_or("");
+                                let verdict =
+                                    att.get("verdict").and_then(|v| v.as_str()).unwrap_or("");
                                 if verdict == "REDACTED" || verdict == "BLOCKED" {
                                     if let Some(data) = att.get_mut("data_base64") {
-                                        *data = serde_json::Value::String(crate::vision_policy::BLACKOUT_PNG_BASE64.to_string());
+                                        *data = serde_json::Value::String(
+                                            crate::vision_policy::BLACKOUT_PNG_BASE64.to_string(),
+                                        );
                                     }
                                 }
                             }
@@ -236,7 +256,10 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
         .route("/api/override", post(override_handler))
         .route("/api/mode", post(mode_handler))
         .route("/api/capabilities", get(capabilities_handler))
-        .route("/api/capabilities/toggle", post(capabilities_toggle_handler))
+        .route(
+            "/api/capabilities/toggle",
+            post(capabilities_toggle_handler),
+        )
         .route("/api/diff", get(diff_handler))
         .route("/api/input", post(input_handler))
         .route("/api/semantic_search", post(semantic_search_handler))
@@ -244,7 +267,10 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
         .route("/api/metrics", get(metrics_handler))
         .route("/api/workspaces", get(workspaces_handler))
         .route("/api/campaign/abort", post(campaign_abort_handler))
-        .route("/api/projections/campaign", get(campaign_projection_handler))
+        .route(
+            "/api/projections/campaign",
+            get(campaign_projection_handler),
+        )
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
@@ -265,17 +291,11 @@ async fn index_handler() -> impl IntoResponse {
 }
 
 async fn wasm_js_handler() -> impl IntoResponse {
-    (
-        [("content-type", "application/javascript")],
-        "",
-    )
+    ([("content-type", "application/javascript")], "")
 }
 
 async fn wasm_bytes_handler() -> impl IntoResponse {
-    (
-        [("content-type", "application/wasm")],
-        &[] as &[u8],
-    )
+    ([("content-type", "application/wasm")], &[] as &[u8])
 }
 
 /// Serves the premium monochrome landing page
@@ -300,9 +320,7 @@ async fn sse_handler(
 }
 
 /// GET `/api/state`
-async fn state_handler(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+async fn state_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let mode = {
         let resolver = state.capability_resolver.lock().await;
         format!("{:?}", resolver.cognition_mode())
@@ -384,7 +402,7 @@ async fn diff_handler() -> impl IntoResponse {
         .args(&["branch", "--list", "korg-branch-*"])
         .output()
         .await;
-    
+
     let mut diffs = vec![];
     if let Ok(out) = output {
         let branches_str = String::from_utf8_lossy(&out.stdout);
@@ -407,7 +425,7 @@ async fn diff_handler() -> impl IntoResponse {
             }
         }
     }
-    
+
     let cwd_diff = tokio::process::Command::new("git")
         .args(&["diff", "HEAD"])
         .output()
@@ -471,7 +489,8 @@ async fn mode_handler(
         (
             axum::http::StatusCode::OK,
             Json(serde_json::json!({ "mode": canonical_mode_str, "status": "applied" })),
-        ).into_response()
+        )
+            .into_response()
     } else {
         drop(resolver);
         let errors = response.errors.join(", ");
@@ -479,14 +498,13 @@ async fn mode_handler(
         (
             axum::http::StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": errors, "plan_id": response.plan_id })),
-        ).into_response()
+        )
+            .into_response()
     }
 }
 
 /// GET `/api/capabilities`
-async fn capabilities_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn capabilities_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let resolver = state.capability_resolver.lock().await;
     let nodes = resolver.nodes.clone();
     let active_states = resolver.active_states.clone();
@@ -500,9 +518,7 @@ async fn capabilities_handler(
 }
 
 /// GET `/api/projections/campaign`
-async fn campaign_projection_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn campaign_projection_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let resolver = state.capability_resolver.lock().await;
     let campaign_state = resolver.get_campaign_state();
     Json(campaign_state)
@@ -545,7 +561,8 @@ async fn semantic_search_handler(
         return (
             axum::http::StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Index file not found. Please run indexer." })),
-        ).into_response();
+        )
+            .into_response();
     }
 
     let index = match crate::code_indexer::load_index(index_path) {
@@ -554,17 +571,20 @@ async fn semantic_search_handler(
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": format!("Failed to load index: {}", e) })),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
-    let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> = match crate::embeddings::CandleEmbeddingModel::load() {
-        Ok(model) => Box::new(model),
-        Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
-    };
+    let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> =
+        match crate::embeddings::CandleEmbeddingModel::load() {
+            Ok(model) => Box::new(model),
+            Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
+        };
 
     let top_n = payload.top_n.unwrap_or(5);
-    let matches = crate::code_indexer::query_codebase(&index, &payload.query, &*embedding_model, top_n);
+    let matches =
+        crate::code_indexer::query_codebase(&index, &payload.query, &*embedding_model, top_n);
 
     let results: Vec<SemanticSearchResult> = matches
         .into_iter()
@@ -586,9 +606,7 @@ async fn semantic_search_handler(
 ///
 /// Returns the last 100 capability kernel events as JSONL (one event per line).
 /// Suitable for streaming to log shippers, dashboards, or debugging sessions.
-async fn journal_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn journal_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let resolver = state.capability_resolver.lock().await;
     let jsonl = resolver.journal.to_json_lines(100);
     let total = resolver.journal.len();
@@ -608,9 +626,7 @@ async fn journal_handler(
 ///
 /// Returns a point-in-time snapshot of all atomic runtime counters.
 /// Lock-free; safe to call at any frequency.
-async fn metrics_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let snap = crate::metrics::snapshot();
 
     // Extract active processes and retry budget if coordinator is available
@@ -627,8 +643,14 @@ async fn metrics_handler(
 
     let mut json_val = serde_json::to_value(snap).unwrap_or(serde_json::json!({}));
     if let Some(obj) = json_val.as_object_mut() {
-        obj.insert("active_processes".to_string(), serde_json::json!(active_processes));
-        obj.insert("remaining_retry_budget".to_string(), serde_json::json!(remaining_retry_budget));
+        obj.insert(
+            "active_processes".to_string(),
+            serde_json::json!(active_processes),
+        );
+        obj.insert(
+            "remaining_retry_budget".to_string(),
+            serde_json::json!(remaining_retry_budget),
+        );
     }
 
     Json(json_val)
@@ -638,9 +660,7 @@ async fn metrics_handler(
 ///
 /// Returns the current workspace manager snapshot — all known workspaces
 /// with their state, persona, routing_id, and path.
-async fn workspaces_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn workspaces_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let metrics = crate::metrics::snapshot();
 
     // Check if coordinator is present and get workspace manager snapshot
@@ -651,7 +671,8 @@ async fn workspaces_handler(
 
     if let Some(coord) = coordinator_opt {
         let wm = coord.workspace_manager.lock().await;
-        let list: Vec<serde_json::Value> = wm.snapshot_all()
+        let list: Vec<serde_json::Value> = wm
+            .snapshot_all()
             .into_iter()
             .map(|ws| serde_json::to_value(ws).unwrap_or(serde_json::Value::Null))
             .collect();
@@ -684,9 +705,7 @@ async fn workspaces_handler(
 /// POST `/api/campaign/abort`
 ///
 /// Forcibly aborts the currently running campaign by calling `abort()` on the coordinator.
-async fn campaign_abort_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn campaign_abort_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let coordinator_opt = {
         let guard = state.runtime_coordinator.lock().unwrap();
         guard.clone()
@@ -705,14 +724,16 @@ async fn campaign_abort_handler(
                 "status": "aborted",
                 "session_id": coordinator.session_id.to_string(),
             })),
-        ).into_response()
+        )
+            .into_response()
     } else {
         (
             axum::http::StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": "No active campaign session to abort.",
             })),
-        ).into_response()
+        )
+            .into_response()
     }
 }
 
@@ -2783,5 +2804,3 @@ async fn test_adversarial_security_leaks() {
 </body>
 </html>
 "##;
-
-

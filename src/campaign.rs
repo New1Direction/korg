@@ -46,26 +46,26 @@ impl CampaignPhase {
     pub fn next(&self) -> Option<CampaignPhase> {
         match self {
             CampaignPhase::Initializing => Some(CampaignPhase::Planning),
-            CampaignPhase::Planning     => Some(CampaignPhase::Contracting),
-            CampaignPhase::Contracting  => Some(CampaignPhase::Dispatching),
-            CampaignPhase::Dispatching  => Some(CampaignPhase::Evaluating),
-            CampaignPhase::Evaluating   => Some(CampaignPhase::Committing),
-            CampaignPhase::Committing   => Some(CampaignPhase::Complete),
-            CampaignPhase::Complete     => None,
-            CampaignPhase::Aborted      => None,
+            CampaignPhase::Planning => Some(CampaignPhase::Contracting),
+            CampaignPhase::Contracting => Some(CampaignPhase::Dispatching),
+            CampaignPhase::Dispatching => Some(CampaignPhase::Evaluating),
+            CampaignPhase::Evaluating => Some(CampaignPhase::Committing),
+            CampaignPhase::Committing => Some(CampaignPhase::Complete),
+            CampaignPhase::Complete => None,
+            CampaignPhase::Aborted => None,
         }
     }
 
     pub fn as_str(&self) -> &'static str {
         match self {
             CampaignPhase::Initializing => "initializing",
-            CampaignPhase::Planning     => "planning",
-            CampaignPhase::Contracting  => "contracting",
-            CampaignPhase::Dispatching  => "dispatching",
-            CampaignPhase::Evaluating   => "evaluating",
-            CampaignPhase::Committing   => "committing",
-            CampaignPhase::Complete     => "complete",
-            CampaignPhase::Aborted      => "aborted",
+            CampaignPhase::Planning => "planning",
+            CampaignPhase::Contracting => "contracting",
+            CampaignPhase::Dispatching => "dispatching",
+            CampaignPhase::Evaluating => "evaluating",
+            CampaignPhase::Committing => "committing",
+            CampaignPhase::Complete => "complete",
+            CampaignPhase::Aborted => "aborted",
         }
     }
 }
@@ -256,7 +256,8 @@ pub async fn persist_final_summary_ktrans(
         parent_tips,
         vec![],
         false,
-    ).await?;
+    )
+    .await?;
 
     crate::metrics::record_campaign_completed();
     Ok(tx_hash)

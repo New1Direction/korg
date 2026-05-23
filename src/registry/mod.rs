@@ -1,20 +1,28 @@
-pub mod types;
-pub mod plan;
-pub mod planner;
-pub mod validator;
+pub mod checkpoint;
 pub mod executor;
 pub mod log;
+pub mod plan;
+pub mod planner;
 pub mod projection;
-pub mod checkpoint;
+pub mod types;
+pub mod validator;
 
-pub use types::{Category, CapabilityState, CapabilityNode, CapabilityEffect, EffectNode, ProjectionMap, TransitionRequest, TransitionResponse, CapabilityLease, CognitionMode};
-pub use plan::{TransitionState, MutationStep, SafetyCheck, TransitionPlan, TransitionExecution};
-pub use log::{CapabilityEvent, CapabilitySnapshot, CapabilityJournal, JournalEvent, HlcTimestamp, IS_PREVIEW_MODE};
-pub use checkpoint::{ExecutionCheckpoint, CheckpointMetadata};
-pub use planner::CapabilityPlanner;
-pub use validator::CapabilityValidator;
+pub use checkpoint::{CheckpointMetadata, ExecutionCheckpoint};
 pub use executor::CapabilityExecutor;
-pub use projection::{Projection, ProjectionEngine, CampaignProjection, CampaignState, CampaignStatus};
+pub use log::{
+    CapabilityEvent, CapabilityJournal, CapabilitySnapshot, HlcTimestamp, JournalEvent,
+    IS_PREVIEW_MODE,
+};
+pub use plan::{MutationStep, SafetyCheck, TransitionExecution, TransitionPlan, TransitionState};
+pub use planner::CapabilityPlanner;
+pub use projection::{
+    CampaignProjection, CampaignState, CampaignStatus, Projection, ProjectionEngine,
+};
+pub use types::{
+    CapabilityEffect, CapabilityLease, CapabilityNode, CapabilityState, Category, CognitionMode,
+    EffectNode, ProjectionMap, TransitionRequest, TransitionResponse,
+};
+pub use validator::CapabilityValidator;
 
 use std::collections::HashMap;
 
@@ -61,7 +69,6 @@ impl CapabilityResolver {
             .get_projection_state("campaign_projection")
             .unwrap_or(serde_json::Value::Null)
     }
-
 
     /// Load default registered capabilities into the Resolver facade.
     /// All system affordances that can be toggled, gated, or observed must
@@ -138,7 +145,8 @@ impl CapabilityResolver {
             CapabilityNode {
                 id: "vision_policy".to_string(),
                 name: "Vision Zero-Trust Policy".to_string(),
-                description: "Enable zero-trust credential scanning on all vision attachments".to_string(),
+                description: "Enable zero-trust credential scanning on all vision attachments"
+                    .to_string(),
                 category: Category::Security,
                 default_state: CapabilityState::Enabled,
                 dependencies: vec![],
@@ -159,7 +167,8 @@ impl CapabilityResolver {
             CapabilityNode {
                 id: "semantic_embeddings".to_string(),
                 name: "Semantic Embeddings".to_string(),
-                description: "Enable real Candle-based semantic embedding for similarity scoring".to_string(),
+                description: "Enable real Candle-based semantic embedding for similarity scoring"
+                    .to_string(),
                 category: Category::Intelligence,
                 default_state: CapabilityState::Enabled,
                 dependencies: vec![],
@@ -201,7 +210,8 @@ impl CapabilityResolver {
             CapabilityNode {
                 id: "synthesize_mode".to_string(),
                 name: "Yvaeh Synthesize".to_string(),
-                description: "Enable multi-source knowledge synthesis into authoritative articles".to_string(),
+                description: "Enable multi-source knowledge synthesis into authoritative articles"
+                    .to_string(),
                 category: Category::Intelligence,
                 default_state: CapabilityState::Disabled,
                 dependencies: vec!["reconcile_mode".to_string()],
@@ -222,7 +232,8 @@ impl CapabilityResolver {
             CapabilityNode {
                 id: "lsp_server".to_string(),
                 name: "LSP Diagnostics Server".to_string(),
-                description: "Enable Language Server Protocol secret scanning diagnostics".to_string(),
+                description: "Enable Language Server Protocol secret scanning diagnostics"
+                    .to_string(),
                 category: Category::Observability,
                 default_state: CapabilityState::Disabled,
                 dependencies: vec![],
@@ -243,7 +254,8 @@ impl CapabilityResolver {
             CapabilityNode {
                 id: "web_dashboard".to_string(),
                 name: "Web Cockpit Dashboard".to_string(),
-                description: "Enable the real-time glassmorphism web dashboard on :8080".to_string(),
+                description: "Enable the real-time glassmorphism web dashboard on :8080"
+                    .to_string(),
                 category: Category::Observability,
                 default_state: CapabilityState::Disabled,
                 dependencies: vec![],
@@ -264,7 +276,8 @@ impl CapabilityResolver {
             CapabilityNode {
                 id: "code_indexer".to_string(),
                 name: "Tree-Sitter Code Indexer".to_string(),
-                description: "Build and maintain a semantic code index for context retrieval".to_string(),
+                description: "Build and maintain a semantic code index for context retrieval"
+                    .to_string(),
                 category: Category::Intelligence,
                 default_state: CapabilityState::Disabled,
                 dependencies: vec![],
@@ -306,7 +319,8 @@ impl CapabilityResolver {
             CapabilityNode {
                 id: "speculative_execution".to_string(),
                 name: "Speculative Pre-Warm".to_string(),
-                description: "Pre-warm worker shell shims speculatively before DAG dispatch".to_string(),
+                description: "Pre-warm worker shell shims speculatively before DAG dispatch"
+                    .to_string(),
                 category: Category::Runtime,
                 default_state: CapabilityState::Enabled,
                 dependencies: vec![],
@@ -328,10 +342,17 @@ impl CapabilityResolver {
     /// Acquire a capability lease.
     /// Returns Ok(()) if the lease is successfully acquired or renewed.
     /// Returns Err if the capability is currently leased to another owner.
-    pub fn acquire_lease(&mut self, id: &str, owner_id: uuid::Uuid, duration_secs: u64) -> Result<(), String> {
+    pub fn acquire_lease(
+        &mut self,
+        id: &str,
+        owner_id: uuid::Uuid,
+        duration_secs: u64,
+    ) -> Result<(), String> {
         let now = chrono::Utc::now();
         if let Some(existing) = self.leases.get(id) {
-            let is_expired = existing.acquired_at + chrono::Duration::seconds(existing.duration_secs as i64) < now;
+            let is_expired = existing.acquired_at
+                + chrono::Duration::seconds(existing.duration_secs as i64)
+                < now;
             if !is_expired && existing.owner_id != owner_id {
                 return Err(format!(
                     "Capability '{}' is currently leased to owner '{}' until '{}'",
@@ -384,7 +405,9 @@ impl CapabilityResolver {
     pub fn is_leased_to_other(&self, id: &str, owner_id: Option<uuid::Uuid>) -> bool {
         let now = chrono::Utc::now();
         if let Some(existing) = self.leases.get(id) {
-            let is_expired = existing.acquired_at + chrono::Duration::seconds(existing.duration_secs as i64) < now;
+            let is_expired = existing.acquired_at
+                + chrono::Duration::seconds(existing.duration_secs as i64)
+                < now;
             if !is_expired {
                 if let Some(owner) = owner_id {
                     return existing.owner_id != owner;
@@ -414,7 +437,10 @@ impl CapabilityResolver {
 
         // Enforce active lease lock
         if self.is_leased_to_other(&capability_id, request.correlation_id) {
-            let err = format!("Capability '{}' is currently leased to another transaction", capability_id);
+            let err = format!(
+                "Capability '{}' is currently leased to another transaction",
+                capability_id
+            );
             tracing::warn!(error = %err, "capability_transition_blocked_by_lease");
             return TransitionResponse {
                 plan_id,
@@ -426,7 +452,12 @@ impl CapabilityResolver {
         tracing::info!(stage = "planning", "capability_transition");
 
         // 1. Build immutable intent plan
-        let mut plan = match CapabilityPlanner::plan_transition(&self.nodes, &self.active_states, &request.id, request.target_state) {
+        let mut plan = match CapabilityPlanner::plan_transition(
+            &self.nodes,
+            &self.active_states,
+            &request.id,
+            request.target_state,
+        ) {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!(stage = "planning", error = %e, "capability_transition_failed");
@@ -454,7 +485,11 @@ impl CapabilityResolver {
         self.emit_state_change(&execution);
 
         // 3. Validate safety and DAG constraints (dynamic constraints checks)
-        if let Err(e) = CapabilityValidator::validate_transition(&execution.plan, &self.nodes, &self.active_states) {
+        if let Err(e) = CapabilityValidator::validate_transition(
+            &execution.plan,
+            &self.nodes,
+            &self.active_states,
+        ) {
             execution.state = TransitionState::Failed;
             self.emit_state_change(&execution);
             tracing::warn!(stage = "validation", error = %e, "capability_transition_rejected");
@@ -479,7 +514,11 @@ impl CapabilityResolver {
         self.emit_state_change(&execution);
 
         let start_idx = self.journal.events.len();
-        let exec_res = CapabilityExecutor::execute_steps(execution.plan.plan_id, &execution.plan.steps, &mut self.journal);
+        let exec_res = CapabilityExecutor::execute_steps(
+            execution.plan.plan_id,
+            &execution.plan.steps,
+            &mut self.journal,
+        );
         for event in &self.journal.events[start_idx..] {
             let _ = self.projection_engine.apply(event);
         }
@@ -487,7 +526,11 @@ impl CapabilityResolver {
         if let Err(e) = exec_res {
             // Trigger failure rollbacks
             let rollback_start_idx = self.journal.events.len();
-            CapabilityExecutor::execute_rollbacks(execution.plan.plan_id, &execution.plan.rollback_steps, &mut self.journal);
+            CapabilityExecutor::execute_rollbacks(
+                execution.plan.plan_id,
+                &execution.plan.rollback_steps,
+                &mut self.journal,
+            );
             for event in &self.journal.events[rollback_start_idx..] {
                 let _ = self.projection_engine.apply(event);
             }
@@ -509,7 +552,8 @@ impl CapabilityResolver {
 
         // Apply changes to live active states map
         for step in &execution.plan.steps {
-            self.active_states.insert(step.target_id.clone(), step.target_state.clone());
+            self.active_states
+                .insert(step.target_id.clone(), step.target_state.clone());
             let event = match &step.target_state {
                 CapabilityState::Enabled => CapabilityEvent::CapabilityEnabled {
                     plan_id: execution.plan.plan_id,
@@ -538,7 +582,8 @@ impl CapabilityResolver {
         crate::metrics::record_transition_applied(&capability_id);
 
         // Save snapshot to history journal periodically
-        self.journal.save_snapshot(execution.plan.plan_id, self.active_states.clone());
+        self.journal
+            .save_snapshot(execution.plan.plan_id, self.active_states.clone());
 
         TransitionResponse {
             plan_id: final_plan_id,
@@ -548,13 +593,25 @@ impl CapabilityResolver {
     }
 
     /// Transactional Transition Request: Plan -> Validate -> Commit -> Apply -> Journal
-    pub fn transition(&mut self, target_id: &str, target_state: CapabilityState) -> Result<(), String> {
+    pub fn transition(
+        &mut self,
+        target_id: &str,
+        target_state: CapabilityState,
+    ) -> Result<(), String> {
         if self.is_leased_to_other(target_id, None) {
-            return Err(format!("Capability '{}' is currently leased to another transaction", target_id));
+            return Err(format!(
+                "Capability '{}' is currently leased to another transaction",
+                target_id
+            ));
         }
 
         // 1. Build immutable intent plan
-        let plan = CapabilityPlanner::plan_transition(&self.nodes, &self.active_states, target_id, target_state)?;
+        let plan = CapabilityPlanner::plan_transition(
+            &self.nodes,
+            &self.active_states,
+            target_id,
+            target_state,
+        )?;
 
         // 2. Initialize mutable execution instance
         let mut execution = TransitionExecution {
@@ -564,7 +621,11 @@ impl CapabilityResolver {
         self.emit_state_change(&execution);
 
         // 3. Validate safety and DAG constraints (dynamic constraints checks)
-        CapabilityValidator::validate_transition(&execution.plan, &self.nodes, &self.active_states)?;
+        CapabilityValidator::validate_transition(
+            &execution.plan,
+            &self.nodes,
+            &self.active_states,
+        )?;
         execution.state = TransitionState::Validated;
         self.emit_state_change(&execution);
 
@@ -577,7 +638,11 @@ impl CapabilityResolver {
         self.emit_state_change(&execution);
 
         let start_idx = self.journal.events.len();
-        let exec_res = CapabilityExecutor::execute_steps(execution.plan.plan_id, &execution.plan.steps, &mut self.journal);
+        let exec_res = CapabilityExecutor::execute_steps(
+            execution.plan.plan_id,
+            &execution.plan.steps,
+            &mut self.journal,
+        );
         for event in &self.journal.events[start_idx..] {
             let _ = self.projection_engine.apply(event);
         }
@@ -585,7 +650,11 @@ impl CapabilityResolver {
         if let Err(e) = exec_res {
             // Trigger failure rollbacks
             let rollback_start_idx = self.journal.events.len();
-            CapabilityExecutor::execute_rollbacks(execution.plan.plan_id, &execution.plan.rollback_steps, &mut self.journal);
+            CapabilityExecutor::execute_rollbacks(
+                execution.plan.plan_id,
+                &execution.plan.rollback_steps,
+                &mut self.journal,
+            );
             for event in &self.journal.events[rollback_start_idx..] {
                 let _ = self.projection_engine.apply(event);
             }
@@ -601,7 +670,8 @@ impl CapabilityResolver {
 
         // Apply changes to live active states map
         for step in &execution.plan.steps {
-            self.active_states.insert(step.target_id.clone(), step.target_state.clone());
+            self.active_states
+                .insert(step.target_id.clone(), step.target_state.clone());
             let event = match &step.target_state {
                 CapabilityState::Enabled => CapabilityEvent::CapabilityEnabled {
                     plan_id: execution.plan.plan_id,
@@ -628,7 +698,8 @@ impl CapabilityResolver {
         self.emit_state_change(&execution);
 
         // Save snapshot to history journal periodically
-        self.journal.save_snapshot(execution.plan.plan_id, self.active_states.clone());
+        self.journal
+            .save_snapshot(execution.plan.plan_id, self.active_states.clone());
 
         Ok(())
     }
@@ -651,7 +722,6 @@ impl CapabilityResolver {
         );
     }
 
-
     fn emit_state_change(&mut self, exec: &TransitionExecution) {
         self.append_and_project(CapabilityEvent::TransitionStateChanged {
             plan_id: exec.plan.plan_id,
@@ -668,7 +738,8 @@ impl CapabilityResolver {
         workspace_snapshot: String,
         evaluated_entropy: f64,
     ) -> Result<ExecutionCheckpoint, String> {
-        let projection_snapshot = self.projection_engine
+        let projection_snapshot = self
+            .projection_engine
             .get_projection_state("campaign_projection")
             .unwrap_or(serde_json::Value::Null);
 
@@ -715,9 +786,9 @@ impl CapabilityResolver {
 
 #[cfg(test)]
 mod tests {
+    use super::log::{EventMetadata, EventTier};
     use super::*;
     use uuid::Uuid;
-    use super::log::{EventTier, EventMetadata};
 
     fn mock_metadata(campaign_id: Uuid, clock_val: u64, event: &CapabilityEvent) -> EventMetadata {
         let event_id = Uuid::new_v4();
@@ -783,7 +854,9 @@ mod tests {
 
         let result = CapabilityValidator::compile_and_verify(&nodes);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Circular capability dependency detected"));
+        assert!(result
+            .unwrap_err()
+            .contains("Circular capability dependency detected"));
     }
 
     #[test]
@@ -812,13 +885,15 @@ mod tests {
 
         let result = CapabilityValidator::compile_and_verify(&nodes);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Dangling dependency reference"));
+        assert!(result
+            .unwrap_err()
+            .contains("Dangling dependency reference"));
     }
 
     #[test]
     fn test_dynamic_transition_safety_dependencies() {
         let mut resolver = CapabilityResolver::default_resolver();
-        
+
         // Let's add a custom capability node "child" that depends on "docker_sandbox"
         resolver.nodes.insert(
             "child".to_string(),
@@ -861,7 +936,8 @@ mod tests {
 
     #[test]
     fn test_transactional_rollbacks_and_effects_logs() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_journal_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_journal_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let journal = CapabilityJournal::new(
@@ -872,7 +948,7 @@ mod tests {
         );
 
         let mut resolver = CapabilityResolver::new(HashMap::new(), journal);
-        
+
         // Let's register a capability that will fail to execute because of a dynamic error in execution
         // We'll simulate execution step failure by making the planner generate an effect node that has invalid requirements
         resolver.nodes.insert(
@@ -901,25 +977,25 @@ mod tests {
             target_id: "bad_node".to_string(),
             previous_state: CapabilityState::Disabled,
             target_state: CapabilityState::Enabled,
-            effect_nodes: vec![
-                EffectNode {
-                    id: 1,
-                    effect: CapabilityEffect::ExecuteTool {
-                        tool: "throw_executor_error".to_string(), // will fail run_effect in tests by simulating a failure
-                    },
-                    depends_on: vec![],
-                }
-            ],
+            effect_nodes: vec![EffectNode {
+                id: 1,
+                effect: CapabilityEffect::ExecuteTool {
+                    tool: "throw_executor_error".to_string(), // will fail run_effect in tests by simulating a failure
+                },
+                depends_on: vec![],
+            }],
         });
 
         // Let's write an executor test confirming that running this causes an Err and logs correctly
-        let res_exec = CapabilityExecutor::execute_steps(plan.plan_id, &plan.steps, &mut resolver.journal);
+        let res_exec =
+            CapabilityExecutor::execute_steps(plan.plan_id, &plan.steps, &mut resolver.journal);
         assert!(res_exec.is_ok()); // Since run_effect mock doesn't fail on throw_executor_error currently, let's test general flow
     }
 
     #[test]
     fn test_capability_leases_and_locks() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_lease_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_lease_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let journal = CapabilityJournal::new(
@@ -990,7 +1066,9 @@ mod tests {
         // 6. Direct transition without lease should fail
         let res = resolver.transition("lease_node", CapabilityState::Disabled);
         assert!(res.is_err());
-        assert!(res.unwrap_err().contains("currently leased to another transaction"));
+        assert!(res
+            .unwrap_err()
+            .contains("currently leased to another transaction"));
 
         // 7. Release lease with owner B should fail
         let res = resolver.release_lease("lease_node", owner_b);
@@ -1007,7 +1085,8 @@ mod tests {
 
     #[test]
     fn test_unified_event_model_monotonicity_and_hlc_clocks() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_clock_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_clock_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let journal_path = temp_dir.join("journal.json");
@@ -1047,7 +1126,7 @@ mod tests {
         // 2. Verify clock synchronization
         let sync_time = journal.clock.physical + 100;
         let ext = HlcTimestamp::new(sync_time, 5, 2);
-        journal.synchronize_clock(ext); 
+        journal.synchronize_clock(ext);
         assert_eq!(journal.clock.physical, sync_time);
         assert_eq!(journal.clock.logical, 6);
 
@@ -1062,17 +1141,16 @@ mod tests {
         assert!(journal.clock.physical >= sync_time);
 
         // 3. Verify disk load/reload clock reconstruction
-        let mut reloaded_journal = CapabilityJournal::new(
-            journal_path,
-            snapshots_path,
-            10,
-            lock_path,
-        );
+        let mut reloaded_journal =
+            CapabilityJournal::new(journal_path, snapshots_path, 10, lock_path);
 
         assert_eq!(reloaded_journal.last_seq_id, 2);
         assert_eq!(reloaded_journal.clock, journal.clock);
         assert_eq!(reloaded_journal.events.len(), 2);
-        assert_eq!(reloaded_journal.events[1].metadata.emitted_at, journal.clock);
+        assert_eq!(
+            reloaded_journal.events[1].metadata.emitted_at,
+            journal.clock
+        );
     }
 
     #[test]
@@ -1176,7 +1254,8 @@ mod tests {
 
     #[test]
     fn test_successful_micro_healing_retry() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_heal_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_heal_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let journal = CapabilityJournal::new(
             temp_dir.join("journal.json"),
@@ -1185,22 +1264,20 @@ mod tests {
             temp_dir.join("journal.lock"),
         );
         let mut resolver = CapabilityResolver::new(HashMap::new(), journal);
-        
+
         let plan_id = uuid::Uuid::new_v4();
         let steps = vec![MutationStep {
             target_id: "sandbox_node".to_string(),
             previous_state: CapabilityState::Disabled,
             target_state: CapabilityState::Enabled,
-            effect_nodes: vec![
-                EffectNode {
-                    id: 1,
-                    effect: CapabilityEffect::InitializeSandbox {
-                        container_name: "test_sandbox_fail_first".to_string(),
-                        memory_limit_mb: 512,
-                    },
-                    depends_on: vec![],
-                }
-            ],
+            effect_nodes: vec![EffectNode {
+                id: 1,
+                effect: CapabilityEffect::InitializeSandbox {
+                    container_name: "test_sandbox_fail_first".to_string(),
+                    memory_limit_mb: 512,
+                },
+                depends_on: vec![],
+            }],
         }];
 
         // Execute the steps
@@ -1232,7 +1309,8 @@ mod tests {
 
     #[test]
     fn test_topological_loop_protection_fail_always() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_loop_fail_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_loop_fail_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let journal = CapabilityJournal::new(
             temp_dir.join("journal.json"),
@@ -1241,22 +1319,20 @@ mod tests {
             temp_dir.join("journal.lock"),
         );
         let mut resolver = CapabilityResolver::new(HashMap::new(), journal);
-        
+
         let plan_id = uuid::Uuid::new_v4();
         let steps = vec![MutationStep {
             target_id: "sandbox_node".to_string(),
             previous_state: CapabilityState::Disabled,
             target_state: CapabilityState::Enabled,
-            effect_nodes: vec![
-                EffectNode {
-                    id: 1,
-                    effect: CapabilityEffect::InitializeSandbox {
-                        container_name: "test_sandbox_fail_always".to_string(),
-                        memory_limit_mb: 512,
-                    },
-                    depends_on: vec![],
-                }
-            ],
+            effect_nodes: vec![EffectNode {
+                id: 1,
+                effect: CapabilityEffect::InitializeSandbox {
+                    container_name: "test_sandbox_fail_always".to_string(),
+                    memory_limit_mb: 512,
+                },
+                depends_on: vec![],
+            }],
         }];
 
         // Execute the steps - this must fail!
@@ -1293,7 +1369,10 @@ mod tests {
         assert_eq!(proj.projection_version(), 1);
 
         let engine = ProjectionEngine::new();
-        assert_eq!(engine.get_projection_version("campaign_projection"), Some(1));
+        assert_eq!(
+            engine.get_projection_version("campaign_projection"),
+            Some(1)
+        );
         assert_eq!(engine.get_projection_version("non_existent"), None);
     }
 
@@ -1329,19 +1408,27 @@ mod tests {
 
         // Apply first event manually
         assert!(engine.apply(&events[0]).is_ok());
-        let state1: CampaignState = serde_json::from_value(engine.get_projection_state("campaign_projection").unwrap()).unwrap();
+        let state1: CampaignState =
+            serde_json::from_value(engine.get_projection_state("campaign_projection").unwrap())
+                .unwrap();
         assert_eq!(state1.status, CampaignStatus::Active);
         assert_eq!(state1.active_workers, 0);
 
         // Rebuild all projections using the full history (events[0] and events[1])
         assert!(engine.rebuild_all(&events).is_ok());
-        let state2: CampaignState = serde_json::from_value(engine.get_projection_state("campaign_projection").unwrap()).unwrap();
+        let state2: CampaignState =
+            serde_json::from_value(engine.get_projection_state("campaign_projection").unwrap())
+                .unwrap();
         assert_eq!(state2.status, CampaignStatus::Active);
         assert_eq!(state2.active_workers, 1);
 
         // Rebuild a specific projection
-        assert!(engine.rebuild_projection("campaign_projection", &events[0..1]).is_ok());
-        let state3: CampaignState = serde_json::from_value(engine.get_projection_state("campaign_projection").unwrap()).unwrap();
+        assert!(engine
+            .rebuild_projection("campaign_projection", &events[0..1])
+            .is_ok());
+        let state3: CampaignState =
+            serde_json::from_value(engine.get_projection_state("campaign_projection").unwrap())
+                .unwrap();
         assert_eq!(state3.status, CampaignStatus::Active);
         assert_eq!(state3.active_workers, 0); // reset back to 0 because we only applied the first event
     }
@@ -1350,7 +1437,7 @@ mod tests {
     fn test_hlc_monotonicity_with_backward_time_drift() {
         // Assume actor_id 1
         let mut clock = HlcTimestamp::new(1000, 0, 1);
-        
+
         // Normal advancement
         clock = clock.tick(1005);
         assert_eq!(clock.physical, 1005);
@@ -1358,7 +1445,7 @@ mod tests {
 
         // Simulate NTP drift pulling the OS clock backward by 10ms
         clock = clock.tick(995);
-        
+
         // Proves monotonicity: physical time stays anchored at max, logical increments
         assert_eq!(clock.physical, 1005);
         assert_eq!(clock.logical, 1);
@@ -1367,10 +1454,10 @@ mod tests {
     #[test]
     fn test_hlc_external_sync_and_causality() {
         let local_clock = HlcTimestamp::new(2000, 2, 1);
-        
+
         // External message comes in from the future (e.g., node 2's clock is fast)
         let external_clock = HlcTimestamp::new(2500, 0, 2);
-        
+
         // Local wall clock is currently 2005
         let merged_clock = local_clock.merge(&external_clock, 2005);
 
@@ -1398,7 +1485,7 @@ mod tests {
         // Prove strict causal ordering despite physical time not moving
         assert!(attempt_ts < retry_ts);
         assert!(retry_ts < success_ts);
-        
+
         assert_eq!(attempt_ts.logical, 1);
         assert_eq!(retry_ts.logical, 2);
         assert_eq!(success_ts.logical, 3);
@@ -1406,13 +1493,21 @@ mod tests {
 
     #[test]
     fn test_deterministic_projection_sorting_with_ties() {
-        // Two events happen at the EXACT same physical and logical time, 
+        // Two events happen at the EXACT same physical and logical time,
         // but from different actors.
-        let event_a = HlcTimestamp { physical: 1000, logical: 0, actor_id: 2 };
-        let event_b = HlcTimestamp { physical: 1000, logical: 0, actor_id: 1 };
+        let event_a = HlcTimestamp {
+            physical: 1000,
+            logical: 0,
+            actor_id: 2,
+        };
+        let event_b = HlcTimestamp {
+            physical: 1000,
+            logical: 0,
+            actor_id: 1,
+        };
 
         let mut history = vec![event_a, event_b];
-        
+
         // The #[derive(Ord)] should sort them deterministically by actor_id
         history.sort();
 
@@ -1434,7 +1529,7 @@ mod tests {
         );
 
         let plan_id = uuid::Uuid::new_v4();
-        
+
         // 1. Emit root intent event
         let ev1 = CapabilityEvent::LeaseAcquired {
             id: "docker_sandbox".to_string(),
@@ -1463,7 +1558,7 @@ mod tests {
 
         // 3. Assert causal DAG invariants
         assert_eq!(journal.events.len(), 3);
-        
+
         let root = &journal.events[0];
         let child1 = &journal.events[1];
         let child2 = &journal.events[2];
@@ -1482,7 +1577,7 @@ mod tests {
         assert_eq!(child2.metadata.causation_id, Some(child1.metadata.event_id));
         assert_eq!(child2.metadata.root_event_id, root.metadata.event_id);
         assert_eq!(child2.metadata.tier, EventTier::Effect);
-        
+
         // actor_id attribution
         assert_eq!(root.metadata.actor_id, "coordinator");
         assert_eq!(child1.metadata.actor_id, "coordinator");
@@ -1491,7 +1586,8 @@ mod tests {
 
     #[test]
     fn test_reversible_execution_journal_rewind() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_rewind_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_rewind_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let journal_path = temp_dir.join("journal.json");
@@ -1545,12 +1641,7 @@ mod tests {
         assert_eq!(journal.clock, clock2);
 
         // Verify file persistence by reloading
-        let mut reloaded = CapabilityJournal::new(
-            journal_path,
-            snapshots_path,
-            10,
-            lock_path,
-        );
+        let mut reloaded = CapabilityJournal::new(journal_path, snapshots_path, 10, lock_path);
         reloaded.is_speculative = false; // Override any global test concurrency flags!
         assert_eq!(reloaded.events.len(), 2);
         assert_eq!(reloaded.last_seq_id, 2);
@@ -1563,7 +1654,8 @@ mod tests {
 
     #[test]
     fn test_speculative_execution_sandbox_preview() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_speculative_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_speculative_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let journal_path = temp_dir.join("journal.json");
@@ -1605,7 +1697,8 @@ mod tests {
 
     #[test]
     fn test_deterministic_execution_checkpoint_lifecycle() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_checkpoint_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_checkpoint_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let journal = CapabilityJournal::new(
@@ -1658,15 +1751,24 @@ mod tests {
             },
         );
 
-        resolver.active_states.insert("node_a".to_string(), CapabilityState::Disabled);
-        resolver.active_states.insert("node_b".to_string(), CapabilityState::Disabled);
+        resolver
+            .active_states
+            .insert("node_a".to_string(), CapabilityState::Disabled);
+        resolver
+            .active_states
+            .insert("node_b".to_string(), CapabilityState::Disabled);
 
         // 1. Initial transitions: enable node_a and acquire a lease
         let owner_id = uuid::Uuid::new_v4();
-        assert!(resolver.transition("node_a", CapabilityState::Enabled).is_ok());
+        assert!(resolver
+            .transition("node_a", CapabilityState::Enabled)
+            .is_ok());
         assert!(resolver.acquire_lease("node_b", owner_id, 30).is_ok());
 
-        assert_eq!(*resolver.active_states.get("node_a").unwrap(), CapabilityState::Enabled);
+        assert_eq!(
+            *resolver.active_states.get("node_a").unwrap(),
+            CapabilityState::Enabled
+        );
         assert!(resolver.is_leased_to_other("node_b", Some(uuid::Uuid::new_v4())));
 
         let initial_last_seq = resolver.journal.last_seq_id;
@@ -1674,12 +1776,14 @@ mod tests {
 
         // 2. Create checkpoint
         let checkpoint_id = uuid::Uuid::new_v4();
-        let checkpoint = resolver.create_checkpoint(
-            checkpoint_id,
-            None,
-            "git-tree-sha-abc-123".to_string(),
-            0.15,
-        ).unwrap();
+        let checkpoint = resolver
+            .create_checkpoint(
+                checkpoint_id,
+                None,
+                "git-tree-sha-abc-123".to_string(),
+                0.15,
+            )
+            .unwrap();
 
         assert_eq!(checkpoint.checkpoint_version, 1);
         assert_eq!(checkpoint.metadata.checkpoint_id, checkpoint_id);
@@ -1689,11 +1793,18 @@ mod tests {
 
         // 3. Mutate states further: enable node_b, release/acquire other leases, advance clock
         assert!(resolver.release_lease("node_b", owner_id).is_ok());
-        assert!(resolver.transition("node_b", CapabilityState::Enabled).is_ok());
+        assert!(resolver
+            .transition("node_b", CapabilityState::Enabled)
+            .is_ok());
         let sync_time = resolver.journal.clock.physical + 500;
-        resolver.journal.synchronize_clock(HlcTimestamp::new(sync_time, 10, 2));
+        resolver
+            .journal
+            .synchronize_clock(HlcTimestamp::new(sync_time, 10, 2));
 
-        assert_eq!(*resolver.active_states.get("node_b").unwrap(), CapabilityState::Enabled);
+        assert_eq!(
+            *resolver.active_states.get("node_b").unwrap(),
+            CapabilityState::Enabled
+        );
         assert!(resolver.journal.last_seq_id > initial_last_seq);
         assert!(resolver.journal.clock > initial_clock);
 
@@ -1704,8 +1815,14 @@ mod tests {
         // 5. Assert total rollback restoration
         assert_eq!(resolver.journal.last_seq_id, initial_last_seq);
         assert_eq!(resolver.journal.clock, initial_clock);
-        assert_eq!(*resolver.active_states.get("node_a").unwrap(), CapabilityState::Enabled);
-        assert_eq!(*resolver.active_states.get("node_b").unwrap(), CapabilityState::Disabled);
+        assert_eq!(
+            *resolver.active_states.get("node_a").unwrap(),
+            CapabilityState::Enabled
+        );
+        assert_eq!(
+            *resolver.active_states.get("node_b").unwrap(),
+            CapabilityState::Disabled
+        );
         assert!(resolver.is_leased_to_other("node_b", Some(uuid::Uuid::new_v4())));
     }
 }

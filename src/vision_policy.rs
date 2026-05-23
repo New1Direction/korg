@@ -9,14 +9,29 @@ pub enum PolicyVerdict {
 }
 
 /// Dynamic Base64 Redaction Placeholders
-pub const BLACKOUT_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-pub const BLUR_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk4AAAAAEAAQBD878AAAAASUVORK5CYII=";
+pub const BLACKOUT_PNG_BASE64: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+pub const BLUR_PNG_BASE64: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk4AAAAAEAAQBD878AAAAASUVORK5CYII=";
 
-pub static VISUAL_HISTORY: std::sync::Mutex<Vec<VisionAttachment>> = std::sync::Mutex::new(Vec::new());
+pub static VISUAL_HISTORY: std::sync::Mutex<Vec<VisionAttachment>> =
+    std::sync::Mutex::new(Vec::new());
 
 fn get_high_entropy_words(text: &str) -> Vec<String> {
     let mut words = Vec::new();
-    for word in text.split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '"' || c == '\'' || c == '[' || c == ']' || c == '(' || c == ')' || c == '{' || c == '}') {
+    for word in text.split(|c: char| {
+        c.is_whitespace()
+            || c == ','
+            || c == ';'
+            || c == '"'
+            || c == '\''
+            || c == '['
+            || c == ']'
+            || c == '('
+            || c == ')'
+            || c == '{'
+            || c == '}'
+    }) {
         let trimmed = word.trim();
         if trimmed.len() >= 8 && trimmed.len() <= 64 {
             let mut counts = [0usize; 256];
@@ -48,10 +63,7 @@ fn get_high_entropy_words(text: &str) -> Vec<String> {
 /// Main Zero-Trust Verification function for Vision attachments.
 /// Intercepts screenshots and applies regex block pattern checking on metadata
 /// and raw base64-decoded byte streams to catch credentials, tokens, or keys.
-pub fn check_attachment(
-    att: &mut VisionAttachment,
-    config: &VisionPolicyConfig,
-) -> PolicyVerdict {
+pub fn check_attachment(att: &mut VisionAttachment, config: &VisionPolicyConfig) -> PolicyVerdict {
     let mut infraction_patterns = Vec::new();
 
     // 1. Check Metadata fields (case-insensitive keyword matching)
@@ -75,7 +87,7 @@ pub fn check_attachment(
     if let Ok(decoded_bytes) = base64_decode(&att.data_base64) {
         let lossy_string = String::from_utf8_lossy(&decoded_bytes).to_lowercase();
         curr_high = get_high_entropy_words(&lossy_string);
-        
+
         for pattern in &config.block_patterns {
             let pat_lower = pattern.to_lowercase();
             if lossy_string.contains(&pat_lower) {
@@ -335,14 +347,20 @@ mod tests {
         assert!(matches!(verdict, PolicyVerdict::Redacted(_)));
         assert_eq!(att.verdict, "REDACTED");
         assert_eq!(att.data_base64, BLACKOUT_PNG_BASE64);
-        assert!(att.infraction_patterns.contains(&"api_key".to_string()) || att.infraction_patterns.contains(&"secret".to_string()));
+        assert!(
+            att.infraction_patterns.contains(&"api_key".to_string())
+                || att.infraction_patterns.contains(&"secret".to_string())
+        );
     }
 
     #[test]
     fn test_base64_encode() {
         assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
         assert_eq!(base64_encode(b"world!"), "d29ybGQh");
-        assert_eq!(base64_encode(b"some_clean_image_bytes"), "c29tZV9jbGVhbl9pbWFnZV9ieXRlcw==");
+        assert_eq!(
+            base64_encode(b"some_clean_image_bytes"),
+            "c29tZV9jbGVhbl9pbWFnZV9ieXRlcw=="
+        );
     }
 
     #[test]
@@ -383,7 +401,9 @@ mod tests {
         let verdict2 = check_attachment(&mut att2, &config);
         assert!(matches!(verdict2, PolicyVerdict::Redacted(_)));
         assert_eq!(att2.verdict, "REDACTED");
-        assert!(att2.infraction_patterns.contains(&"split_credential_sk-proj-123456789".to_string()));
+        assert!(att2
+            .infraction_patterns
+            .contains(&"split_credential_sk-proj-123456789".to_string()));
     }
 
     #[test]
@@ -431,7 +451,10 @@ mod tests {
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].verdict, "REDACTED");
         assert_eq!(history[0].data_base64, BLACKOUT_PNG_BASE64);
-        assert!(history[0].infraction_patterns.iter().any(|p| p.contains("transient_leak_retro_password")));
+        assert!(history[0]
+            .infraction_patterns
+            .iter()
+            .any(|p| p.contains("transient_leak_retro_password")));
     }
 
     #[test]
@@ -446,7 +469,9 @@ mod tests {
         let mut att1 = VisionAttachment {
             name: "frame1.png".to_string(),
             mime_type: "image/png".to_string(),
-            data_base64: base64_encode(format!("some text with high entropy token {} ", word).as_bytes()),
+            data_base64: base64_encode(
+                format!("some text with high entropy token {} ", word).as_bytes(),
+            ),
             description: "Frame with temporary token".to_string(),
             verdict: "PENDING".to_string(),
             infraction_patterns: vec![],
@@ -476,7 +501,9 @@ mod tests {
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].verdict, "REDACTED");
         assert_eq!(history[0].data_base64, BLACKOUT_PNG_BASE64);
-        assert!(history[0].infraction_patterns.iter().any(|p| p.contains("transient_entropy_retro_xyz987abc123")));
+        assert!(history[0]
+            .infraction_patterns
+            .iter()
+            .any(|p| p.contains("transient_entropy_retro_xyz987abc123")));
     }
 }
-

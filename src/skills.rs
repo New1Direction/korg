@@ -2,10 +2,10 @@
 //!
 //! Handles factual reconciliation and concept synthesis in Yvaeh Mode.
 
+use crate::embeddings::{CandleEmbeddingModel, EmbeddingModel, FakeEmbeddingModel};
+use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
-use anyhow::Result;
-use crate::embeddings::{EmbeddingModel, FakeEmbeddingModel, CandleEmbeddingModel};
 
 #[derive(Debug, Clone)]
 pub struct NoteData {
@@ -61,7 +61,8 @@ pub fn parse_vault_note(path: &Path) -> Result<NoteData> {
     let mut confidence = "medium".to_string();
     let mut status = "active".to_string();
     let mut ai_first = false;
-    let mut title = path.file_stem()
+    let mut title = path
+        .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("Untitled")
         .to_string();
@@ -80,16 +81,25 @@ pub fn parse_vault_note(path: &Path) -> Result<NoteData> {
                     }
                     "tags" => {
                         let cleaned = val.trim_matches('[').trim_matches(']');
-                        tags = cleaned.split(',')
+                        tags = cleaned
+                            .split(',')
                             .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
                             .filter(|s| !s.is_empty())
                             .collect();
                     }
                     "confidence" => {
-                        confidence = val.trim_matches('"').trim_matches('\'').to_string().to_lowercase();
+                        confidence = val
+                            .trim_matches('"')
+                            .trim_matches('\'')
+                            .to_string()
+                            .to_lowercase();
                     }
                     "status" => {
-                        status = val.trim_matches('"').trim_matches('\'').to_string().to_lowercase();
+                        status = val
+                            .trim_matches('"')
+                            .trim_matches('\'')
+                            .to_string()
+                            .to_lowercase();
                     }
                     "ai-first" | "ai_first" => {
                         ai_first = val == "true";
@@ -118,7 +128,7 @@ pub fn write_vault_note(note: &NoteData) -> Result<()> {
     content.push_str("---\n");
     content.push_str(&format!("title: \"{}\"\n", note.title));
     content.push_str(&format!("date: {}\n", note.date));
-    
+
     let note_type = if note.path.to_string_lossy().contains("decisions") {
         "decision"
     } else if note.path.to_string_lossy().contains("synthesis") {
@@ -128,7 +138,12 @@ pub fn write_vault_note(note: &NoteData) -> Result<()> {
     };
     content.push_str(&format!("type: {}\n", note_type));
 
-    let tags_str = note.tags.iter().map(|t| format!("{}", t)).collect::<Vec<_>>().join(", ");
+    let tags_str = note
+        .tags
+        .iter()
+        .map(|t| format!("{}", t))
+        .collect::<Vec<_>>()
+        .join(", ");
     content.push_str(&format!("tags: [{}]\n", tags_str));
     content.push_str(&format!("status: {}\n", note.status));
     content.push_str(&format!("ai-first: {}\n", note.ai_first));
@@ -204,12 +219,15 @@ pub async fn run_reconcile(topic: Option<String>) -> Result<()> {
     println!("\n=== STARTING YVAEH HARNESS RECONCILIATION SWARM ===");
     let vault_root = find_vault_root()?;
     let wiki_dir = vault_root.join("wiki");
-    
+
     // === SUGGESTION 1: Scan recent .ktrans logs to isolate touched files ===
     let ktrans_dir = crate::paths::ktrans_dir();
     let mut recent_ktrans_files = std::collections::HashSet::new();
     if ktrans_dir.exists() {
-        println!("[Yvaeh reconcile] Scanning recent .ktrans transactions in {}...", ktrans_dir.display());
+        println!(
+            "[Yvaeh reconcile] Scanning recent .ktrans transactions in {}...",
+            ktrans_dir.display()
+        );
         if let Ok(entries) = fs::read_dir(ktrans_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -217,7 +235,12 @@ pub async fn run_reconcile(topic: Option<String>) -> Result<()> {
                     if let Ok(content) = fs::read_to_string(&path) {
                         // Extract target paths or filename clues in transaction logs
                         for word in content.split_whitespace() {
-                            let cleaned = word.trim_matches('"').trim_matches('\'').trim_matches(',').trim_matches('[').trim_matches(']');
+                            let cleaned = word
+                                .trim_matches('"')
+                                .trim_matches('\'')
+                                .trim_matches(',')
+                                .trim_matches('[')
+                                .trim_matches(']');
                             if cleaned.contains(".md") || cleaned.contains(".rs") {
                                 recent_ktrans_files.insert(cleaned.to_string());
                             }
@@ -227,7 +250,10 @@ pub async fn run_reconcile(topic: Option<String>) -> Result<()> {
             }
         }
         if !recent_ktrans_files.is_empty() {
-            println!("[Yvaeh reconcile] Identified {} active transaction references from recent runs.", recent_ktrans_files.len());
+            println!(
+                "[Yvaeh reconcile] Identified {} active transaction references from recent runs.",
+                recent_ktrans_files.len()
+            );
         }
     }
 
@@ -252,7 +278,10 @@ pub async fn run_reconcile(topic: Option<String>) -> Result<()> {
                     let lower_topic = t.to_lowercase();
                     let matches_title = note.title.to_lowercase().contains(&lower_topic);
                     let matches_body = note.body.to_lowercase().contains(&lower_topic);
-                    let matches_tags = note.tags.iter().any(|tag| tag.to_lowercase().contains(&lower_topic));
+                    let matches_tags = note
+                        .tags
+                        .iter()
+                        .any(|tag| tag.to_lowercase().contains(&lower_topic));
                     if matches_title || matches_body || matches_tags {
                         notes.push(note);
                     }
@@ -267,7 +296,10 @@ pub async fn run_reconcile(topic: Option<String>) -> Result<()> {
         println!("[Yvaeh reconcile] No matching notes found for scanning.");
         return Ok(());
     }
-    println!("[Yvaeh reconcile] Found {} notes to semantically compare.", notes.len());
+    println!(
+        "[Yvaeh reconcile] Found {} notes to semantically compare.",
+        notes.len()
+    );
 
     // Load embeddings
     let embedding_model: Box<dyn EmbeddingModel> = match CandleEmbeddingModel::load() {
@@ -286,7 +318,9 @@ pub async fn run_reconcile(topic: Option<String>) -> Result<()> {
     for note in &notes {
         let preamble: String = note.body.chars().take(200).collect();
         let text_to_embed = format!("{} — {}", note.title, preamble);
-        let emb = embedding_model.embed(&text_to_embed).unwrap_or_else(|_| vec![0.0; 32]);
+        let emb = embedding_model
+            .embed(&text_to_embed)
+            .unwrap_or_else(|_| vec![0.0; 32]);
         note_embeddings.push(emb);
     }
 
@@ -300,11 +334,21 @@ pub async fn run_reconcile(topic: Option<String>) -> Result<()> {
 
     for i in 0..n {
         for j in (i + 1)..n {
-            let sim = crate::embeddings::cosine_similarity(&note_embeddings[i], &note_embeddings[j]);
+            let sim =
+                crate::embeddings::cosine_similarity(&note_embeddings[i], &note_embeddings[j]);
             if sim >= 0.72 {
-                println!("[Yvaeh reconcile] Contradiction detected! Cosine similarity: {:.3}", sim);
-                println!("  - Note A: [[{}]] (date: {}, conf: {})", notes[i].title, notes[i].date, notes[i].confidence);
-                println!("  - Note B: [[{}]] (date: {}, conf: {})", notes[j].title, notes[j].date, notes[j].confidence);
+                println!(
+                    "[Yvaeh reconcile] Contradiction detected! Cosine similarity: {:.3}",
+                    sim
+                );
+                println!(
+                    "  - Note A: [[{}]] (date: {}, conf: {})",
+                    notes[i].title, notes[i].date, notes[i].confidence
+                );
+                println!(
+                    "  - Note B: [[{}]] (date: {}, conf: {})",
+                    notes[j].title, notes[j].date, notes[j].confidence
+                );
 
                 // Check winner
                 let date_i = &notes[i].date;
@@ -327,18 +371,22 @@ pub async fn run_reconcile(topic: Option<String>) -> Result<()> {
                 };
 
                 if is_ambiguous {
-                    println!("  - [Verdict] Genuinely ambiguous conflict. Flagging for operator...");
-                    let conflict_title = format!("Conflict — {} and {}", notes[i].title, notes[j].title);
-                    let conflict_filename = format!("Conflict — {} and {}.md", notes[i].title, notes[j].title)
-                        .replace("/", "_")
-                        .replace(":", "_");
+                    println!(
+                        "  - [Verdict] Genuinely ambiguous conflict. Flagging for operator..."
+                    );
+                    let conflict_title =
+                        format!("Conflict — {} and {}", notes[i].title, notes[j].title);
+                    let conflict_filename =
+                        format!("Conflict — {} and {}.md", notes[i].title, notes[j].title)
+                            .replace("/", "_")
+                            .replace(":", "_");
                     let conflict_path = wiki_dir.join("decisions").join(&conflict_filename);
 
                     let note_i_preamble: String = notes[i].body.chars().take(300).collect();
                     let note_j_preamble: String = notes[j].body.chars().take(300).collect();
 
                     let conflict_content = format!(
-r#"---
+                        r#"---
 title: "Conflict — {} and {}"
 date: 2026-05-21
 type: decision
@@ -375,15 +423,25 @@ Semantic scan detected a high similarity overlap (cosine similarity: {:.3}) betw
 
 *Operator resolution is required to change `status` to `resolved` and record the final decision.*
 "#,
-                        notes[i].title, notes[j].title,
-                        notes[i].title, notes[j].title,
-                        notes[i].title, notes[j].title,
+                        notes[i].title,
+                        notes[j].title,
+                        notes[i].title,
+                        notes[j].title,
+                        notes[i].title,
+                        notes[j].title,
                         sim,
-                        notes[i].title, notes[i].date, notes[i].confidence,
-                        notes[j].title, notes[j].date, notes[j].confidence,
-                        notes[i].title, note_i_preamble.trim(),
-                        notes[j].title, note_j_preamble.trim(),
-                        notes[i].title, notes[j].title
+                        notes[i].title,
+                        notes[i].date,
+                        notes[i].confidence,
+                        notes[j].title,
+                        notes[j].date,
+                        notes[j].confidence,
+                        notes[i].title,
+                        note_i_preamble.trim(),
+                        notes[j].title,
+                        note_j_preamble.trim(),
+                        notes[i].title,
+                        notes[j].title
                     );
 
                     fs::write(&conflict_path, conflict_content)?;
@@ -395,7 +453,10 @@ Semantic scan detected a high similarity overlap (cosine similarity: {:.3}) betw
                         conflict_file: conflict_title,
                     });
                 } else {
-                    println!("  - [Verdict] Clear chronological superior: [[{}]] Wins!", notes[winner_idx].title);
+                    println!(
+                        "  - [Verdict] Clear chronological superior: [[{}]] Wins!",
+                        notes[winner_idx].title
+                    );
                     if modified_losers.insert(loser_idx) {
                         let mut loser_note = notes[loser_idx].clone();
                         loser_note.date = "2026-05-21".to_string();
@@ -434,7 +495,10 @@ Semantic scan detected a high similarity overlap (cosine similarity: {:.3}) betw
         let mut log_content = fs::read_to_string(&log_path)?;
         let mut details = String::new();
         for r in &resolved_list {
-            details.push_str(&format!("- Auto-resolved: [[{}]] (updated via [[{}]])\n", r.loser, r.winner));
+            details.push_str(&format!(
+                "- Auto-resolved: [[{}]] (updated via [[{}]])\n",
+                r.loser, r.winner
+            ));
         }
         for f in &flagged_conflicts {
             details.push_str(&format!("- Flagged: [[{}]]\n", f));
@@ -467,17 +531,23 @@ Semantic scan detected a high similarity overlap (cosine similarity: {:.3}) betw
         let mut daily_content = fs::read_to_string(&daily_path)?;
         let mut table_rows = String::new();
         for r in &resolved_list {
-            table_rows.push_str(&format!("| [[{}]] | [[{}]] | {:.3} | Auto-resolved | [[{}]] |\n", r.winner, r.loser, r.similarity, r.winner));
+            table_rows.push_str(&format!(
+                "| [[{}]] | [[{}]] | {:.3} | Auto-resolved | [[{}]] |\n",
+                r.winner, r.loser, r.similarity, r.winner
+            ));
         }
         for c in &conflict_row_list {
-            table_rows.push_str(&format!("| [[{}]] | [[{}]] | {:.3} | Unresolved Conflict | [[{}]] |\n", c.a, c.b, c.similarity, c.conflict_file));
+            table_rows.push_str(&format!(
+                "| [[{}]] | [[{}]] | {:.3} | Unresolved Conflict | [[{}]] |\n",
+                c.a, c.b, c.similarity, c.conflict_file
+            ));
         }
         if table_rows.is_empty() {
             table_rows.push_str("| None | None | 0.00 | No conflicts | None |\n");
         }
 
         let daily_entry = format!(
-"\n## Yvaeh Mode Reconciliation
+            "\n## Yvaeh Mode Reconciliation
 
 | File A | File B | Similarity | Resolution | Winner / Conflict File |
 | --- | --- | --- | --- | --- |
@@ -516,14 +586,17 @@ Living record of Yvaeh Mode semantic reconciliation and synthesis swarm executio
 
     let mut flagged_narrative = String::new();
     for c in &conflict_row_list {
-        flagged_narrative.push_str(&format!("- **Flagged Conflict:** [[{}]] (between [[{}]] and [[{}]] at similarity {:.3}).\n", c.conflict_file, c.a, c.b, c.similarity));
+        flagged_narrative.push_str(&format!(
+            "- **Flagged Conflict:** [[{}]] (between [[{}]] and [[{}]] at similarity {:.3}).\n",
+            c.conflict_file, c.a, c.b, c.similarity
+        ));
     }
     if flagged_narrative.is_empty() {
         flagged_narrative.push_str("- No ambiguous conflicts flagged.\n");
     }
 
     let reconciliation_report_entry = format!(
-r#"
+        r#"
 ## 2026-05-21 — Swarm Reconciliation Run
 
 - **Command executed:** `korg reconcile`
@@ -579,7 +652,7 @@ pub async fn run_synthesize() -> Result<()> {
     println!("\n=== STARTING YVAEH HARNESS CONCEPT SYNTHESIS SWARM ===");
     let vault_root = find_vault_root()?;
     let wiki_dir = vault_root.join("wiki");
-    
+
     let folders_to_scan = vec![
         wiki_dir.join("concepts"),
         wiki_dir.join("projects"),
@@ -620,13 +693,15 @@ pub async fn run_synthesize() -> Result<()> {
         "adversarial loop",
     ];
 
-    let mut term_map: std::collections::HashMap<String, Vec<NoteData>> = std::collections::HashMap::new();
+    let mut term_map: std::collections::HashMap<String, Vec<NoteData>> =
+        std::collections::HashMap::new();
 
     for note in &all_notes {
         let content_lower = format!("{} {}", note.title, note.body).to_lowercase();
         for term in &key_terms {
             if content_lower.contains(&term.to_lowercase()) {
-                term_map.entry(term.to_string())
+                term_map
+                    .entry(term.to_string())
                     .or_default()
                     .push(note.clone());
             }
@@ -650,13 +725,14 @@ pub async fn run_synthesize() -> Result<()> {
 
                 if !synth_path.exists() {
                     println!("[Yvaeh synthesize] Synthesis opportunity identified for \"{}\" connecting {} sources!", term, sources.len());
-                    
+
                     let mut sources_links = String::new();
                     let mut context_blocks = String::new();
 
                     for src in sources {
-                        sources_links.push_str(&format!("- [[{}]] (Dated: {})\n", src.title, src.date));
-                        
+                        sources_links
+                            .push_str(&format!("- [[{}]] (Dated: {})\n", src.title, src.date));
+
                         let mut context_line = "Incremental swarm progress".to_string();
                         for line in src.body.lines() {
                             if line.to_lowercase().contains(&term.to_lowercase()) {
@@ -664,12 +740,15 @@ pub async fn run_synthesize() -> Result<()> {
                                 break;
                             }
                         }
-                        context_blocks.push_str(&format!("- In [[{}]], it relates to: *\"{}\"*\n", src.title, context_line));
+                        context_blocks.push_str(&format!(
+                            "- In [[{}]], it relates to: *\"{}\"*\n",
+                            src.title, context_line
+                        ));
                     }
 
                     // === SUGGESTION 2: Generate highly typed notes under wiki/synthesis with full Yvaeh branding & wikilinks ===
                     let synth_content = format!(
-r#"---
+                        r#"---
 title: "Synthesis — {}"
 date: 2026-05-21
 type: synthesis
@@ -698,7 +777,15 @@ The concept **{}** represents a key intersection across the following sources:
 1. **Unify understanding:** Ensure that implementations referencing {} adhere to the transactional contracts in the source notes.
 2. **Expand coverage:** Explore how {} can be further leveraged to improve swarm telemetry and operational intelligence.
 "#,
-                        cap_term, cap_term, term, cap_term, sources_links, cap_term, context_blocks, cap_term, cap_term
+                        cap_term,
+                        cap_term,
+                        term,
+                        cap_term,
+                        sources_links,
+                        cap_term,
+                        context_blocks,
+                        cap_term,
+                        cap_term
                     );
 
                     fs::write(&synth_path, synth_content)?;
@@ -710,10 +797,13 @@ The concept **{}** represents a key intersection across the following sources:
                         if src_path.exists() {
                             let mut content = fs::read_to_string(src_path)?;
                             let link = format!("[[Synthesis — {}]]", cap_term);
-                            
+
                             if !content.contains(&link) {
                                 if content.contains("## See Also") {
-                                    content = content.replace("## See Also\n", &format!("## See Also\n\n- {}\n", link));
+                                    content = content.replace(
+                                        "## See Also\n",
+                                        &format!("## See Also\n\n- {}\n", link),
+                                    );
                                 } else {
                                     content.push_str(&format!("\n\n## See Also\n\n- {}\n", link));
                                 }
@@ -774,15 +864,22 @@ The concept **{}** represents a key intersection across the following sources:
         let mut log_content = fs::read_to_string(&log_path)?;
         let mut details = String::new();
         for (term, sources) in &synthesis_created {
-            let src_str = sources.iter().map(|s| format!("[[{}]]", s.title)).collect::<Vec<_>>().join(", ");
-            details.push_str(&format!("- [[Synthesis — {}]] (connecting {})\n", term, src_str));
+            let src_str = sources
+                .iter()
+                .map(|s| format!("[[{}]]", s.title))
+                .collect::<Vec<_>>()
+                .join(", ");
+            details.push_str(&format!(
+                "- [[Synthesis — {}]] (connecting {})\n",
+                term, src_str
+            ));
         }
         if details.is_empty() {
             details.push_str("- No new synthesis pages created.\n");
         }
 
         let log_entry = format!(
-"\n## 2026-05-21 — Yvaeh Mode Synthesis
+            "\n## 2026-05-21 — Yvaeh Mode Synthesis
 
 - **Command:** `korg synthesize`
 - **Result:** Created {} synthesis pages under `wiki/synthesis/`.
@@ -803,15 +900,22 @@ The concept **{}** represents a key intersection across the following sources:
         let mut daily_content = fs::read_to_string(&daily_path)?;
         let mut bullet_points = String::new();
         for (term, sources) in &synthesis_created {
-            let src_str = sources.iter().map(|s| format!("[[{}]]", s.title)).collect::<Vec<_>>().join(", ");
-            bullet_points.push_str(&format!("- [[Synthesis — {}]] (connecting {})\n", term, src_str));
+            let src_str = sources
+                .iter()
+                .map(|s| format!("[[{}]]", s.title))
+                .collect::<Vec<_>>()
+                .join(", ");
+            bullet_points.push_str(&format!(
+                "- [[Synthesis — {}]] (connecting {})\n",
+                term, src_str
+            ));
         }
         if bullet_points.is_empty() {
             bullet_points.push_str("- No synthesis activities performed.\n");
         }
 
         let daily_entry = format!(
-"\n## Yvaeh Mode Synthesis
+            "\n## Yvaeh Mode Synthesis
 
 > [!NOTE]
 > **Yvaeh Synthesis Swarm Run**
@@ -843,15 +947,22 @@ Living record of Yvaeh Mode semantic reconciliation and synthesis swarm executio
 
         let mut synthesis_narrative = String::new();
         for (term, sources) in &synthesis_created {
-            let src_str = sources.iter().map(|s| format!("[[{}]]", s.title)).collect::<Vec<_>>().join(", ");
-            synthesis_narrative.push_str(&format!("- **Generated [[Synthesis — {}]]**: Found concept convergence in sources: {}.\n", term, src_str));
+            let src_str = sources
+                .iter()
+                .map(|s| format!("[[{}]]", s.title))
+                .collect::<Vec<_>>()
+                .join(", ");
+            synthesis_narrative.push_str(&format!(
+                "- **Generated [[Synthesis — {}]]**: Found concept convergence in sources: {}.\n",
+                term, src_str
+            ));
         }
         if synthesis_narrative.is_empty() {
             synthesis_narrative.push_str("- No synthesis activities performed.\n");
         }
 
         let synthesis_report_entry = format!(
-r#"
+            r#"
 ## 2026-05-21 — Swarm Synthesis Run
 
 - **Command executed:** `korg synthesize`
@@ -886,8 +997,7 @@ mod tests {
     fn test_frontmatter_parsing() {
         let temp_dir = std::env::temp_dir();
         let file_path = temp_dir.join("test_note.md");
-        let content = 
-r#"---
+        let content = r#"---
 title: "Test Note"
 date: 2026-05-20
 tags: [test, skill, parse]
@@ -920,8 +1030,7 @@ Body of the test note.
         let file_a_path = temp_dir.join("reconcile_a.md");
         let file_b_path = temp_dir.join("reconcile_b.md");
 
-        let content_a = 
-r#"---
+        let content_a = r#"---
 title: "Reconcile Winner Title"
 date: 2026-05-21
 tags: [concept]
@@ -935,8 +1044,7 @@ ai-first: true
 Winner content.
 "#;
 
-        let content_b = 
-r#"---
+        let content_b = r#"---
 title: "Reconcile Loser Title"
 date: 2026-05-19
 tags: [concept]

@@ -152,7 +152,7 @@ impl ExecutionDag {
     /// This provides a deterministic fingerprint of the DAG execution state
     /// for cryptographic provenance attestations.
     pub fn compute_merkle_root(&self) -> String {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         // Sort node IDs for deterministic ordering
         let mut ids: Vec<&String> = self.nodes.keys().collect();

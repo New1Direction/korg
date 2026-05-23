@@ -31,29 +31,29 @@ mod agent;
 mod arena;
 mod blackboard;
 mod campaign;
+pub mod code_indexer;
+pub mod code_intel;
 mod dag;
 mod embeddings;
 mod evaluator;
 mod harness;
 mod leader;
+pub mod llm;
 mod metrics;
 mod paths;
-mod runtime;
 mod personas;
+pub mod provenance;
+pub mod registry;
+mod runtime;
 mod session;
 mod skills;
 mod telemetry;
 mod tools;
 mod tui;
+pub mod vision_policy;
+mod web;
 mod workers;
 mod workspace;
-pub mod llm;
-mod web;
-pub mod provenance;
-pub mod vision_policy;
-pub mod code_indexer;
-pub mod code_intel;
-pub mod registry;
 
 use acp::AcpClient;
 use harness::SingleWorkerHarness;
@@ -65,8 +65,7 @@ use leader::LeaderOrchestrator;
     version,
     about = "The first deterministic cognitive runtime for AI agents"
 )]
-#[command(
-    long_about = "korg — The first deterministic cognitive runtime.
+#[command(long_about = "korg — The first deterministic cognitive runtime.
 
 Every decision your AI agent makes is logged, causally ordered, and reversible
 — like Git, but for cognition.
@@ -84,8 +83,7 @@ Quick start:
   korg goal \"Write a full test suite for src/parser.rs\"
   korg rewind --seq 4
 
-https://github.com/New1Direction/korg"
-)]
+https://github.com/New1Direction/korg")]
 struct Cli {
     /// Optional positional prompt to immediately run a campaign using the full Heavy-Adversarial swarm
     prompt: Option<String>,
@@ -269,59 +267,110 @@ fn print_welcome_banner() {
     println!("/_/ |_|   \\____/ /_/ |_|  \\____/   ");
     println!("{}", reset);
 
-    println!("{}⚡ {}Heavy-Tier Agent Swarm & Knowledge Vault{}", bold, pink, reset);
-    println!("{}──────────────────────────────────────────────────────────────────────────────{}", slate, reset);
+    println!(
+        "{}⚡ {}Heavy-Tier Agent Swarm & Knowledge Vault{}",
+        bold, pink, reset
+    );
+    println!(
+        "{}──────────────────────────────────────────────────────────────────────────────{}",
+        slate, reset
+    );
     println!("Korg is an autonomous, self-compounding multi-persona orchestrator built with");
     println!("real-time contract negotiation, signed .ktrans journals, and factual alignment.\n");
 
     println!("{}💡 {}QUICK-START CAMPAIGNS & FLAGS:{}", bold, gold, reset);
-    println!("  {}korg \"<prompt>\"{}               Launch full interactive campaign in the Ratatui TUI", bold, reset);
+    println!(
+        "  {}korg \"<prompt>\"{}               Launch full interactive campaign in the Ratatui TUI",
+        bold, reset
+    );
     println!("  {}korg --headless \"<prompt>\"{}      Execute observable swarm telemetry in headless mode", bold, reset);
-    println!("  {}korg campaign{}                  Run the default visual demo campaign", bold, reset);
+    println!(
+        "  {}korg campaign{}                  Run the default visual demo campaign",
+        bold, reset
+    );
     println!("  {}korg leader --demo{}             Execute swarm benchmark demo with live console tracing", bold, reset);
-    println!("  {}korg reconcile{}                 Scan for factual contradictions & resolve them", bold, reset);
-    println!("  {}korg synthesize{}                Perform concept synthesis & generate backlinks", bold, reset);
+    println!(
+        "  {}korg reconcile{}                 Scan for factual contradictions & resolve them",
+        bold, reset
+    );
+    println!(
+        "  {}korg synthesize{}                Perform concept synthesis & generate backlinks",
+        bold, reset
+    );
     println!();
 
     println!("{}⚙️  {}SYSTEM ECOSYSTEM STATUS:{}", bold, cyan, reset);
     println!("  {}• Swarm Engine:{}   5 Adversarial Personas (Captain, Harper, Benjamin, Lucas, Evaluator)", slate, reset);
     let llm_config = crate::llm::KorgConfig::load();
-    let model_str = llm_config.default_model.clone().unwrap_or_else(|| "default".to_string());
-    println!("  {}• Cognitive Core:{} Swappable Provider [Active: {} | Model: {}]", slate, reset, llm_config.default_llm.to_uppercase(), model_str);
+    let model_str = llm_config
+        .default_model
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+    println!(
+        "  {}• Cognitive Core:{} Swappable Provider [Active: {} | Model: {}]",
+        slate,
+        reset,
+        llm_config.default_llm.to_uppercase(),
+        model_str
+    );
     if !llm_config.persona_overrides.is_empty() {
         println!("  {}• Per-Persona:{}", slate, reset);
         for persona_name in &["captain", "harper", "benjamin", "lucas", "evaluator"] {
             if let Some(ov) = llm_config.persona_overrides.get(*persona_name) {
                 let p = ov.provider.as_deref().unwrap_or(&llm_config.default_llm);
                 let m = ov.model.as_deref().unwrap_or(&model_str);
-                println!("  {}  └ {:<10}{} {} / {}", slate, persona_name, reset, p.to_uppercase(), m);
+                println!(
+                    "  {}  └ {:<10}{} {} / {}",
+                    slate,
+                    persona_name,
+                    reset,
+                    p.to_uppercase(),
+                    m
+                );
             }
         }
     }
-    println!("  {}• Guardrails:{}     5 semantic evaluation rubrics (Trajectory, Epistemic, etc.)", slate, reset);
-    println!("  {}• Knowledge:{}     Factual Reconciliation & Semantic Synthesis", slate, reset);
-    println!("  {}• Persistence:{}   Signed .ktrans transactions & secure state recovery", slate, reset);
-    println!("{}──────────────────────────────────────────────────────────────────────────────{}", slate, reset);
-    println!("Type {}korg --help{} to see all available subcommands and flags.", bold, reset);
+    println!(
+        "  {}• Guardrails:{}     5 semantic evaluation rubrics (Trajectory, Epistemic, etc.)",
+        slate, reset
+    );
+    println!(
+        "  {}• Knowledge:{}     Factual Reconciliation & Semantic Synthesis",
+        slate, reset
+    );
+    println!(
+        "  {}• Persistence:{}   Signed .ktrans transactions & secure state recovery",
+        slate, reset
+    );
+    println!(
+        "{}──────────────────────────────────────────────────────────────────────────────{}",
+        slate, reset
+    );
+    println!(
+        "Type {}korg --help{} to see all available subcommands and flags.",
+        bold, reset
+    );
     println!();
 }
 
 fn parse_cognition_mode(mode_str: &str) -> &'static str {
     match mode_str.to_lowercase().as_str() {
-        "instant"                               => "instant",
-        "heavy"                                 => "heavy",
-        "research"                              => "research",
-        "recovery"                              => "recovery",
-        "autonomous"                            => "autonomous",
+        "instant" => "instant",
+        "heavy" => "heavy",
+        "research" => "research",
+        "recovery" => "recovery",
+        "autonomous" => "autonomous",
         "heavy-consciousness" | "consciousness" => "heavy-consciousness",
-        _                                       => "balanced",
+        _ => "balanced",
     }
 }
 
 /// Auto-detect the best available LLM provider from configuration and environment variables.
 ///
 /// Priority: Explicit config > Anthropic (if key set) > OpenAI (if key set) > Grok > Ollama > Mock.
-fn auto_detect_provider(config: &crate::llm::KorgConfig) -> std::sync::Arc<dyn crate::llm::LlmProvider> {
+fn auto_detect_provider(
+    config: &crate::llm::KorgConfig,
+) -> std::sync::Arc<dyn crate::llm::LlmProvider> {
     // If explicitly configured, use that
     if config.default_llm != "mock" {
         return crate::llm::build_provider(config);
@@ -383,8 +432,12 @@ async fn main() -> Result<()> {
 
     if let Some(prompt) = cli.prompt {
         if cli.web {
-            println!("Launching web dashboard with live campaign for prompt: {}", prompt);
-            crate::web::run_web_with_campaign(prompt, None, Some(parse_cognition_mode(&cli.mode))).await?;
+            println!(
+                "Launching web dashboard with live campaign for prompt: {}",
+                prompt
+            );
+            crate::web::run_web_with_campaign(prompt, None, Some(parse_cognition_mode(&cli.mode)))
+                .await?;
         } else if cli.goal {
             // Goal mode: use the full Heavy-Tier swarm campaign
             let cyan = "\x1b[38;2;0;240;255m";
@@ -398,8 +451,14 @@ async fn main() -> Result<()> {
             let mut leader = LeaderOrchestrator::new(prompt, None);
             leader.goal_mode = true;
             leader.set_cognition_mode("autonomous").await;
-            println!("{slate}├──{reset} Session: {bold}{cyan}{}{reset}", leader.session_id());
-            println!("{slate}└──{reset} Base snapshot: {bold}{cyan}{}{reset}\n", leader.base_snapshot());
+            println!(
+                "{slate}├──{reset} Session: {bold}{cyan}{}{reset}",
+                leader.session_id()
+            );
+            println!(
+                "{slate}└──{reset} Base snapshot: {bold}{cyan}{}{reset}\n",
+                leader.base_snapshot()
+            );
             leader.run_observable_campaign().await?;
         } else {
             // Default: real agentic tool-use loop
@@ -413,8 +472,14 @@ async fn main() -> Result<()> {
             let reset = "\x1b[0m";
 
             println!("\n{bold}{cyan}⚡ Korg Agent Loop{reset}");
-            println!("{slate}├──{reset} Provider: {bold}{cyan}{}{reset}", provider.name());
-            println!("{slate}├──{reset} Workspace: {bold}{}{reset}", crate::paths::project_root_string());
+            println!(
+                "{slate}├──{reset} Provider: {bold}{cyan}{}{reset}",
+                provider.name()
+            );
+            println!(
+                "{slate}├──{reset} Workspace: {bold}{}{reset}",
+                crate::paths::project_root_string()
+            );
             println!("{slate}└──{reset} Prompt: {bold}{pink}{}{reset}\n", prompt);
 
             let result = crate::agent::run_agent_loop(&prompt, provider, None).await?;
@@ -433,11 +498,18 @@ async fn main() -> Result<()> {
             if cli.preview {
                 let gold = "\x1b[38;2;255;215;0m";
                 let green = "\x1b[38;2;0;255;128m";
-                println!("\n{bold}{gold}✨ Speculative Preview: COGNITIVE DIFF (Dry-run Mode) ✨{reset}");
+                println!(
+                    "\n{bold}{gold}✨ Speculative Preview: COGNITIVE DIFF (Dry-run Mode) ✨{reset}"
+                );
                 println!("{slate}├──{reset} Execution was fully isolated in-memory (no disk writes occurred).");
-                println!("{slate}├──{reset} Proposed {green}{} mutations{reset} across workspace.", result.files_modified.len());
+                println!(
+                    "{slate}├──{reset} Proposed {green}{} mutations{reset} across workspace.",
+                    result.files_modified.len()
+                );
                 println!("{slate}└──{reset} Causal ledger rolled back safely. Zero container/filesystem leaks.");
-                println!("{bold}{gold}───────────────────────────────────────────────────{reset}\n");
+                println!(
+                    "{bold}{gold}───────────────────────────────────────────────────{reset}\n"
+                );
             }
         }
 
@@ -464,7 +536,10 @@ async fn main() -> Result<()> {
         Commands::Worker { id, endpoint } => {
             if endpoint == "stdio" {
                 // Phase A: Real signed ACP envelope path used by the leader
-                eprintln!("Starting SingleWorkerHarness (id={}) in stdio framed mode", id);
+                eprintln!(
+                    "Starting SingleWorkerHarness (id={}) in stdio framed mode",
+                    id
+                );
                 crate::harness::SingleWorkerHarness::run_as_stdio_worker(id).await?;
             } else {
                 println!("Starting SingleWorkerHarness (id={})", id);
@@ -531,8 +606,14 @@ async fn main() -> Result<()> {
                 let slate = "\x1b[38;2;120;125;140m";
                 let bold = "\x1b[1m";
                 let reset = "\x1b[0m";
-                println!("{slate}├──{reset} Leader Session: {bold}{cyan}{}{reset}", leader.session_id());
-                println!("{slate}└──{reset} Base snapshot: {bold}{cyan}{}{reset}", leader.base_snapshot());
+                println!(
+                    "{slate}├──{reset} Leader Session: {bold}{cyan}{}{reset}",
+                    leader.session_id()
+                );
+                println!(
+                    "{slate}└──{reset} Base snapshot: {bold}{cyan}{}{reset}",
+                    leader.base_snapshot()
+                );
                 if demo {
                     leader.run_observable_campaign().await?;
                 } else {
@@ -541,7 +622,13 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Campaign { session, tui, web, mode, goal } => {
+        Commands::Campaign {
+            session,
+            tui,
+            web,
+            mode,
+            goal,
+        } => {
             let sid = session.and_then(|s| uuid::Uuid::parse_str(&s).ok());
 
             if web {
@@ -584,10 +671,7 @@ async fn main() -> Result<()> {
                 println!("Starting Korg TUI + live observable campaign...");
             }
             // Launch the Ratatui dashboard with a real live campaign.
-            crate::tui::run_tui_with_campaign(
-                "Korg TUI Live Campaign".to_string(),
-                None,
-            ).await?;
+            crate::tui::run_tui_with_campaign("Korg TUI Live Campaign".to_string(), None).await?;
         }
 
         Commands::Reconcile { topic } => {
@@ -603,16 +687,20 @@ async fn main() -> Result<()> {
         }
 
         Commands::Index { path } => {
-            let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> = match crate::embeddings::CandleEmbeddingModel::load() {
-                Ok(real) => {
-                    println!("Loaded real CandleEmbeddingModel (all-MiniLM-L6-v2)");
-                    Box::new(real)
-                }
-                Err(e) => {
-                    println!("Using FakeEmbeddingModel (Candle model offline or not enabled: {})", e);
-                    Box::new(crate::embeddings::FakeEmbeddingModel::default())
-                }
-            };
+            let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> =
+                match crate::embeddings::CandleEmbeddingModel::load() {
+                    Ok(real) => {
+                        println!("Loaded real CandleEmbeddingModel (all-MiniLM-L6-v2)");
+                        Box::new(real)
+                    }
+                    Err(e) => {
+                        println!(
+                            "Using FakeEmbeddingModel (Candle model offline or not enabled: {})",
+                            e
+                        );
+                        Box::new(crate::embeddings::FakeEmbeddingModel::default())
+                    }
+                };
             println!("Indexing workspace at {}...", path);
             let index = crate::code_indexer::index_workspace(&path, &*embedding_model).await?;
             let index_path = std::path::Path::new(&path).join(".korg").join("index.json");
@@ -642,15 +730,24 @@ async fn main() -> Result<()> {
                     let slate = "\x1b[38;2;120;125;140m";
                     println!("\n{bold}{green}✓ Reversible execution rewind completed successfully!{reset}");
                     println!("{slate}├──{reset} Target Sequence ID: {cyan}{}{reset}", seq);
-                    println!("{slate}├──{reset} Remaining Events: {cyan}{}{reset} (truncated {} events)", journal.events.len(), prev_count.saturating_sub(journal.events.len()));
-                    println!("{slate}└──{reset} Clock reset to: {cyan}physical={}, logical={}{reset}", journal.clock.physical, journal.clock.logical);
-                    
+                    println!(
+                        "{slate}├──{reset} Remaining Events: {cyan}{}{reset} (truncated {} events)",
+                        journal.events.len(),
+                        prev_count.saturating_sub(journal.events.len())
+                    );
+                    println!(
+                        "{slate}└──{reset} Clock reset to: {cyan}physical={}, logical={}{reset}",
+                        journal.clock.physical, journal.clock.logical
+                    );
+
                     // Trigger read-model rebuilds dynamically
                     let mut engine = crate::registry::ProjectionEngine::new();
                     if let Err(e) = engine.rebuild_all(&journal.events) {
                         eprintln!("\n\x1b[38;2;255;0;180m⚠ Failed to rebuild projections after rewind: {}\x1b[0m", e);
                     } else {
-                        println!("\n  Read-model projections rebuilt {green}successfully{reset}.\n");
+                        println!(
+                            "\n  Read-model projections rebuilt {green}successfully{reset}.\n"
+                        );
                     }
                 }
                 Err(e) => {
@@ -675,10 +772,22 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
     let bold = "\x1b[1m";
     let reset = "\x1b[0m";
 
-    println!("\n{}⚡ {}Korg Interactive Swarm Developer Shell{}", bold, cyan, reset);
-    println!("Type {}/help{} to list commands, or type your prompt to chat with the swarm.", bold, reset);
-    println!("Use {}@<filename>{} to attach files, or {}@codebase{} for codebase-wide search.", bold, reset, bold, reset);
-    println!("{}──────────────────────────────────────────────────────────────────────────────{}", slate, reset);
+    println!(
+        "\n{}⚡ {}Korg Interactive Swarm Developer Shell{}",
+        bold, cyan, reset
+    );
+    println!(
+        "Type {}/help{} to list commands, or type your prompt to chat with the swarm.",
+        bold, reset
+    );
+    println!(
+        "Use {}@<filename>{} to attach files, or {}@codebase{} for codebase-wide search.",
+        bold, reset, bold, reset
+    );
+    println!(
+        "{}──────────────────────────────────────────────────────────────────────────────{}",
+        slate, reset
+    );
 
     let mut context_buffer = String::new();
 
@@ -687,13 +796,21 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
     let mut index = if std::path::Path::new(index_path).exists() {
         match crate::code_indexer::load_index(index_path) {
             Ok(idx) => {
-                println!("{}• Loaded codebase semantic index ({} blocks){} ", slate, idx.blocks.len(), reset);
+                println!(
+                    "{}• Loaded codebase semantic index ({} blocks){} ",
+                    slate,
+                    idx.blocks.len(),
+                    reset
+                );
                 Some(idx)
             }
             Err(_) => None,
         }
     } else {
-        println!("{}• Codebase index not found. Type {}/index{} to build it.{} ", slate, bold, reset, slate);
+        println!(
+            "{}• Codebase index not found. Type {}/index{} to build it.{} ",
+            slate, bold, reset, slate
+        );
         None
     };
 
@@ -716,15 +833,42 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
 
         if line == "/help" {
             println!("\n{}Available Commands:{}", bold, reset);
-            println!("  {}/read <file>{}              Read a file's contents into the swarm context", bold, reset);
-            println!("  {}/edit <file> <instruction>{} Edit a file using Benjamin", bold, reset);
-            println!("  {}/run <command>{}            Execute a shell command locally", bold, reset);
-            println!("  {}/explain <query>{}          Ask Captain to explain code/architecture", bold, reset);
-            println!("  {}/goal <prompt>{}            Run an autonomous multi-persona swarm goal", bold, reset);
-            println!("  {}/reconcile{}                Run factual contradiction reconciliation", bold, reset);
-            println!("  {}/synthesize{}               Run concept synthesis scan", bold, reset);
-            println!("  {}/index{}                    Index the current workspace structurally", bold, reset);
-            println!("  {}/exit{}                     Exit the shell\n", bold, reset);
+            println!(
+                "  {}/read <file>{}              Read a file's contents into the swarm context",
+                bold, reset
+            );
+            println!(
+                "  {}/edit <file> <instruction>{} Edit a file using Benjamin",
+                bold, reset
+            );
+            println!(
+                "  {}/run <command>{}            Execute a shell command locally",
+                bold, reset
+            );
+            println!(
+                "  {}/explain <query>{}          Ask Captain to explain code/architecture",
+                bold, reset
+            );
+            println!(
+                "  {}/goal <prompt>{}            Run an autonomous multi-persona swarm goal",
+                bold, reset
+            );
+            println!(
+                "  {}/reconcile{}                Run factual contradiction reconciliation",
+                bold, reset
+            );
+            println!(
+                "  {}/synthesize{}               Run concept synthesis scan",
+                bold, reset
+            );
+            println!(
+                "  {}/index{}                    Index the current workspace structurally",
+                bold, reset
+            );
+            println!(
+                "  {}/exit{}                     Exit the shell\n",
+                bold, reset
+            );
             continue;
         }
 
@@ -734,16 +878,34 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
                 println!("Usage: /goal <prompt>");
                 continue;
             }
-            println!("\n{}⚡ Launching autonomous goal: {}{}", bold, goal_prompt, reset);
+            println!(
+                "\n{}⚡ Launching autonomous goal: {}{}",
+                bold, goal_prompt, reset
+            );
             let mut leader = LeaderOrchestrator::new(goal_prompt.to_string(), None);
             leader.goal_mode = true;
             leader.set_cognition_mode("autonomous").await;
 
-            println!("{}├──{} Goal Session: {}{}", slate, reset, leader.session_id(), reset);
-            println!("{}└──{} Base snapshot: {}{}\n", slate, reset, leader.base_snapshot(), reset);
+            println!(
+                "{}├──{} Goal Session: {}{}",
+                slate,
+                reset,
+                leader.session_id(),
+                reset
+            );
+            println!(
+                "{}└──{} Base snapshot: {}{}\n",
+                slate,
+                reset,
+                leader.base_snapshot(),
+                reset
+            );
 
             match leader.run_full_campaign().await {
-                Ok(_) => println!("\n{}✓ Goal campaign completed successfully.{}", green, reset),
+                Ok(_) => println!(
+                    "\n{}✓ Goal campaign completed successfully.{}",
+                    green, reset
+                ),
                 Err(e) => println!("\n{}❌ Goal campaign failed: {}{}", pink, e, reset),
             }
             continue;
@@ -753,8 +915,12 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
             let file_path = line["/read ".len()..].trim();
             match std::fs::read_to_string(file_path) {
                 Ok(content) => {
-                    context_buffer.push_str(&format!("\nFile: {}\n```\n{}\n```\n", file_path, content));
-                    println!("{}✓ Read {} into active context.{}", green, file_path, reset);
+                    context_buffer
+                        .push_str(&format!("\nFile: {}\n```\n{}\n```\n", file_path, content));
+                    println!(
+                        "{}✓ Read {} into active context.{}",
+                        green, file_path, reset
+                    );
                 }
                 Err(e) => println!("{}❌ Failed to read {}: {}{}", pink, file_path, e, reset),
             }
@@ -767,15 +933,17 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
             let mut parts = command_str.split_whitespace();
             if let Some(cmd) = parts.next() {
                 let args: Vec<&str> = parts.collect();
-                let output = tokio::process::Command::new(cmd)
-                    .args(&args)
-                    .output()
-                    .await;
+                let output = tokio::process::Command::new(cmd).args(&args).output().await;
                 match output {
                     Ok(out) => {
                         println!("{}", String::from_utf8_lossy(&out.stdout));
                         if !out.status.success() {
-                            eprintln!("{}Command failed: {}{}", pink, String::from_utf8_lossy(&out.stderr), reset);
+                            eprintln!(
+                                "{}Command failed: {}{}",
+                                pink,
+                                String::from_utf8_lossy(&out.stderr),
+                                reset
+                            );
                         }
                     }
                     Err(e) => println!("{}❌ Command execution failed: {}{}", pink, e, reset),
@@ -796,17 +964,23 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
 
         if line == "/index" {
             println!("Building semantic index for current directory...");
-            let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> = match crate::embeddings::CandleEmbeddingModel::load() {
-                Ok(real) => Box::new(real),
-                Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
-            };
+            let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> =
+                match crate::embeddings::CandleEmbeddingModel::load() {
+                    Ok(real) => Box::new(real),
+                    Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
+                };
             match crate::code_indexer::index_workspace(".", &*embedding_model).await {
                 Ok(idx) => {
                     let index_path_str = ".korg/index.json";
                     if let Err(e) = crate::code_indexer::save_index(&idx, index_path_str) {
                         println!("{}❌ Failed to save index: {}{}", pink, e, reset);
                     } else {
-                        println!("{}✓ Workspace indexed successfully. Total blocks: {}{}", green, idx.blocks.len(), reset);
+                        println!(
+                            "{}✓ Workspace indexed successfully. Total blocks: {}{}",
+                            green,
+                            idx.blocks.len(),
+                            reset
+                        );
                         index = Some(idx);
                     }
                 }
@@ -820,19 +994,34 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
             let mut parts = edit_body.split_whitespace();
             if let Some(file_path) = parts.next() {
                 let instruction = edit_body[file_path.len()..].trim();
-                println!("{}Calling Benjamin to edit {} with instruction: {}{}", slate, file_path, instruction, reset);
+                println!(
+                    "{}Calling Benjamin to edit {} with instruction: {}{}",
+                    slate, file_path, instruction, reset
+                );
                 // Dispatch Benjamin via run_persona
                 let result = crate::personas::run_persona(
                     crate::personas::Persona::Benjamin,
                     &format!("Edit file {}: {}", file_path, instruction),
                     "shell-edit",
-                ).await;
-                
+                )
+                .await;
+
                 // Print Benjamin mutations/outcome
-                println!("{}✓ Benjamin complete! {} mutations proposed.{}", green, result.mutations.len(), reset);
+                println!(
+                    "{}✓ Benjamin complete! {} mutations proposed.{}",
+                    green,
+                    result.mutations.len(),
+                    reset
+                );
                 for mutation in &result.mutations {
-                    let target = mutation.get("target").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    let action = mutation.get("action").and_then(|v| v.as_str()).unwrap_or("update");
+                    let target = mutation
+                        .get("target")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let action = mutation
+                        .get("action")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("update");
                     println!("  - Target: {}, Action: {}", target, action);
                     if let Some(content) = mutation.get("content").and_then(|v| v.as_str()) {
                         let _ = tokio::fs::write(target, content).await;
@@ -874,7 +1063,10 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
         for file in &attached_files {
             match std::fs::read_to_string(file) {
                 Ok(content) => {
-                    prompt_context.push_str(&format!("\nFile Context: {}\n```\n{}\n```\n", file, content));
+                    prompt_context.push_str(&format!(
+                        "\nFile Context: {}\n```\n{}\n```\n",
+                        file, content
+                    ));
                     println!("{}• Attached file context: {}{}", slate, file, reset);
                 }
                 Err(e) => {
@@ -886,45 +1078,65 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
         // Load @codebase semantic matches
         if codebase_search_requested {
             if let Some(ref idx) = index {
-                let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> = match crate::embeddings::CandleEmbeddingModel::load() {
-                    Ok(real) => Box::new(real),
-                    Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
-                };
-                let clean_query: String = explain_query.split_whitespace()
+                let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> =
+                    match crate::embeddings::CandleEmbeddingModel::load() {
+                        Ok(real) => Box::new(real),
+                        Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
+                    };
+                let clean_query: String = explain_query
+                    .split_whitespace()
                     .filter(|w| !w.starts_with('@'))
                     .collect::<Vec<&str>>()
                     .join(" ");
 
-                println!("{}• Scanning codebase semantically for \"{}\"...{}", slate, clean_query, reset);
-                let matches = crate::code_indexer::query_codebase(idx, &clean_query, &*embedding_model, 3);
+                println!(
+                    "{}• Scanning codebase semantically for \"{}\"...{}",
+                    slate, clean_query, reset
+                );
+                let matches =
+                    crate::code_indexer::query_codebase(idx, &clean_query, &*embedding_model, 3);
                 for (sim, block) in matches {
                     prompt_context.push_str(&format!(
                         "\nSemantic Match [similarity={:.2}]: {} ({}:{}-{})\n```\n{}\n```\n",
-                        sim, block.file_path, block.block_name, block.start_line, block.end_line, block.content
+                        sim,
+                        block.file_path,
+                        block.block_name,
+                        block.start_line,
+                        block.end_line,
+                        block.content
                     ));
-                    println!("  - Match: {} ({}) [similarity: {:.2}]", block.file_path, block.block_name, sim);
+                    println!(
+                        "  - Match: {} ({}) [similarity: {:.2}]",
+                        block.file_path, block.block_name, sim
+                    );
                 }
             } else {
-                println!("{}⚠️ Codebase index not loaded. Skip codebase search. Use /index to build.{}", gold, reset);
+                println!(
+                    "{}⚠️ Codebase index not loaded. Skip codebase search. Use /index to build.{}",
+                    gold, reset
+                );
             }
         }
 
         let final_prompt = format!(
             "{}\nUser Question: {}\n\nPlease provide a clear explanation or response.",
-            prompt_context,
-            explain_query
+            prompt_context, explain_query
         );
 
         println!("\n{}🧠 Swarm is thinking...{}", gold, reset);
         let result = crate::personas::run_persona(query_persona, &final_prompt, "shell-chat").await;
-        
+
         println!("\n{}🤖 Swarm Output:{}", bold, reset);
         if let Some(text) = result.output.get("explanation").and_then(|v| v.as_str()) {
             println!("{}", text);
         } else if let Some(text) = result.output.get("synthesis").and_then(|v| v.as_str()) {
             println!("{}", text);
         } else {
-            println!("{}", serde_json::to_string_pretty(&result.output).unwrap_or_else(|_| "No output".to_string()));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&result.output)
+                    .unwrap_or_else(|_| "No output".to_string())
+            );
         }
         println!();
     }
@@ -933,8 +1145,8 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
 }
 
 pub fn run_lsp_server() -> Result<()> {
-    use std::io::{self, Read, Write};
     use std::collections::HashMap;
+    use std::io::{self, Read, Write};
 
     let stdin = io::stdin();
     let mut stdin_lock = stdin.lock();
@@ -948,7 +1160,7 @@ pub fn run_lsp_server() -> Result<()> {
     loop {
         let mut content_length = None;
         let mut header_buf = Vec::new();
-        
+
         loop {
             let mut byte = [0u8; 1];
             match stdin_lock.read_exact(&mut byte) {
@@ -1052,7 +1264,10 @@ pub fn run_lsp_server() -> Result<()> {
                 "textDocument/didOpen" => {
                     if let Some(params) = request.get("params") {
                         if let Some(doc) = params.get("textDocument") {
-                            if let (Some(uri), Some(text)) = (doc.get("uri").and_then(|v| v.as_str()), doc.get("text").and_then(|v| v.as_str())) {
+                            if let (Some(uri), Some(text)) = (
+                                doc.get("uri").and_then(|v| v.as_str()),
+                                doc.get("text").and_then(|v| v.as_str()),
+                            ) {
                                 documents.insert(uri.to_string(), text.to_string());
                                 scan_and_publish_diagnostics(&mut stdout_lock, uri, text)?;
                             }
@@ -1063,11 +1278,19 @@ pub fn run_lsp_server() -> Result<()> {
                     if let Some(params) = request.get("params") {
                         if let Some(doc) = params.get("textDocument") {
                             if let Some(uri) = doc.get("uri").and_then(|v| v.as_str()) {
-                                if let Some(changes) = params.get("contentChanges").and_then(|v| v.as_array()) {
+                                if let Some(changes) =
+                                    params.get("contentChanges").and_then(|v| v.as_array())
+                                {
                                     if let Some(last_change) = changes.last() {
-                                        if let Some(text) = last_change.get("text").and_then(|v| v.as_str()) {
+                                        if let Some(text) =
+                                            last_change.get("text").and_then(|v| v.as_str())
+                                        {
                                             documents.insert(uri.to_string(), text.to_string());
-                                            scan_and_publish_diagnostics(&mut stdout_lock, uri, text)?;
+                                            scan_and_publish_diagnostics(
+                                                &mut stdout_lock,
+                                                uri,
+                                                text,
+                                            )?;
                                         }
                                     }
                                 }
@@ -1103,19 +1326,54 @@ pub fn run_lsp_server() -> Result<()> {
                             });
                             send_lsp_response(&mut stdout_lock, &create_req)?;
 
-                            send_lsp_progress(&mut stdout_lock, token, "korg speculative campaign", "consensus negotiation gate active...", Some(10), "begin")?;
-                            
+                            send_lsp_progress(
+                                &mut stdout_lock,
+                                token,
+                                "korg speculative campaign",
+                                "consensus negotiation gate active...",
+                                Some(10),
+                                "begin",
+                            )?;
+
                             std::thread::sleep(std::time::Duration::from_millis(100));
-                            send_lsp_progress(&mut stdout_lock, token, "korg speculative campaign", "[Lucas] formulating speculative plan...", Some(35), "report")?;
-                            
+                            send_lsp_progress(
+                                &mut stdout_lock,
+                                token,
+                                "korg speculative campaign",
+                                "[Lucas] formulating speculative plan...",
+                                Some(35),
+                                "report",
+                            )?;
+
                             std::thread::sleep(std::time::Duration::from_millis(100));
-                            send_lsp_progress(&mut stdout_lock, token, "korg speculative campaign", "[Harper] scanning for visual & key threats...", Some(60), "report")?;
-                            
+                            send_lsp_progress(
+                                &mut stdout_lock,
+                                token,
+                                "korg speculative campaign",
+                                "[Harper] scanning for visual & key threats...",
+                                Some(60),
+                                "report",
+                            )?;
+
                             std::thread::sleep(std::time::Duration::from_millis(100));
-                            send_lsp_progress(&mut stdout_lock, token, "korg speculative campaign", "[Benjamin] executing synthesis & compilation...", Some(85), "report")?;
-                            
+                            send_lsp_progress(
+                                &mut stdout_lock,
+                                token,
+                                "korg speculative campaign",
+                                "[Benjamin] executing synthesis & compilation...",
+                                Some(85),
+                                "report",
+                            )?;
+
                             std::thread::sleep(std::time::Duration::from_millis(100));
-                            send_lsp_progress(&mut stdout_lock, token, "korg speculative campaign", "campaign complete. workspace green.", Some(100), "end")?;
+                            send_lsp_progress(
+                                &mut stdout_lock,
+                                token,
+                                "korg speculative campaign",
+                                "campaign complete. workspace green.",
+                                Some(100),
+                                "end",
+                            )?;
 
                             let response = serde_json::json!({
                                 "jsonrpc": "2.0",
@@ -1147,10 +1405,17 @@ pub fn run_lsp_server() -> Result<()> {
     }
 }
 
-fn send_lsp_response<W: std::io::Write>(writer: &mut W, response: &serde_json::Value) -> Result<()> {
+fn send_lsp_response<W: std::io::Write>(
+    writer: &mut W,
+    response: &serde_json::Value,
+) -> Result<()> {
     let response_str = serde_json::to_string(response)?;
     let content_length = response_str.len();
-    write!(writer, "Content-Length: {}\r\n\r\n{}", content_length, response_str)?;
+    write!(
+        writer,
+        "Content-Length: {}\r\n\r\n{}",
+        content_length, response_str
+    )?;
     writer.flush()?;
     Ok(())
 }
@@ -1161,7 +1426,7 @@ fn send_lsp_progress<W: std::io::Write>(
     title: &str,
     message: &str,
     percentage: Option<u32>,
-    state: &str
+    state: &str,
 ) -> Result<()> {
     let value = match state {
         "begin" => serde_json::json!({
@@ -1180,7 +1445,7 @@ fn send_lsp_progress<W: std::io::Write>(
             "kind": "end",
             "message": message
         }),
-        _ => return Ok(())
+        _ => return Ok(()),
     };
 
     let notification = serde_json::json!({
@@ -1198,18 +1463,21 @@ fn send_lsp_progress<W: std::io::Write>(
 
 fn scan_line_for_secrets(line: &str) -> Vec<(usize, usize, String)> {
     let mut findings = Vec::new();
-    
+
     // Check for OpenAI keys
     let mut start_idx = 0;
     while let Some(pos) = line[start_idx..].find("sk-proj-") {
         let abs_pos = start_idx + pos;
         let remaining = &line[abs_pos + 8..];
-        let count = remaining.chars().take_while(|&c| c.is_ascii_alphanumeric() || c == '-' || c == '_').count();
+        let count = remaining
+            .chars()
+            .take_while(|&c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            .count();
         if count >= 48 {
             findings.push((
                 abs_pos,
                 abs_pos + 8 + count,
-                "CRITICAL: Potential OpenAI Project Secret Key Leak Detected!".to_string()
+                "CRITICAL: Potential OpenAI Project Secret Key Leak Detected!".to_string(),
             ));
         }
         start_idx = abs_pos + 8;
@@ -1220,21 +1488,28 @@ fn scan_line_for_secrets(line: &str) -> Vec<(usize, usize, String)> {
     while let Some(pos) = line[start_idx..].find("gsk_") {
         let abs_pos = start_idx + pos;
         let remaining = &line[abs_pos + 4..];
-        let count = remaining.chars().take_while(|&c| c.is_ascii_alphanumeric() || c == '-' || c == '_').count();
+        let count = remaining
+            .chars()
+            .take_while(|&c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            .count();
         if count >= 24 {
             findings.push((
                 abs_pos,
                 abs_pos + 4 + count,
-                "CRITICAL: Potential Groq Secret API Key Leak Detected!".to_string()
+                "CRITICAL: Potential Groq Secret API Key Leak Detected!".to_string(),
             ));
         }
         start_idx = abs_pos + 4;
     }
-    
+
     findings
 }
 
-fn scan_and_publish_diagnostics<W: std::io::Write>(writer: &mut W, uri: &str, text: &str) -> Result<()> {
+fn scan_and_publish_diagnostics<W: std::io::Write>(
+    writer: &mut W,
+    uri: &str,
+    text: &str,
+) -> Result<()> {
     let mut list = vec![];
 
     for (line_idx, line) in text.lines().enumerate() {
@@ -1272,10 +1547,14 @@ mod tests {
 
     #[test]
     fn test_secret_scanner_openai() {
-        let line = "let key = \"sk-proj-1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\";";
+        let line =
+            "let key = \"sk-proj-1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\";";
         let findings = scan_line_for_secrets(line);
         assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].2, "CRITICAL: Potential OpenAI Project Secret Key Leak Detected!");
+        assert_eq!(
+            findings[0].2,
+            "CRITICAL: Potential OpenAI Project Secret Key Leak Detected!"
+        );
     }
 
     #[test]
@@ -1283,7 +1562,10 @@ mod tests {
         let line = "let groq_api_key = \"gsk_1234567890abcdefghijklmnopqrstuvwxyzABC\";";
         let findings = scan_line_for_secrets(line);
         assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].2, "CRITICAL: Potential Groq Secret API Key Leak Detected!");
+        assert_eq!(
+            findings[0].2,
+            "CRITICAL: Potential Groq Secret API Key Leak Detected!"
+        );
     }
 
     #[test]
@@ -1297,7 +1579,8 @@ mod tests {
     fn test_scan_and_publish_diagnostics() {
         let mut output = Vec::new();
         let uri = "file:///test/file.rs";
-        let text = "let key = \"sk-proj-1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\";";
+        let text =
+            "let key = \"sk-proj-1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\";";
         scan_and_publish_diagnostics(&mut output, uri, text).unwrap();
 
         let output_str = String::from_utf8(output).unwrap();
@@ -1306,4 +1589,3 @@ mod tests {
         assert!(output_str.contains(uri));
     }
 }
-

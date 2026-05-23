@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Governs the active intelligence tier of the cognitive swarm.
 /// Defined here (in the registry kernel) as the single authoritative source of this state.
@@ -71,14 +71,31 @@ pub struct CapabilityNode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "effect_type", content = "payload")]
 pub enum CapabilityEffect {
-    SpawnAgent { agent_type: String },
-    KillAgent { id: String },
-    ModifyGraph { node: String },
-    StartSwarm { swarm_id: String },
-    StopSwarm { swarm_id: String },
-    ExecuteTool { tool: String },
-    InitializeSandbox { container_name: String, memory_limit_mb: usize },
-    TeardownSandbox { container_name: String },
+    SpawnAgent {
+        agent_type: String,
+    },
+    KillAgent {
+        id: String,
+    },
+    ModifyGraph {
+        node: String,
+    },
+    StartSwarm {
+        swarm_id: String,
+    },
+    StopSwarm {
+        swarm_id: String,
+    },
+    ExecuteTool {
+        tool: String,
+    },
+    InitializeSandbox {
+        container_name: String,
+        memory_limit_mb: usize,
+    },
+    TeardownSandbox {
+        container_name: String,
+    },
 }
 
 /// The individual node in the transactional Effect DAG
@@ -111,16 +128,15 @@ impl CapabilityState {
     pub fn as_cognition_mode(&self) -> CognitionMode {
         match self {
             CapabilityState::Mode(s) => match s.to_lowercase().as_str() {
-                "instant"                               => CognitionMode::Instant,
-                "heavy"                                 => CognitionMode::Heavy,
-                "research"                              => CognitionMode::Research,
-                "recovery"                              => CognitionMode::Recovery,
-                "autonomous"                            => CognitionMode::Autonomous,
+                "instant" => CognitionMode::Instant,
+                "heavy" => CognitionMode::Heavy,
+                "research" => CognitionMode::Research,
+                "recovery" => CognitionMode::Recovery,
+                "autonomous" => CognitionMode::Autonomous,
                 "heavy-consciousness" | "consciousness" => CognitionMode::HeavyConsciousness,
-                _                                       => CognitionMode::Balanced,
+                _ => CognitionMode::Balanced,
             },
             _ => CognitionMode::Balanced,
         }
     }
 }
-

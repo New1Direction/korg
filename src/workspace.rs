@@ -26,12 +26,12 @@
 //! The `WorkspaceManager` is the single authority over worktree creation and destruction.
 //! Nothing else may call `git worktree add/remove` directly.
 
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 
 // =========================================================================
 // WorkspaceId newtype
@@ -83,9 +83,7 @@ pub enum WorkspaceState {
     /// Path allocated, git worktree not yet created.
     Created,
     /// Git worktree exists on an isolated branch; no worker attached yet.
-    Provisioned {
-        branch: String,
-    },
+    Provisioned { branch: String },
     /// A worker process is attached and running.
     Active {
         /// The ACP routing_id of the worker currently using this workspace.
@@ -98,9 +96,7 @@ pub enum WorkspaceState {
         snapshot: String,
     },
     /// Unrecoverable error. Workspace contents may be partial.
-    Failed {
-        reason: String,
-    },
+    Failed { reason: String },
     /// Cleaned up. Path removed. Object is a tombstone only.
     Destroyed,
 }
@@ -238,8 +234,7 @@ impl WorkspaceManager {
     ///
     /// Transitions: `Created → Provisioned`.
     pub async fn provision(&mut self, id: &WorkspaceId) -> Result<()> {
-        let ws = self.workspaces.get(id)
-            .context("workspace not found")?;
+        let ws = self.workspaces.get(id).context("workspace not found")?;
 
         if !matches!(ws.state, WorkspaceState::Created) {
             anyhow::bail!("cannot provision workspace in state {:?}", ws.state);
@@ -251,7 +246,8 @@ impl WorkspaceManager {
         let routing_id = ws.routing_id.clone();
 
         // Create the directory
-        tokio::fs::create_dir_all(&path).await
+        tokio::fs::create_dir_all(&path)
+            .await
             .with_context(|| format!("failed to create workspace dir: {}", path.display()))?;
 
         // Attempt git worktree add (best-effort — falls back to plain dir)
@@ -270,7 +266,9 @@ impl WorkspaceManager {
 
         let ws = self.workspaces.get_mut(id).unwrap();
         ws.branch = actual_branch.clone();
-        ws.transition(WorkspaceState::Provisioned { branch: actual_branch });
+        ws.transition(WorkspaceState::Provisioned {
+            branch: actual_branch,
+        });
 
         Ok(())
     }
@@ -282,12 +280,19 @@ impl WorkspaceManager {
     /// Attach a worker (routing_id) to a provisioned workspace.
     ///
     /// Transitions: `Provisioned → Active`.
-    pub fn attach_worker(&mut self, id: &WorkspaceId, session_routing_id: String) -> Result<&Workspace> {
-        let ws = self.workspaces.get_mut(id)
-            .context("workspace not found")?;
+    pub fn attach_worker(
+        &mut self,
+        id: &WorkspaceId,
+        session_routing_id: String,
+    ) -> Result<&Workspace> {
+        let ws = self.workspaces.get_mut(id).context("workspace not found")?;
 
         if !ws.state.is_attachable() {
-            anyhow::bail!("workspace {} is not in Provisioned state (current: {:?})", id, ws.state);
+            anyhow::bail!(
+                "workspace {} is not in Provisioned state (current: {:?})",
+                id,
+                ws.state
+            );
         }
 
         tracing::info!(
@@ -308,8 +313,7 @@ impl WorkspaceManager {
     ///
     /// Returns the tree hash. Does not change workspace state.
     pub async fn snapshot_workspace(&self, id: &WorkspaceId) -> Result<String> {
-        let ws = self.workspaces.get(id)
-            .context("workspace not found")?;
+        let ws = self.workspaces.get(id).context("workspace not found")?;
 
         let hash = tokio::process::Command::new("git")
             .arg("write-tree")
@@ -327,8 +331,7 @@ impl WorkspaceManager {
 
     /// Revert the workspace's files to a target snapshot tree hash (Git read-tree -u --reset <hash>).
     pub async fn restore_workspace(&self, id: &WorkspaceId, tree_hash: &str) -> Result<()> {
-        let ws = self.workspaces.get(id)
-            .context("workspace not found")?;
+        let ws = self.workspaces.get(id).context("workspace not found")?;
 
         if !ws.branch.is_empty() {
             let output = tokio::process::Command::new("git")
@@ -340,7 +343,11 @@ impl WorkspaceManager {
 
             if !output.status.success() {
                 let err = String::from_utf8_lossy(&output.stderr);
-                return Err(anyhow::anyhow!("Failed to restore workspace to tree {}: {}", tree_hash, err));
+                return Err(anyhow::anyhow!(
+                    "Failed to restore workspace to tree {}: {}",
+                    tree_hash,
+                    err
+                ));
             }
         } else {
             tracing::warn!(workspace_id = %id, "Cannot restore non-git plain workspace; skipping file revert");
@@ -358,7 +365,10 @@ impl WorkspaceManager {
     pub async fn complete_workspace(&mut self, id: &WorkspaceId, exit_ok: bool) -> Result<String> {
         let snapshot = self.snapshot_workspace(id).await?;
         let ws = self.workspaces.get_mut(id).context("workspace not found")?;
-        ws.transition(WorkspaceState::Completed { exit_ok, snapshot: snapshot.clone() });
+        ws.transition(WorkspaceState::Completed {
+            exit_ok,
+            snapshot: snapshot.clone(),
+        });
         crate::metrics::record_workspace_completed(&ws.persona_id, exit_ok);
         Ok(snapshot)
     }
@@ -379,8 +389,7 @@ impl WorkspaceManager {
     ///
     /// Safe to call on any terminal state. Idempotent.
     pub async fn destroy_workspace(&mut self, id: &WorkspaceId) -> Result<()> {
-        let ws = self.workspaces.get(id)
-            .context("workspace not found")?;
+        let ws = self.workspaces.get(id).context("workspace not found")?;
 
         if matches!(ws.state, WorkspaceState::Destroyed) {
             return Ok(()); // idempotent
@@ -400,7 +409,8 @@ impl WorkspaceManager {
 
         // Remove the directory
         if path.exists() {
-            tokio::fs::remove_dir_all(&path).await
+            tokio::fs::remove_dir_all(&path)
+                .await
                 .with_context(|| format!("failed to remove workspace dir: {}", path.display()))?;
         }
 
@@ -424,13 +434,15 @@ impl WorkspaceManager {
 
     /// Iterate over all workspaces that are currently active (worker attached).
     pub fn active_workspaces(&self) -> impl Iterator<Item = &Workspace> {
-        self.workspaces.values()
+        self.workspaces
+            .values()
             .filter(|ws| matches!(ws.state, WorkspaceState::Active { .. }))
     }
 
     /// All workspaces for a given campaign session.
     pub fn workspaces_for_session(&self, session_id: Uuid) -> impl Iterator<Item = &Workspace> {
-        self.workspaces.values()
+        self.workspaces
+            .values()
             .filter(move |ws| ws.campaign_session_id == session_id)
     }
 
@@ -478,14 +490,12 @@ impl WorkspaceManager {
 
 /// Compute the workspace directory path from its ID and spec.
 fn workspace_path(id: &WorkspaceId, spec: &WorkspaceSpec) -> PathBuf {
-    crate::paths::cache_dir()
-        .join("workspaces")
-        .join(format!(
-            "{}-{}-{}",
-            spec.persona_id,
-            spec.routing_id,
-            id.as_uuid()
-        ))
+    crate::paths::cache_dir().join("workspaces").join(format!(
+        "{}-{}-{}",
+        spec.persona_id,
+        spec.routing_id,
+        id.as_uuid()
+    ))
 }
 
 /// Attempt to register a git worktree at `path` on `branch`.
@@ -556,17 +566,33 @@ mod tests {
     #[test]
     fn workspace_state_terminal_checks() {
         assert!(WorkspaceState::Destroyed.is_terminal());
-        assert!(WorkspaceState::Failed { reason: "oops".into() }.is_terminal());
-        assert!(WorkspaceState::Completed { exit_ok: true, snapshot: "abc".into() }.is_terminal());
+        assert!(WorkspaceState::Failed {
+            reason: "oops".into()
+        }
+        .is_terminal());
+        assert!(WorkspaceState::Completed {
+            exit_ok: true,
+            snapshot: "abc".into()
+        }
+        .is_terminal());
         assert!(!WorkspaceState::Created.is_terminal());
-        assert!(!WorkspaceState::Active { session_routing_id: "r".into() }.is_terminal());
+        assert!(!WorkspaceState::Active {
+            session_routing_id: "r".into()
+        }
+        .is_terminal());
     }
 
     #[test]
     fn workspace_state_attachable_only_when_provisioned() {
-        assert!(WorkspaceState::Provisioned { branch: "ws/x".into() }.is_attachable());
+        assert!(WorkspaceState::Provisioned {
+            branch: "ws/x".into()
+        }
+        .is_attachable());
         assert!(!WorkspaceState::Created.is_attachable());
-        assert!(!WorkspaceState::Active { session_routing_id: "r".into() }.is_attachable());
+        assert!(!WorkspaceState::Active {
+            session_routing_id: "r".into()
+        }
+        .is_attachable());
     }
 
     #[test]
@@ -604,7 +630,9 @@ mod tests {
 
         // Manually set state to Active (bypassing provision for unit test)
         let ws = mgr.workspaces.get_mut(&id).unwrap();
-        ws.state = WorkspaceState::Active { session_routing_id: "r1".into() };
+        ws.state = WorkspaceState::Active {
+            session_routing_id: "r1".into(),
+        };
 
         assert_eq!(mgr.active_workspaces().count(), 1);
     }
@@ -696,7 +724,10 @@ mod tests {
         mgr.destroy_workspace(&id).await.unwrap();
 
         assert!(!path.exists());
-        assert!(matches!(mgr.get(&id).unwrap().state, WorkspaceState::Destroyed));
+        assert!(matches!(
+            mgr.get(&id).unwrap().state,
+            WorkspaceState::Destroyed
+        ));
     }
 
     #[tokio::test]

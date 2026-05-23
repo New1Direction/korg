@@ -4,8 +4,8 @@
 //! into logical codeblocks, generates dense vector embeddings, and supports
 //! fast cosine similarity matches.
 
-use crate::embeddings::{cosine_similarity, CodebaseIndex, IndexedCodeBlock};
 use crate::embeddings::EmbeddingModel;
+use crate::embeddings::{cosine_similarity, CodebaseIndex, IndexedCodeBlock};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,10 +42,16 @@ pub fn recurse_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()
             if path.is_dir() {
                 recurse_files(&path, files)?;
             } else {
-                let indexable = path.extension()
+                let indexable = path
+                    .extension()
                     .and_then(|s| s.to_str())
                     .map(|ext| {
-                        ext == "rs" || ext == "toml" || ext == "js" || ext == "ts" || ext == "py" || ext == "md"
+                        ext == "rs"
+                            || ext == "toml"
+                            || ext == "js"
+                            || ext == "ts"
+                            || ext == "py"
+                            || ext == "md"
                     })
                     .unwrap_or(false);
 
@@ -61,7 +67,8 @@ pub fn recurse_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()
 /// Splits a source file into functional code blocks based on structural keywords
 pub fn split_file(path: &Path, root_dir: &str) -> std::io::Result<Vec<IndexedCodeBlock>> {
     let content = fs::read_to_string(path)?;
-    let relative_path = path.strip_prefix(root_dir)
+    let relative_path = path
+        .strip_prefix(root_dir)
         .unwrap_or(path)
         .to_string_lossy()
         .to_string();
@@ -82,7 +89,7 @@ pub fn split_file(path: &Path, root_dir: &str) -> std::io::Result<Vec<IndexedCod
 
         for (i, line) in lines.iter().enumerate() {
             let line_trimmed = line.trim();
-            
+
             // Check structural boundary keywords
             let is_boundary = line_trimmed.starts_with("pub struct ")
                 || line_trimmed.starts_with("struct ")
@@ -133,8 +140,13 @@ pub fn split_file(path: &Path, root_dir: &str) -> std::io::Result<Vec<IndexedCod
                 };
 
                 // Extract name
-                current_block_name = line_trimmed.split_whitespace()
-                    .nth(if line_trimmed.starts_with("pub") { 2 } else { 1 })
+                current_block_name = line_trimmed
+                    .split_whitespace()
+                    .nth(if line_trimmed.starts_with("pub") {
+                        2
+                    } else {
+                        1
+                    })
                     .map(|s| s.trim_end_matches('{').trim_end_matches('(').to_string())
                     .unwrap_or_else(|| "block".to_string());
             }
@@ -270,7 +282,8 @@ pub fn save_index(index: &CodebaseIndex, path: &str) -> Result<()> {
     if let Some(p) = parent {
         let _ = fs::create_dir_all(p);
     }
-    let serialized = serde_json::to_string_pretty(index).context("Failed to serialize codebase index")?;
+    let serialized =
+        serde_json::to_string_pretty(index).context("Failed to serialize codebase index")?;
     fs::write(path, serialized).context("Failed to write index to disk")?;
     Ok(())
 }
@@ -278,6 +291,7 @@ pub fn save_index(index: &CodebaseIndex, path: &str) -> Result<()> {
 /// Load a previously saved codebase semantic index
 pub fn load_index(path: &str) -> Result<CodebaseIndex> {
     let content = fs::read_to_string(path).context("Failed to read codebase index file")?;
-    let index = serde_json::from_str(&content).context("Failed to deserialize codebase index JSON")?;
+    let index =
+        serde_json::from_str(&content).context("Failed to deserialize codebase index JSON")?;
     Ok(index)
 }

@@ -9,34 +9,34 @@
 //! GET /api/metrics → { campaigns_started: 3, transitions_applied: 47, ... }
 //! ```
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // =========================================================================
 // Global Atomic Counters
 // =========================================================================
 
-static CAMPAIGNS_STARTED:         AtomicU64 = AtomicU64::new(0);
-static CAMPAIGNS_COMPLETED:       AtomicU64 = AtomicU64::new(0);
-static CAMPAIGN_ROUNDS_TOTAL:     AtomicU64 = AtomicU64::new(0);
-static TRANSITIONS_APPLIED:       AtomicU64 = AtomicU64::new(0);
-static TRANSITIONS_REJECTED:      AtomicU64 = AtomicU64::new(0);
-static TRANSITIONS_FAILED:        AtomicU64 = AtomicU64::new(0);
-static WORKER_TIMEOUTS:           AtomicU64 = AtomicU64::new(0);
-static EVALUATOR_VERDICTS:        AtomicU64 = AtomicU64::new(0);
-static DOOM_LOOPS_DETECTED:       AtomicU64 = AtomicU64::new(0);
-static KTRANS_PERSISTED:          AtomicU64 = AtomicU64::new(0);
-static VISION_POLICY_REDACTED:    AtomicU64 = AtomicU64::new(0);
-static VISION_POLICY_BLOCKED:     AtomicU64 = AtomicU64::new(0);
-static LLM_REQUESTS_TOTAL:        AtomicU64 = AtomicU64::new(0);
-static LLM_REQUESTS_FAILED:       AtomicU64 = AtomicU64::new(0);
-static AGENT_TOOL_INVOCATIONS:    AtomicU64 = AtomicU64::new(0);
-static SSE_EVENTS_BROADCAST:      AtomicU64 = AtomicU64::new(0);
-static WORKERS_COMPLETED:         AtomicU64 = AtomicU64::new(0);
-static WORKERS_CRASHED:           AtomicU64 = AtomicU64::new(0);
-static WORKSPACES_CREATED:        AtomicU64 = AtomicU64::new(0);
-static WORKSPACES_COMPLETED:      AtomicU64 = AtomicU64::new(0);
-static WORKSPACES_DESTROYED:      AtomicU64 = AtomicU64::new(0);
+static CAMPAIGNS_STARTED: AtomicU64 = AtomicU64::new(0);
+static CAMPAIGNS_COMPLETED: AtomicU64 = AtomicU64::new(0);
+static CAMPAIGN_ROUNDS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TRANSITIONS_APPLIED: AtomicU64 = AtomicU64::new(0);
+static TRANSITIONS_REJECTED: AtomicU64 = AtomicU64::new(0);
+static TRANSITIONS_FAILED: AtomicU64 = AtomicU64::new(0);
+static WORKER_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
+static EVALUATOR_VERDICTS: AtomicU64 = AtomicU64::new(0);
+static DOOM_LOOPS_DETECTED: AtomicU64 = AtomicU64::new(0);
+static KTRANS_PERSISTED: AtomicU64 = AtomicU64::new(0);
+static VISION_POLICY_REDACTED: AtomicU64 = AtomicU64::new(0);
+static VISION_POLICY_BLOCKED: AtomicU64 = AtomicU64::new(0);
+static LLM_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static LLM_REQUESTS_FAILED: AtomicU64 = AtomicU64::new(0);
+static AGENT_TOOL_INVOCATIONS: AtomicU64 = AtomicU64::new(0);
+static SSE_EVENTS_BROADCAST: AtomicU64 = AtomicU64::new(0);
+static WORKERS_COMPLETED: AtomicU64 = AtomicU64::new(0);
+static WORKERS_CRASHED: AtomicU64 = AtomicU64::new(0);
+static WORKSPACES_CREATED: AtomicU64 = AtomicU64::new(0);
+static WORKSPACES_COMPLETED: AtomicU64 = AtomicU64::new(0);
+static WORKSPACES_DESTROYED: AtomicU64 = AtomicU64::new(0);
 
 // =========================================================================
 // Record Functions (call sites in hot paths)
@@ -101,11 +101,7 @@ pub fn record_transition_failed(capability_id: &str, error: &str) {
 #[inline]
 pub fn record_worker_timeout(worker_id: &str) {
     WORKER_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
-    tracing::warn!(
-        counter = "worker_timeouts",
-        worker_id,
-        "worker_timeout"
-    );
+    tracing::warn!(counter = "worker_timeouts", worker_id, "worker_timeout");
 }
 
 #[inline]
@@ -158,7 +154,11 @@ pub fn record_llm_failure(provider: &str, status: u16) {
 #[inline]
 pub fn record_agent_tool_invocation(tool_name: &str) {
     AGENT_TOOL_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
-    tracing::debug!(counter = "tool_invocations", tool_name, "agent_tool_invoked");
+    tracing::debug!(
+        counter = "tool_invocations",
+        tool_name,
+        "agent_tool_invoked"
+    );
 }
 
 #[inline]
@@ -187,13 +187,22 @@ pub fn record_workspace_created(persona: &str) {
 #[inline]
 pub fn record_workspace_completed(persona: &str, exit_ok: bool) {
     WORKSPACES_COMPLETED.fetch_add(1, Ordering::Relaxed);
-    tracing::info!(counter = "workspaces_completed", persona, exit_ok, "workspace_completed");
+    tracing::info!(
+        counter = "workspaces_completed",
+        persona,
+        exit_ok,
+        "workspace_completed"
+    );
 }
 
 #[inline]
 pub fn record_workspace_destroyed(persona: &str) {
     WORKSPACES_DESTROYED.fetch_add(1, Ordering::Relaxed);
-    tracing::debug!(counter = "workspaces_destroyed", persona, "workspace_destroyed");
+    tracing::debug!(
+        counter = "workspaces_destroyed",
+        persona,
+        "workspace_destroyed"
+    );
 }
 
 // =========================================================================
@@ -230,27 +239,27 @@ pub struct MetricsSnapshot {
 /// Collect a point-in-time snapshot of all metrics. Lock-free.
 pub fn snapshot() -> MetricsSnapshot {
     MetricsSnapshot {
-        campaigns_started:      CAMPAIGNS_STARTED.load(Ordering::Relaxed),
-        campaigns_completed:    CAMPAIGNS_COMPLETED.load(Ordering::Relaxed),
-        campaign_rounds_total:  CAMPAIGN_ROUNDS_TOTAL.load(Ordering::Relaxed),
-        transitions_applied:    TRANSITIONS_APPLIED.load(Ordering::Relaxed),
-        transitions_rejected:   TRANSITIONS_REJECTED.load(Ordering::Relaxed),
-        transitions_failed:     TRANSITIONS_FAILED.load(Ordering::Relaxed),
-        worker_timeouts:        WORKER_TIMEOUTS.load(Ordering::Relaxed),
-        evaluator_verdicts:     EVALUATOR_VERDICTS.load(Ordering::Relaxed),
-        doom_loops_detected:    DOOM_LOOPS_DETECTED.load(Ordering::Relaxed),
-        ktrans_persisted:       KTRANS_PERSISTED.load(Ordering::Relaxed),
+        campaigns_started: CAMPAIGNS_STARTED.load(Ordering::Relaxed),
+        campaigns_completed: CAMPAIGNS_COMPLETED.load(Ordering::Relaxed),
+        campaign_rounds_total: CAMPAIGN_ROUNDS_TOTAL.load(Ordering::Relaxed),
+        transitions_applied: TRANSITIONS_APPLIED.load(Ordering::Relaxed),
+        transitions_rejected: TRANSITIONS_REJECTED.load(Ordering::Relaxed),
+        transitions_failed: TRANSITIONS_FAILED.load(Ordering::Relaxed),
+        worker_timeouts: WORKER_TIMEOUTS.load(Ordering::Relaxed),
+        evaluator_verdicts: EVALUATOR_VERDICTS.load(Ordering::Relaxed),
+        doom_loops_detected: DOOM_LOOPS_DETECTED.load(Ordering::Relaxed),
+        ktrans_persisted: KTRANS_PERSISTED.load(Ordering::Relaxed),
         vision_policy_redacted: VISION_POLICY_REDACTED.load(Ordering::Relaxed),
-        vision_policy_blocked:  VISION_POLICY_BLOCKED.load(Ordering::Relaxed),
-        llm_requests_total:     LLM_REQUESTS_TOTAL.load(Ordering::Relaxed),
-        llm_requests_failed:    LLM_REQUESTS_FAILED.load(Ordering::Relaxed),
+        vision_policy_blocked: VISION_POLICY_BLOCKED.load(Ordering::Relaxed),
+        llm_requests_total: LLM_REQUESTS_TOTAL.load(Ordering::Relaxed),
+        llm_requests_failed: LLM_REQUESTS_FAILED.load(Ordering::Relaxed),
         agent_tool_invocations: AGENT_TOOL_INVOCATIONS.load(Ordering::Relaxed),
-        sse_events_broadcast:   SSE_EVENTS_BROADCAST.load(Ordering::Relaxed),
-        workers_completed:      WORKERS_COMPLETED.load(Ordering::Relaxed),
-        workers_crashed:        WORKERS_CRASHED.load(Ordering::Relaxed),
-        workspaces_created:     WORKSPACES_CREATED.load(Ordering::Relaxed),
-        workspaces_completed:   WORKSPACES_COMPLETED.load(Ordering::Relaxed),
-        workspaces_destroyed:   WORKSPACES_DESTROYED.load(Ordering::Relaxed),
+        sse_events_broadcast: SSE_EVENTS_BROADCAST.load(Ordering::Relaxed),
+        workers_completed: WORKERS_COMPLETED.load(Ordering::Relaxed),
+        workers_crashed: WORKERS_CRASHED.load(Ordering::Relaxed),
+        workspaces_created: WORKSPACES_CREATED.load(Ordering::Relaxed),
+        workspaces_completed: WORKSPACES_COMPLETED.load(Ordering::Relaxed),
+        workspaces_destroyed: WORKSPACES_DESTROYED.load(Ordering::Relaxed),
     }
 }
 

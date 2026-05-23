@@ -1,8 +1,8 @@
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
-use std::collections::HashMap;
-use super::types::{CapabilityState, CapabilityLease};
 use super::log::HlcTimestamp;
+use super::types::{CapabilityLease, CapabilityState};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CheckpointMetadata {

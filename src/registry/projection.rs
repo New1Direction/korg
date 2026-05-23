@@ -1,10 +1,10 @@
-use serde::Serialize;
-use uuid::Uuid;
-use std::collections::HashMap;
-use super::log::JournalEvent;
 use super::log::CapabilityEvent;
 use super::log::HlcTimestamp;
+use super::log::JournalEvent;
 use super::plan::TransitionState;
+use serde::Serialize;
+use std::collections::HashMap;
+use uuid::Uuid;
 
 pub trait Projection: Send + Sync {
     type State: Serialize + Clone;
@@ -21,7 +21,7 @@ pub trait Projection: Send + Sync {
 
     /// Extract a point-in-time serializable snapshot of the projected state.
     fn snapshot(&self) -> Self::State;
-    
+
     /// Reset the projection to its default initial state
     fn reset(&mut self);
 
@@ -79,7 +79,7 @@ impl CampaignProjection {
                 failures: vec![],
                 started_at_seq: 0,
                 latest_clock: HlcTimestamp::default(),
-            }
+            },
         }
     }
 }
@@ -108,7 +108,9 @@ impl Projection for CampaignProjection {
 
         match &envelope.event {
             CapabilityEvent::LeaseAcquired { owner_id, .. } => {
-                if self.state.status == CampaignStatus::Idle || self.state.status == CampaignStatus::Aborted {
+                if self.state.status == CampaignStatus::Idle
+                    || self.state.status == CampaignStatus::Aborted
+                {
                     self.state.campaign_id = Some(*owner_id);
                     self.state.status = CampaignStatus::Active;
                     self.state.started_at_seq = envelope.seq_id;
@@ -129,14 +131,24 @@ impl Projection for CampaignProjection {
                     _ => {}
                 }
             }
-            CapabilityEvent::EffectStarted { step_target, effect_id, .. } => {
-                self.state.current_phase = format!("Executing step: {} (Effect {})", step_target, effect_id);
+            CapabilityEvent::EffectStarted {
+                step_target,
+                effect_id,
+                ..
+            } => {
+                self.state.current_phase =
+                    format!("Executing step: {} (Effect {})", step_target, effect_id);
                 self.state.active_workers = self.state.active_workers.max(1);
             }
             CapabilityEvent::EffectRetrying { .. } => {
                 self.state.retries += 1;
             }
-            CapabilityEvent::EffectFailed { step_target, effect_id, reason, .. } => {
+            CapabilityEvent::EffectFailed {
+                step_target,
+                effect_id,
+                reason,
+                ..
+            } => {
                 self.state.failures.push(FailureSummary {
                     step_target: step_target.clone(),
                     effect_id: *effect_id,
@@ -164,10 +176,10 @@ pub trait DynamicProjection: Send + Sync {
     fn rebuild_dynamic(&mut self, events: &[JournalEvent]) -> Result<(), String>;
 }
 
-impl<T> DynamicProjection for T 
-where 
+impl<T> DynamicProjection for T
+where
     T: Projection,
-    T::State: 'static
+    T::State: 'static,
 {
     fn name(&self) -> &'static str {
         self.name()
@@ -206,7 +218,7 @@ impl ProjectionEngine {
     pub fn register<T>(&mut self, projection: T)
     where
         T: Projection + 'static,
-        T::State: 'static
+        T::State: 'static,
     {
         let name = projection.name().to_string();
         self.projections.insert(name, Box::new(projection));
@@ -220,7 +232,9 @@ impl ProjectionEngine {
     }
 
     pub fn get_projection_state(&self, name: &str) -> Option<serde_json::Value> {
-        self.projections.get(name).and_then(|p| p.snapshot_json().ok())
+        self.projections
+            .get(name)
+            .and_then(|p| p.snapshot_json().ok())
     }
 
     pub fn get_projection_version(&self, name: &str) -> Option<u32> {
@@ -233,7 +247,11 @@ impl ProjectionEngine {
         }
     }
 
-    pub fn rebuild_projection(&mut self, name: &str, events: &[JournalEvent]) -> Result<(), String> {
+    pub fn rebuild_projection(
+        &mut self,
+        name: &str,
+        events: &[JournalEvent],
+    ) -> Result<(), String> {
         if let Some(proj) = self.projections.get_mut(name) {
             proj.rebuild_dynamic(events)?;
             Ok(())

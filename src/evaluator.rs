@@ -104,7 +104,8 @@ pub struct Evaluator {
     pub config: RubricConfig,
     window: VecDeque<TraceEvent>,
     embedding_model: std::sync::Arc<dyn EmbeddingModel>,
-    embedding_cache: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, Vec<f32>>>>,
+    embedding_cache:
+        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, Vec<f32>>>>,
 }
 
 impl Evaluator {
@@ -134,7 +135,9 @@ impl Evaluator {
             config: cfg,
             window: VecDeque::with_capacity(WINDOW_SIZE),
             embedding_model,
-            embedding_cache: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            embedding_cache: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 
@@ -195,7 +198,6 @@ impl Evaluator {
         }
     }
 
-
     /// The key polish requested: semantic_entropy is now a first-class method
     /// that any rubric can call directly. It uses the pluggable embedding model.
     ///
@@ -254,7 +256,8 @@ impl Evaluator {
                 }
             }
             (sum_sim, pairs)
-        }).await;
+        })
+        .await;
 
         let h = match calculate_res {
             Ok((sum_sim, pairs)) => {
@@ -500,11 +503,23 @@ impl Evaluator {
         let live_entropy = self.semantic_entropy_from_window().await;
 
         let checks = vec![
-            ("Trajectory Efficiency", self.check_trajectory_efficiency(live_entropy)),
-            ("Epistemic Integrity", self.check_epistemic_integrity(live_entropy)),
+            (
+                "Trajectory Efficiency",
+                self.check_trajectory_efficiency(live_entropy),
+            ),
+            (
+                "Epistemic Integrity",
+                self.check_epistemic_integrity(live_entropy),
+            ),
             ("Tool-Use Precision", self.check_tool_use_precision()),
-            ("Semantic Adherence", self.check_semantic_adherence(live_entropy)),
-            ("Resource Utilization", self.check_resource_utilization(live_entropy)),
+            (
+                "Semantic Adherence",
+                self.check_semantic_adherence(live_entropy),
+            ),
+            (
+                "Resource Utilization",
+                self.check_resource_utilization(live_entropy),
+            ),
         ];
 
         let mut passed = 0u8;
@@ -515,7 +530,12 @@ impl Evaluator {
                 passed += 1;
             }
             justifications.push(format!("[{}] {}", name, j));
-            tracing::debug!(rubric = name, passed = ok, justification = j, "rubric_evaluated");
+            tracing::debug!(
+                rubric = name,
+                passed = ok,
+                justification = j,
+                "rubric_evaluated"
+            );
         }
 
         let total = 5u8;

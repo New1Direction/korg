@@ -15,16 +15,14 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::llm::{
-    LlmProvider, LlmRequest, LlmResponse, Message, Role, ToolCall, ToolDefinition,
-};
+use crate::llm::{LlmProvider, LlmRequest, LlmResponse, Message, Role, ToolCall, ToolDefinition};
 
-pub static GLOBAL_CANCELLATION: std::sync::OnceLock<tokio_util::sync::CancellationToken> = std::sync::OnceLock::new();
+pub static GLOBAL_CANCELLATION: std::sync::OnceLock<tokio_util::sync::CancellationToken> =
+    std::sync::OnceLock::new();
 
 pub fn get_cancellation_token() -> &'static tokio_util::sync::CancellationToken {
     GLOBAL_CANCELLATION.get_or_init(|| tokio_util::sync::CancellationToken::new())
 }
-
 
 // =========================================================================
 // Configuration
@@ -359,12 +357,17 @@ async fn execute_write_file(args: &serde_json::Value) -> ToolResult {
     }
 }
 
-fn find_symbol_offsets(node: tree_sitter::Node, source: &str, parts: &[&str], current_idx: usize) -> Option<(usize, usize)> {
+fn find_symbol_offsets(
+    node: tree_sitter::Node,
+    source: &str,
+    parts: &[&str],
+    current_idx: usize,
+) -> Option<(usize, usize)> {
     if current_idx >= parts.len() {
         return None;
     }
     let target = parts[current_idx];
-    
+
     let is_match = match node.kind() {
         "mod_item" | "struct_item" | "impl_item" | "trait_item" | "function_item" => {
             let mut cursor = node.walk();
@@ -383,7 +386,7 @@ fn find_symbol_offsets(node: tree_sitter::Node, source: &str, parts: &[&str], cu
         }
         _ => false,
     };
-    
+
     if is_match {
         if current_idx == parts.len() - 1 {
             return Some((node.start_byte(), node.end_byte()));
@@ -442,7 +445,8 @@ async fn execute_edit_file(args: &serde_json::Value) -> ToolResult {
     let mut replaced_content = String::new();
 
     if let Some(sym_path) = symbol_path {
-        let lang = crate::code_intel::KorgLanguage::from_path(path).unwrap_or(crate::code_intel::KorgLanguage::Rust);
+        let lang = crate::code_intel::KorgLanguage::from_path(path)
+            .unwrap_or(crate::code_intel::KorgLanguage::Rust);
         let mut parser = tree_sitter::Parser::new();
         if parser.set_language(&lang.tree_sitter_lang()).is_err() {
             return ToolResult {
@@ -461,7 +465,9 @@ async fn execute_edit_file(args: &serde_json::Value) -> ToolResult {
         };
 
         let parts: Vec<&str> = sym_path.split("::").collect();
-        if let Some((start_byte, end_byte)) = find_symbol_offsets(tree.root_node(), &content, &parts, 0) {
+        if let Some((start_byte, end_byte)) =
+            find_symbol_offsets(tree.root_node(), &content, &parts, 0)
+        {
             let mut prefix = content[..start_byte].to_string();
             let suffix = &content[end_byte..];
             prefix.push_str(new_string);
@@ -474,15 +480,16 @@ async fn execute_edit_file(args: &serde_json::Value) -> ToolResult {
             };
         }
     } else {
-        let old_str = match old_string {
-            Some(s) => s,
-            None => {
-                return ToolResult {
+        let old_str =
+            match old_string {
+                Some(s) => s,
+                None => return ToolResult {
                     success: false,
-                    output: "Either 'symbol_path' or 'old_string' must be provided for editing a file".to_string(),
-                }
-            }
-        };
+                    output:
+                        "Either 'symbol_path' or 'old_string' must be provided for editing a file"
+                            .to_string(),
+                },
+            };
 
         let count = content.matches(old_str).count();
         if count == 0 {
@@ -515,17 +522,23 @@ async fn execute_edit_file(args: &serde_json::Value) -> ToolResult {
             let pre = crate::code_intel::CodeIntelEngine::validate_syntax(&content_clone, lang);
             let post = crate::code_intel::CodeIntelEngine::validate_syntax(&replaced_clone, lang);
             (pre, post)
-        }).await.unwrap_or_else(|_| (vec![], vec![]));
-        
+        })
+        .await
+        .unwrap_or_else(|_| (vec![], vec![]));
+
         if post_anomalies.len() > pre_anomalies.len() {
-            let errors: Vec<String> = post_anomalies.iter()
+            let errors: Vec<String> = post_anomalies
+                .iter()
                 .filter(|a| a.severity == "Error")
                 .map(|a| format!("line {}: {}", a.line, a.context))
                 .collect();
             if !errors.is_empty() {
                 return ToolResult {
                     success: false,
-                    output: format!("Edit rejected: AST degradation detected. Syntax errors introduced:\n{}", errors.join("\n")),
+                    output: format!(
+                        "Edit rejected: AST degradation detected. Syntax errors introduced:\n{}",
+                        errors.join("\n")
+                    ),
                 };
             }
         }
@@ -547,9 +560,12 @@ async fn execute_edit_file(args: &serde_json::Value) -> ToolResult {
             .arg(&temp_path)
             .status()
             .await;
-        
+
         if let Ok(formatted_content) = tokio::fs::read_to_string(&temp_path).await {
-            let final_anomalies = crate::code_intel::CodeIntelEngine::validate_syntax(&formatted_content, crate::code_intel::KorgLanguage::Rust);
+            let final_anomalies = crate::code_intel::CodeIntelEngine::validate_syntax(
+                &formatted_content,
+                crate::code_intel::KorgLanguage::Rust,
+            );
             let has_fatal_error = final_anomalies.iter().any(|a| a.severity == "Error");
             if has_fatal_error {
                 let _ = tokio::fs::remove_file(&temp_path).await;
@@ -597,7 +613,10 @@ async fn execute_edit_file(args: &serde_json::Value) -> ToolResult {
 
     ToolResult {
         success: true,
-        output: format!("Successfully edited '{}' using AST structural validation loop.", path),
+        output: format!(
+            "Successfully edited '{}' using AST structural validation loop.",
+            path
+        ),
     }
 }
 
@@ -681,7 +700,10 @@ async fn execute_run_command(args: &serde_json::Value) -> ToolResult {
         Err(e) => {
             return ToolResult {
                 success: false,
-                output: format!("Failed to canonicalize working directory '{}': {}", working_dir, e),
+                output: format!(
+                    "Failed to canonicalize working directory '{}': {}",
+                    working_dir, e
+                ),
             };
         }
     };
@@ -689,7 +711,8 @@ async fn execute_run_command(args: &serde_json::Value) -> ToolResult {
     if !canonical_working_dir.starts_with(&canonical_workspace) {
         return ToolResult {
             success: false,
-            output: "Access Denied: working directory is outside of the workspace confinement.".to_string(),
+            output: "Access Denied: working directory is outside of the workspace confinement."
+                .to_string(),
         };
     }
 
@@ -727,7 +750,10 @@ async fn execute_run_command(args: &serde_json::Value) -> ToolResult {
 
     // Prepare Command
     let mut cmd = if config.allow_unsafe_commands {
-        eprintln!("[WARNING] Executing command with implicit shell wrappers: {}", command);
+        eprintln!(
+            "[WARNING] Executing command with implicit shell wrappers: {}",
+            command
+        );
         let mut c = tokio::process::Command::new("sh");
         c.arg("-c").arg(command);
         c
@@ -902,9 +928,15 @@ async fn execute_run_command(args: &serde_json::Value) -> ToolResult {
     }
 
     if timed_out {
-        output_str = format!("Command timed out after {} ms.\nOutput collected so far:\n{}", timeout_ms, output_str);
+        output_str = format!(
+            "Command timed out after {} ms.\nOutput collected so far:\n{}",
+            timeout_ms, output_str
+        );
     } else if cancelled {
-        output_str = format!("Command cancelled cooperatively.\nOutput collected so far:\n{}", output_str);
+        output_str = format!(
+            "Command cancelled cooperatively.\nOutput collected so far:\n{}",
+            output_str
+        );
     }
 
     // Structured Audit Logging
@@ -939,10 +971,7 @@ async fn execute_run_command(args: &serde_json::Value) -> ToolResult {
 }
 
 async fn execute_list_directory(args: &serde_json::Value) -> ToolResult {
-    let path = args
-        .get("path")
-        .and_then(|v| v.as_str())
-        .unwrap_or(".");
+    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
     let recursive = args
         .get("recursive")
         .and_then(|v| v.as_bool())
@@ -1029,16 +1058,11 @@ async fn execute_search_files(args: &serde_json::Value) -> ToolResult {
             }
         }
     };
-    let path = args
-        .get("path")
-        .and_then(|v| v.as_str())
-        .unwrap_or(".");
+    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
     let include = args.get("include").and_then(|v| v.as_str());
 
     let mut cmd = tokio::process::Command::new("grep");
-    cmd.arg("-rn")
-        .arg("--color=never")
-        .arg("-I"); // skip binary files
+    cmd.arg("-rn").arg("--color=never").arg("-I"); // skip binary files
 
     if let Some(glob) = include {
         cmd.arg("--include").arg(glob);
@@ -1096,7 +1120,10 @@ async fn execute_find_symbols(args: &serde_json::Value) -> ToolResult {
         None => {
             return ToolResult {
                 success: false,
-                output: format!("Unsupported file type for symbol extraction: {:?}", path_buf),
+                output: format!(
+                    "Unsupported file type for symbol extraction: {:?}",
+                    path_buf
+                ),
             }
         }
     };
@@ -1106,7 +1133,9 @@ async fn execute_find_symbols(args: &serde_json::Value) -> ToolResult {
             let content_clone = content.clone();
             let symbols = tokio::task::spawn_blocking(move || {
                 crate::code_intel::CodeIntelEngine::extract_symbols(&content_clone, lang)
-            }).await.unwrap_or_else(|_| vec![]);
+            })
+            .await
+            .unwrap_or_else(|_| vec![]);
             match serde_json::to_string_pretty(&symbols) {
                 Ok(json) => ToolResult {
                     success: true,
@@ -1142,7 +1171,10 @@ async fn execute_verify_syntax(args: &serde_json::Value) -> ToolResult {
         None => {
             return ToolResult {
                 success: false,
-                output: format!("Unsupported file type for syntax verification: {:?}", path_buf),
+                output: format!(
+                    "Unsupported file type for syntax verification: {:?}",
+                    path_buf
+                ),
             }
         }
     };
@@ -1152,7 +1184,9 @@ async fn execute_verify_syntax(args: &serde_json::Value) -> ToolResult {
             let content_clone = content.clone();
             let anomalies = tokio::task::spawn_blocking(move || {
                 crate::code_intel::CodeIntelEngine::validate_syntax(&content_clone, lang)
-            }).await.unwrap_or_else(|_| vec![]);
+            })
+            .await
+            .unwrap_or_else(|_| vec![]);
             if anomalies.is_empty() {
                 ToolResult {
                     success: true,
@@ -1162,7 +1196,10 @@ async fn execute_verify_syntax(args: &serde_json::Value) -> ToolResult {
                 match serde_json::to_string_pretty(&anomalies) {
                     Ok(json) => ToolResult {
                         success: true,
-                        output: format!("⚠️ Pre-flight syntax validation detected anomalies:\n{}", json),
+                        output: format!(
+                            "⚠️ Pre-flight syntax validation detected anomalies:\n{}",
+                            json
+                        ),
                     },
                     Err(e) => ToolResult {
                         success: false,
@@ -1205,7 +1242,10 @@ async fn execute_query_ast(args: &serde_json::Value) -> ToolResult {
         None => {
             return ToolResult {
                 success: false,
-                output: format!("Unsupported file type for AST S-expression query: {:?}", path_buf),
+                output: format!(
+                    "Unsupported file type for AST S-expression query: {:?}",
+                    path_buf
+                ),
             }
         }
     };
@@ -1215,8 +1255,13 @@ async fn execute_query_ast(args: &serde_json::Value) -> ToolResult {
             let content_clone = content.clone();
             let query_str_clone = query_str.to_string();
             let query_res = tokio::task::spawn_blocking(move || {
-                crate::code_intel::CodeIntelEngine::query_structure(&content_clone, lang, &query_str_clone)
-            }).await;
+                crate::code_intel::CodeIntelEngine::query_structure(
+                    &content_clone,
+                    lang,
+                    &query_str_clone,
+                )
+            })
+            .await;
             match query_res {
                 Ok(Ok(matches)) => {
                     if matches.is_empty() {
@@ -1244,7 +1289,7 @@ async fn execute_query_ast(args: &serde_json::Value) -> ToolResult {
                 Err(e) => ToolResult {
                     success: false,
                     output: format!("Tree-sitter query task join error: {:?}", e),
-                }
+                },
             }
         }
         Err(e) => ToolResult {
@@ -1284,10 +1329,11 @@ async fn execute_semantic_search(args: &serde_json::Value) -> ToolResult {
         }
     };
 
-    let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> = match crate::embeddings::CandleEmbeddingModel::load() {
-        Ok(model) => Box::new(model),
-        Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
-    };
+    let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> =
+        match crate::embeddings::CandleEmbeddingModel::load() {
+            Ok(model) => Box::new(model),
+            Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
+        };
 
     let matches = crate::code_indexer::query_codebase(&index, query, &*embedding_model, top_n);
     if matches.is_empty() {
@@ -1402,7 +1448,10 @@ pub async fn run_agent_loop(
 
     for turn in 0..MAX_AGENT_TURNS {
         if get_cancellation_token().is_cancelled() {
-            println!("{}⚠ Agent loop aborted due to cooperative cancellation.{}", gold, reset);
+            println!(
+                "{}⚠ Agent loop aborted due to cooperative cancellation.{}",
+                gold, reset
+            );
             return Ok(AgentRunResult {
                 summary: "Cancelled cooperatively".to_string(),
                 turns: turn,
@@ -1427,24 +1476,24 @@ pub async fn run_agent_loop(
             frequency_penalty: None,
         };
 
-        println!(
-            "\n{slate}──── Agent Turn {} ────{reset}",
-            turn + 1
-        );
+        println!("\n{slate}──── Agent Turn {} ────{reset}", turn + 1);
 
         let response = match provider.complete(request).await {
             Ok(r) => r,
             Err(e) => {
-                eprintln!(
-                    "{}❌ LLM call failed: {}{}", pink, e, reset
-                );
+                eprintln!("{}❌ LLM call failed: {}{}", pink, e, reset);
                 consecutive_text_turns += 1;
                 if consecutive_text_turns >= 3 {
                     eprintln!(
                         "{}⚠ {} consecutive LLM failures. Check your API key and provider config.{}",
                         gold, consecutive_text_turns, reset
                     );
-                    final_summary = format!("Agent stopped: LLM provider '{}' failed {} times consecutively: {}", provider.name(), consecutive_text_turns, e);
+                    final_summary = format!(
+                        "Agent stopped: LLM provider '{}' failed {} times consecutively: {}",
+                        provider.name(),
+                        consecutive_text_turns,
+                        e
+                    );
                     break;
                 }
                 // Add error to messages and let the loop try again
@@ -1463,17 +1512,13 @@ pub async fn run_agent_loop(
 
         if tool_calls.is_empty() {
             // No tool calls — this is either a text response or completion
-            println!(
-                "{}🤖 Korg:{} {}",
-                bold, reset, response.content.trim()
-            );
+            println!("{}🤖 Korg:{} {}", bold, reset, response.content.trim());
 
             if let Some(ref tx) = tui_tx {
-                let _ = tx
-                    .try_send(crate::tui::TuiUpdate::Trace(format!(
-                        "🤖 Agent: {}",
-                        response.content.chars().take(200).collect::<String>()
-                    )));
+                let _ = tx.try_send(crate::tui::TuiUpdate::Trace(format!(
+                    "🤖 Agent: {}",
+                    response.content.chars().take(200).collect::<String>()
+                )));
             }
 
             messages.push(Message {
@@ -1501,7 +1546,10 @@ pub async fn run_agent_loop(
                     "{}⚠ Provider returned {} consecutive text responses without tool calls.",
                     "\x1b[38;2;255;215;0m", consecutive_text_turns
                 );
-                eprintln!("  Ensure your LLM supports function/tool calling (OpenAI, Anthropic, Grok).{}", reset);
+                eprintln!(
+                    "  Ensure your LLM supports function/tool calling (OpenAI, Anthropic, Grok).{}",
+                    reset
+                );
                 final_summary = response.content;
                 break;
             }
@@ -1555,10 +1603,7 @@ pub async fn run_agent_loop(
             if tool_name == "task_complete" {
                 let result = execute_tool(tool_name, tool_args).await;
                 final_summary = result.output.clone();
-                println!(
-                    "\n{}✅ Task complete: {}{}",
-                    green, final_summary, reset
-                );
+                println!("\n{}✅ Task complete: {}{}", green, final_summary, reset);
                 return Ok(AgentRunResult {
                     summary: final_summary,
                     turns: turn + 1,
@@ -1580,7 +1625,12 @@ pub async fn run_agent_loop(
             let line_count = result.output.lines().count();
             if line_count > 5 {
                 println!(
-                    "    {} {}\n    {}... ({} more lines){}", status, preview, slate, line_count - 5, reset
+                    "    {} {}\n    {}... ({} more lines){}",
+                    status,
+                    preview,
+                    slate,
+                    line_count - 5,
+                    reset
                 );
             } else {
                 println!("    {} {}", status, preview);

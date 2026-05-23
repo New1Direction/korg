@@ -117,7 +117,10 @@ pub fn parse_structured_response(response: &str) -> (serde_json::Value, f32, ser
                     frontmatter.insert(key.to_string(), serde_json::Value::Bool(false));
                 } else {
                     let stripped = value_str.trim_matches(|c| c == '\'' || c == '"');
-                    frontmatter.insert(key.to_string(), serde_json::Value::String(stripped.to_string()));
+                    frontmatter.insert(
+                        key.to_string(),
+                        serde_json::Value::String(stripped.to_string()),
+                    );
                 }
             }
         }
@@ -238,7 +241,11 @@ impl LlmPersona {
         }
     }
 
-    pub async fn think(&self, payload: &str, routing_id: &str) -> Result<PersonaResult, crate::llm::LlmError> {
+    pub async fn think(
+        &self,
+        payload: &str,
+        routing_id: &str,
+    ) -> Result<PersonaResult, crate::llm::LlmError> {
         let messages = vec![
             Message {
                 role: Role::System,
@@ -284,16 +291,22 @@ impl LlmPersona {
         }
 
         let self_score = output.get("arena_self_score").cloned().unwrap_or_else(|| {
-            frontmatter.get("arena_self_score").cloned().unwrap_or_else(|| {
-                let score = frontmatter.get("self_score").cloned().unwrap_or(json!(0.85));
-                json!({
-                    "correctness": score,
-                    "completeness": 0.85,
-                    "novelty": 0.70,
-                    "minimal_diff": 0.80,
-                    "provenance_strength": 0.90
+            frontmatter
+                .get("arena_self_score")
+                .cloned()
+                .unwrap_or_else(|| {
+                    let score = frontmatter
+                        .get("self_score")
+                        .cloned()
+                        .unwrap_or(json!(0.85));
+                    json!({
+                        "correctness": score,
+                        "completeness": 0.85,
+                        "novelty": 0.70,
+                        "minimal_diff": 0.80,
+                        "provenance_strength": 0.90
+                    })
                 })
-            })
         });
 
         Ok(PersonaResult {
@@ -327,7 +340,10 @@ pub fn fallback_captain(payload: &str, routing_id: &str) -> PersonaResult {
 }
 
 pub fn fallback_harper(payload: &str, routing_id: &str) -> PersonaResult {
-    eprintln!("[Harper Simulation] Researching and critiquing: {}", payload);
+    eprintln!(
+        "[Harper Simulation] Researching and critiquing: {}",
+        payload
+    );
     let mut result = PersonaResult::new(Persona::Harper, routing_id.to_string());
     result.output = json!({
         "evidence": ["prior_art_1", "security_risk_X"],
@@ -343,7 +359,10 @@ pub fn fallback_harper(payload: &str, routing_id: &str) -> PersonaResult {
 }
 
 pub fn fallback_benjamin(payload: &str, routing_id: &str) -> PersonaResult {
-    eprintln!("[Benjamin Simulation] Executing implementation work: {}", payload);
+    eprintln!(
+        "[Benjamin Simulation] Executing implementation work: {}",
+        payload
+    );
     let mut result = PersonaResult::new(Persona::Benjamin, routing_id.to_string());
     result.output = json!({
         "files_changed": 7,
@@ -362,7 +381,10 @@ pub fn fallback_benjamin(payload: &str, routing_id: &str) -> PersonaResult {
 }
 
 pub fn fallback_lucas(payload: &str, routing_id: &str) -> PersonaResult {
-    eprintln!("[Lucas Simulation] Synthesizing and preparing Arena: {}", payload);
+    eprintln!(
+        "[Lucas Simulation] Synthesizing and preparing Arena: {}",
+        payload
+    );
     let mut result = PersonaResult::new(Persona::Lucas, routing_id.to_string());
     result.output = json!({
         "synthesis": "Combined best elements from all agents",
@@ -378,7 +400,10 @@ pub fn fallback_lucas(payload: &str, routing_id: &str) -> PersonaResult {
 }
 
 pub async fn fallback_evaluator(payload: &str, routing_id: &str) -> PersonaResult {
-    eprintln!("[Evaluator Simulation] Performing harsh adversarial review: {}", payload);
+    eprintln!(
+        "[Evaluator Simulation] Performing harsh adversarial review: {}",
+        payload
+    );
     let mut ev = Evaluator::new(None);
     let base_text = payload.to_string();
     for i in 0..8 {
@@ -386,7 +411,8 @@ pub async fn fallback_evaluator(payload: &str, routing_id: &str) -> PersonaResul
             agent_id: format!("worker-{}", i % 4),
             ..TraceEvent::default()
         };
-        if base_text.contains("churn") || base_text.contains("noisy") || base_text.contains("fail") {
+        if base_text.contains("churn") || base_text.contains("noisy") || base_text.contains("fail")
+        {
             te.risk_score = 0.71 + (i as f32 * 0.02);
             te.epistemic_confidence = 0.41;
             te.conflict_rate = 0.33;
@@ -419,7 +445,11 @@ pub async fn fallback_evaluator(payload: &str, routing_id: &str) -> PersonaResul
         "justifications": verdict.justifications,
         "critique": format!("Harsh critic (5 rubrics) evaluated the generator output. Live H_sem = {:.3}", verdict.semantic_entropy),
     });
-    result.confidence = if verdict.overall == "PASS" { 0.88 } else { 0.94 };
+    result.confidence = if verdict.overall == "PASS" {
+        0.88
+    } else {
+        0.94
+    };
     result.arena_self_score = json!({
         "correctness": 0.96, "completeness": 0.93, "novelty": 0.78,
         "minimal_diff": 0.62, "provenance_strength": 0.91
@@ -467,7 +497,11 @@ pub async fn run_persona_with_provider_and_temp(
     match lp.think(payload, routing_id).await {
         Ok(res) => res,
         Err(e) => {
-            eprintln!("[Persona] Live LLM execution failed for {}: {}. Falling back to simulation.", persona.name(), e);
+            eprintln!(
+                "[Persona] Live LLM execution failed for {}: {}. Falling back to simulation.",
+                persona.name(),
+                e
+            );
             let mut res = match persona {
                 Persona::Captain => fallback_captain(payload, routing_id),
                 Persona::Harper => fallback_harper(payload, routing_id),
@@ -491,7 +525,11 @@ pub async fn run_persona_with_provider(
     match lp.think(payload, routing_id).await {
         Ok(res) => res,
         Err(e) => {
-            eprintln!("[Persona] Live LLM execution failed for {}: {}. Falling back to simulation.", persona.name(), e);
+            eprintln!(
+                "[Persona] Live LLM execution failed for {}: {}. Falling back to simulation.",
+                persona.name(),
+                e
+            );
             let mut res = match persona {
                 Persona::Captain => fallback_captain(payload, routing_id),
                 Persona::Harper => fallback_harper(payload, routing_id),
@@ -508,7 +546,7 @@ pub async fn run_persona_with_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::{MockProvider, Role, LlmResponse};
+    use crate::llm::{LlmResponse, MockProvider, Role};
     use serde_json::json;
 
     #[test]
@@ -530,14 +568,20 @@ Here is some thinking markdown...
 And some post-script explanation."#;
 
         let (output, confidence, frontmatter) = parse_structured_response(raw_response);
-        
+
         assert_eq!(confidence, 0.95);
-        assert_eq!(frontmatter.get("plan_name").unwrap().as_str().unwrap(), "Test Planning Swarm");
+        assert_eq!(
+            frontmatter.get("plan_name").unwrap().as_str().unwrap(),
+            "Test Planning Swarm"
+        );
         assert_eq!(output.get("key").unwrap().as_str().unwrap(), "value");
-        
+
         let mutations = output.get("mutations").unwrap().as_array().unwrap();
         assert_eq!(mutations.len(), 1);
-        assert_eq!(mutations[0].get("target").unwrap().as_str().unwrap(), "src/llm.rs");
+        assert_eq!(
+            mutations[0].get("target").unwrap().as_str().unwrap(),
+            "src/llm.rs"
+        );
     }
 
     #[tokio::test]
@@ -555,7 +599,8 @@ self_score: 0.94
     {"target": "plan.md", "action": "create"}
   ]
 }
-```"#.to_string(),
+```"#
+                .to_string(),
             usage: crate::llm::TokenUsage {
                 prompt_tokens: 15,
                 completion_tokens: 10,
@@ -567,11 +612,22 @@ self_score: 0.94
         }));
 
         let persona = LlmPersona::new(Persona::Captain, mock_provider);
-        let result = persona.think("Decompose task", "test-routing").await.unwrap();
+        let result = persona
+            .think("Decompose task", "test-routing")
+            .await
+            .unwrap();
 
         assert_eq!(result.persona, Persona::Captain);
         assert_eq!(result.confidence, 0.92);
-        assert_eq!(result.output.get("task_completed").unwrap().as_bool().unwrap(), true);
+        assert_eq!(
+            result
+                .output
+                .get("task_completed")
+                .unwrap()
+                .as_bool()
+                .unwrap(),
+            true
+        );
         assert_eq!(result.mutations.len(), 1);
     }
 }
