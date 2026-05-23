@@ -2021,6 +2021,32 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
                 padding: 16px 20px;
             }
         }
+        /* ── CRT Scanline Overlay ────────────────────────────────────────────────────
+           Full-page atmospheric scanlines. pointer-events: none so it never
+           intercepts clicks. z-index: 9999 sits above all content visually. */
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 9999;
+            pointer-events: none;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.10) 0px,
+                rgba(0, 0, 0, 0.10) 1px,
+                transparent 1px,
+                transparent 3px
+            );
+            animation: crt-drift 10s linear infinite;
+        }
+
+        @keyframes crt-drift {
+            0%   { background-position: 0 0; }
+            100% { background-position: 0 120px; }
+        }
     </style>
 </head>
 <body>
