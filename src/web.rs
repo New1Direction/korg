@@ -745,2088 +745,634 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>korg — autonomous engineering runtime</title>
+    <title>korg — the first deterministic cognitive runtime</title>
+    <meta name="description" content="Every AI agent decision logged, causally ordered, and reversible. Like Git, but for cognition.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
+        /* ── Reset & Tokens ─────────────────────────────────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
         :root {
-            --bg-base: #000000;
-            --bg-surface: #050505;
-            --bg-card: rgba(5, 5, 5, 0.7);
-            --border-color: rgba(255, 255, 255, 0.04);
-            --border-glow: rgba(255, 255, 255, 0.08);
-            --accent-emerald: #10b981;
-            --accent-emerald-glow: rgba(16, 185, 129, 0.15);
-            --accent-cyan: #06b6d4;
-            --accent-cyan-glow: rgba(6, 182, 212, 0.15);
-            --accent-gold: #f59e0b;
-            --accent-green: #10b981;
-            --text-primary: #ffffff;
-            --text-secondary: #a1a1aa;
-            --text-muted: #52525b;
-            --font-sans: 'Outfit', sans-serif;
-            --font-heading: 'Plus Jakarta Sans', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
+            --bg:        #080808;
+            --surface:   #0d0d0d;
+            --border:    #1c1c1e;
+            --border-hi: #2e2e30;
+            --text-1:    #fafafa;
+            --text-2:    #8e8e93;
+            --text-3:    #48484a;
+            --amber:     #f59e0b;
+            --amber-dim: rgba(245, 158, 11, 0.12);
+            --sans:      'Inter', system-ui, sans-serif;
+            --mono:      'JetBrains Mono', 'Fira Code', monospace;
         }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        html, body {
-            max-width: 100%;
-            overflow-x: hidden;
-            width: 100%;
-        }
+        html { font-size: 16px; -webkit-font-smoothing: antialiased; }
 
         body {
-            font-family: var(--font-sans);
-            background-color: var(--bg-base);
-            color: var(--text-primary);
-            min-height: 100dvh;
+            font-family: var(--sans);
+            background: var(--bg);
+            color: var(--text-1);
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
-            position: relative;
+            overflow-x: hidden;
         }
 
+        /* ── CRT Overlay ────────────────────────────────────────────────────── */
         body::before {
             content: "";
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 900px;
-            background: 
-                radial-gradient(circle at 20% 10%, rgba(16, 185, 129, 0.03) 0%, transparent 40%),
-                radial-gradient(circle at 80% 30%, rgba(6, 182, 212, 0.04) 0%, transparent 45%),
-                radial-gradient(circle at 50% -100px, rgba(16, 185, 129, 0.05) 0%, transparent 50%);
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        body::after {
-            content: "";
-            position: absolute;
+            position: fixed;
             inset: 0;
-            background-image: 
-                linear-gradient(rgba(255, 255, 255, 0.01) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255, 255, 255, 0.01) 1px, transparent 1px);
-            background-size: 40px 40px;
+            z-index: 9999;
             pointer-events: none;
-            z-index: 0;
-            opacity: 0.8;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0,0,0,0.09) 0px,
+                rgba(0,0,0,0.09) 1px,
+                transparent 1px,
+                transparent 3px
+            );
+            animation: crt-drift 12s linear infinite;
+        }
+        @keyframes crt-drift {
+            from { background-position: 0 0; }
+            to   { background-position: 0 120px; }
         }
 
-        .ambient-glow {
-            position: absolute;
-            top: -250px;
-            left: -250px;
-            width: 800px;
-            height: 800px;
-            background: radial-gradient(circle, rgba(16, 185, 129, 0.04) 0%, rgba(6, 182, 212, 0.04) 30%, transparent 70%);
-            filter: blur(120px);
-            pointer-events: none;
-            z-index: 0;
-            opacity: 0.8;
-            animation: float-glow 25s infinite ease-in-out alternate;
-        }
-
-        @keyframes float-glow {
-            0% {
-                transform: translate(0, 0) scale(1);
-                opacity: 0.6;
-            }
-            50% {
-                transform: translate(120px, 80px) scale(1.08);
-                opacity: 0.8;
-            }
-            100% {
-                transform: translate(-80px, 150px) scale(0.95);
-                opacity: 0.5;
-            }
-        }
-
-        header {
+        /* ── Nav ────────────────────────────────────────────────────────────── */
+        nav {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            padding: 16px 40px;
-            border-bottom: 1px solid var(--border-color);
-            background-color: rgba(0, 0, 0, 0.75);
-            backdrop-filter: blur(24px);
+            justify-content: space-between;
+            padding: 0 40px;
+            height: 56px;
+            border-bottom: 1px solid var(--border);
             position: sticky;
             top: 0;
-            z-index: 10000;
-            width: 100%;
-            box-sizing: border-box;
+            background: rgba(8,8,8,0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            z-index: 100;
         }
 
-        .logo-container {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            position: relative;
-            z-index: 10001;
-            flex-shrink: 0;
-        }
-
-        .logo-circle {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 28px;
-            height: 28px;
-            border-radius: 50%;
-            background: #000000;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            color: #ffffff;
-            font-family: var(--font-mono);
-            font-size: 14px;
+        .nav-logo {
+            font-family: var(--mono);
+            font-size: 15px;
             font-weight: 700;
-            box-shadow: 0 0 10px rgba(255, 255, 255, 0.05);
-            flex-shrink: 0;
-            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-            line-height: 1;
-            padding-bottom: 1px;
+            letter-spacing: 0.04em;
+            color: var(--text-1);
+            text-decoration: none;
         }
 
-        .logo-container:hover .logo-circle {
-            border-color: rgba(6, 182, 212, 0.8);
-            box-shadow: 0 0 12px rgba(6, 182, 212, 0.4);
-            transform: scale(1.08);
-        }
-
-        .logo {
-            font-family: var(--font-heading);
-            font-size: 24px;
-            font-weight: 800;
-            letter-spacing: -0.04em;
-            background: linear-gradient(135deg, #ffffff 60%, #71717a 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            text-transform: lowercase;
-            position: relative;
-            z-index: 10002;
-            flex-shrink: 0;
-        }
-
-        .logo-sub {
-            font-size: 11px;
-            color: var(--text-muted);
-            font-family: var(--font-mono);
-            border-left: 1px solid var(--border-color);
-            padding-left: 12px;
-            padding-bottom: 2px; /* Ensure descenders are not cut off */
-            letter-spacing: 0.05em;
-            line-height: 1.4;
-            margin-top: 0;
-            overflow: visible;
-            display: inline-block;
-            vertical-align: middle;
-            position: relative;
-            top: -1.5px; /* Visual baseline alignment correction */
-            z-index: 10002;
-            flex-shrink: 0;
-            white-space: nowrap;
-        }
-
-        .header-status {
+        .nav-right {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 20px;
+            font-family: var(--mono);
             font-size: 11px;
-            font-family: var(--font-mono);
-            color: var(--text-secondary);
-            border: 1px solid var(--border-color);
-            padding: 6px 14px;
-            border-radius: 6px;
-            background: rgba(10, 10, 12, 0.5);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            color: var(--text-2);
+        }
+
+        .nav-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .status-dot {
             width: 6px;
             height: 6px;
             border-radius: 50%;
-            background-color: var(--accent-green);
-            box-shadow: 0 0 8px var(--accent-green);
-            animation: pulse-active 2s infinite;
+            background: #22c55e;
+            animation: pulse-dot 2.4s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 0.4; }
+            50%       { opacity: 1; }
         }
 
-        @keyframes pulse-active {
-            0% { opacity: 0.4; }
-            50% { opacity: 1; }
-            100% { opacity: 0.4; }
+        .nav-link {
+            color: var(--text-2);
+            text-decoration: none;
+            transition: color 0.15s;
         }
+        .nav-link:hover { color: var(--text-1); }
 
-        main {
-            flex-grow: 1;
+        /* ── Hero ───────────────────────────────────────────────────────────── */
+        .hero {
+            flex: 1;
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 80px 20px;
-            max-width: 1200px;
-            margin: 0 auto;
-            width: 100%;
-            position: relative;
-            z-index: 1;
-        }
-
-        .hero-section {
             text-align: center;
-            max-width: 850px;
-            margin-bottom: 60px;
-            animation: fadeIn 1s cubic-bezier(0.16, 1, 0.3, 1);
+            padding: 96px 24px 80px;
+            gap: 0;
         }
 
-        .hero-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            font-family: var(--font-mono);
+        .hero-label {
+            font-family: var(--mono);
             font-size: 11px;
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            padding: 6px 16px;
-            border-radius: 100px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--amber);
             margin-bottom: 28px;
-            color: #d4d4d8;
-            transition: all 0.3s ease;
-            box-shadow: 0 0 15px rgba(255, 255, 255, 0.02);
-        }
-
-        .hero-badge:hover {
-            border-color: rgba(255, 255, 255, 0.2);
-            background: rgba(255, 255, 255, 0.06);
-            transform: translateY(-1px);
-        }
-
-        .hero-badge-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background-color: var(--accent-emerald);
-            box-shadow: 0 0 6px var(--accent-emerald);
+            opacity: 0;
+            animation: fade-up 0.6s ease 0.1s forwards;
         }
 
         .hero-title {
-            font-family: var(--font-heading);
-            font-size: 64px;
-            font-weight: 800;
-            letter-spacing: -0.04em;
-            line-height: 1.05;
+            font-size: clamp(36px, 6vw, 64px);
+            font-weight: 300;
+            letter-spacing: -0.03em;
+            line-height: 1.08;
+            color: var(--text-1);
+            max-width: 820px;
             margin-bottom: 24px;
-            background: linear-gradient(135deg, #ffffff 40%, #94a3b8 80%, var(--accent-emerald) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            opacity: 0;
+            animation: fade-up 0.6s ease 0.2s forwards;
         }
 
-        .hero-subtitle {
-            font-size: 18px;
-            color: var(--text-secondary);
+        .hero-sub {
+            font-size: 16px;
+            font-weight: 400;
+            color: var(--text-2);
             line-height: 1.6;
-            font-weight: 300;
-            margin-bottom: 40px;
-            max-width: 700px;
-            margin-left: auto;
-            margin-right: auto;
+            max-width: 500px;
+            margin-bottom: 44px;
+            opacity: 0;
+            animation: fade-up 0.6s ease 0.3s forwards;
         }
 
         .hero-ctas {
             display: flex;
-            justify-content: center;
-            gap: 16px;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 64px;
+            opacity: 0;
+            animation: fade-up 0.6s ease 0.4s forwards;
         }
 
-        .btn-primary {
-            font-family: var(--font-sans);
+        .cta-primary {
+            font-family: var(--mono);
             font-size: 13px;
-            font-weight: 600;
-            padding: 14px 30px;
-            background: linear-gradient(135deg, #ffffff 0%, #e4e4e7 100%);
-            color: #030303;
-            border: 1px solid #ffffff;
-            border-radius: 8px;
+            font-weight: 500;
+            padding: 11px 22px;
+            border: 1px solid var(--border-hi);
+            background: transparent;
+            color: var(--text-1);
             cursor: pointer;
             text-decoration: none;
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-            box-shadow: 0 10px 20px rgba(255, 255, 255, 0.05);
-        }
-
-        .btn-primary:hover {
-            background: #ffffff;
-            transform: translateY(-2px);
-            box-shadow: 0 15px 30px rgba(255, 255, 255, 0.1);
-        }
-
-        .btn-primary svg {
-            transition: transform 0.2s ease;
-        }
-
-        .btn-primary:hover svg {
-            transform: translateX(4px);
-        }
-
-        .btn-secondary {
-            font-family: var(--font-sans);
-            font-size: 13px;
-            font-weight: 600;
-            padding: 14px 30px;
-            background-color: rgba(255, 255, 255, 0.02);
-            color: #ffffff;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-            backdrop-filter: blur(8px);
-        }
-
-        .btn-secondary:hover {
-            border-color: rgba(255, 255, 255, 0.2);
-            background-color: rgba(255, 255, 255, 0.05);
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
-        }
-
-        /* Interactive Simulator */
-        .simulator-section {
-            width: 100%;
-            max-width: 950px;
-            margin-bottom: 100px;
-            animation: fadeInUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.15s;
-            animation-fill-mode: both;
-        }
-
-        .simulator-window {
-            border: 1px solid var(--border-color);
-            background: rgba(10, 10, 12, 0.65);
-            border-radius: 12px;
+            transition: border-color 0.15s, background 0.15s, color 0.15s;
+            position: relative;
             overflow: hidden;
-            box-shadow: 
-                0 30px 60px rgba(0, 0, 0, 0.7),
-                0 0 40px rgba(255, 255, 255, 0.02),
-                inset 0 1px 0 rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(25px);
-            display: flex;
-            flex-direction: column;
-            height: 480px;
+        }
+        .cta-primary:hover {
+            border-color: var(--amber);
+            color: var(--amber);
+        }
+
+        .cta-primary .prompt { color: var(--text-3); }
+
+        .cta-secondary {
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--text-2);
+            text-decoration: none;
+            padding: 11px 4px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: color 0.15s;
+            border-bottom: 1px solid transparent;
+        }
+        .cta-secondary:hover {
+            color: var(--text-1);
+            border-bottom-color: var(--border-hi);
+        }
+
+        /* ── Terminal Window ────────────────────────────────────────────────── */
+        .terminal-wrap {
             width: 100%;
+            max-width: 720px;
+            opacity: 0;
+            animation: fade-up 0.7s ease 0.55s forwards;
         }
 
-        .sim-header {
+        .terminal {
+            background: #050505;
+            border: 1px solid var(--border);
+            border-radius: 0;
+            overflow: hidden;
+        }
+
+        .terminal-bar {
             display: flex;
+            align-items: center;
             justify-content: space-between;
-            align-items: center;
-            background: rgba(5, 5, 5, 0.75);
-            border-bottom: 1px solid var(--border-color);
-            padding: 0 20px;
-            height: 45px;
-            user-select: none;
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            background: #080808;
         }
 
-        .sim-controls {
+        .terminal-dots {
             display: flex;
-            gap: 8px;
-            align-items: center;
+            gap: 6px;
         }
-
-        .sim-dot {
+        .terminal-dots span {
             width: 10px;
             height: 10px;
             border-radius: 50%;
-        }
-        .dot-red { background-color: #ff5f56; }
-        .dot-yellow { background-color: #ffbd2e; }
-        .dot-green { background-color: #27c93f; }
-
-        .sim-tabs {
-            display: flex;
-            height: 100%;
-            align-items: flex-end;
+            background: var(--border-hi);
         }
 
-        .sim-tab {
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            font-family: var(--font-sans);
-            font-size: 12px;
-            padding: 8px 16px;
-            border-top-left-radius: 6px;
-            border-top-right-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-            height: 32px;
-            display: inline-flex;
-            align-items: center;
-            border-bottom: 2px solid transparent;
-        }
-
-        .sim-tab:hover {
-            color: var(--text-secondary);
-            background: rgba(255, 255, 255, 0.02);
-        }
-
-        .sim-tab.active {
-            color: var(--text-primary);
-            background: rgba(20, 20, 23, 0.8);
-            border-bottom: 2px solid var(--accent-emerald);
-            font-weight: 500;
-        }
-
-        .sim-title-right {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: var(--text-muted);
-        }
-
-        .sim-workspace {
-            display: flex;
-            flex-grow: 1;
-            overflow: hidden;
-        }
-
-        .sim-sidebar {
-            width: 220px;
-            background: rgba(5, 5, 5, 0.4);
-            border-right: 1px solid var(--border-color);
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            overflow-y: auto;
-        }
-
-        .sidebar-header {
-            font-family: var(--font-heading);
+        .terminal-title {
+            font-family: var(--mono);
             font-size: 10px;
-            font-weight: bold;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-bottom: 6px;
+            color: var(--text-3);
+            letter-spacing: 0.06em;
         }
 
-        .sidebar-item {
-            font-family: var(--font-sans);
-            font-size: 12px;
-            color: var(--text-secondary);
-            padding: 8px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 8px;
+        .terminal-body {
+            padding: 20px 24px 24px;
+            font-family: var(--mono);
+            font-size: 12.5px;
+            line-height: 1.9;
+            min-height: 230px;
         }
 
-        .sidebar-item:hover {
-            color: var(--text-primary);
-            background: rgba(255, 255, 255, 0.04);
-        }
-
-        .sidebar-item.active {
-            color: var(--text-primary);
-            background: rgba(255, 255, 255, 0.08);
-            font-weight: 500;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-        }
-
-        .sidebar-persona {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 12px;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: var(--text-secondary);
-        }
-
-        .persona-indicator {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-        }
-        .pulse-emerald { background-color: var(--accent-emerald); box-shadow: 0 0 6px var(--accent-emerald); }
-        .pulse-blue { background-color: var(--accent-cyan); box-shadow: 0 0 6px var(--accent-cyan); }
-        .pulse-green { background-color: #10b981; box-shadow: 0 0 6px #10b981; }
-
-        .sim-editor {
-            flex-grow: 1;
-            display: flex;
-            flex-direction: column;
-            background: rgba(10, 10, 12, 0.85);
-            overflow: hidden;
-        }
-
-        .editor-header {
-            background: rgba(5, 5, 5, 0.2);
-            border-bottom: 1px solid var(--border-color);
-            padding: 8px 20px;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: var(--text-muted);
-        }
-
-        .editor-body {
-            padding: 20px;
-            overflow-y: auto;
-            flex-grow: 1;
-        }
-
-        .code-output {
-            font-family: var(--font-mono);
-            font-size: 12px;
-            line-height: 1.6;
-            color: var(--text-secondary);
-            white-space: pre-wrap;
-            word-break: break-all;
-        }
-
-        .sim-footer-controls {
+        .log-line {
             display: flex;
             gap: 12px;
-            padding: 12px 20px;
-            background: rgba(5, 5, 5, 0.8);
-            border-top: 1px solid var(--border-color);
+            opacity: 0;
+            transform: translateY(4px);
         }
 
-        .sim-action-btn {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            padding: 8px 16px;
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid var(--border-color);
-            color: var(--text-secondary);
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
+        .log-ts    { color: var(--text-3); flex-shrink: 0; }
+        .log-level { color: var(--text-2); flex-shrink: 0; width: 36px; }
+        .log-mod   { color: var(--text-2); flex-shrink: 0; }
+        .log-msg   { color: var(--text-1); }
+        .log-seq   { color: var(--amber); font-weight: 700; }
+        .log-event { color: var(--text-2); }
+        .log-rewind { color: var(--amber); font-weight: 700; }
+        .log-ok    { color: #22c55e; font-weight: 700; }
+
+        /* Staggered line reveals */
+        .log-line:nth-child(1)  { animation: log-in 0.3s ease 1.0s forwards; }
+        .log-line:nth-child(2)  { animation: log-in 0.3s ease 1.3s forwards; }
+        .log-line:nth-child(3)  { animation: log-in 0.3s ease 1.6s forwards; }
+        .log-line:nth-child(4)  { animation: log-in 0.3s ease 1.9s forwards; }
+        .log-line:nth-child(5)  { animation: log-in 0.3s ease 2.2s forwards; }
+        .log-line:nth-child(6)  { animation: log-in 0.3s ease 2.5s forwards; }
+        .log-line:nth-child(7)  { animation: log-in 0.3s ease 2.8s forwards; }
+        .log-line:nth-child(8)  { animation: log-in 0.3s ease 3.4s forwards; }
+        .log-line:nth-child(9)  { animation: log-in 0.3s ease 3.7s forwards; }
+        .log-line:nth-child(10) { animation: log-in 0.3s ease 4.0s forwards; }
+
+        @keyframes log-in {
+            to { opacity: 1; transform: none; }
         }
 
-        .sim-action-btn:hover {
-            border-color: rgba(255, 255, 255, 0.2);
-            color: var(--text-primary);
-            background: rgba(255, 255, 255, 0.04);
-        }
-
-        .sim-action-btn.active {
-            border-color: var(--accent-emerald);
-            color: #ffffff;
-            background: rgba(255, 255, 255, 0.1);
-            box-shadow: 0 0 12px rgba(255, 255, 255, 0.05);
-        }
-
-        /* Portals Grid */
-        .portals-grid {
+        /* ── Feature Strip ──────────────────────────────────────────────────── */
+        .features {
+            width: 100%;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 80px 24px;
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 24px;
-            width: 100%;
-            margin-bottom: 100px;
-            animation: fadeInUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.3s;
-            animation-fill-mode: both;
+            gap: 1px;
+            background: var(--border);
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
         }
 
-        .portal-card {
-            border: 1px solid var(--border-color);
-            background-color: var(--bg-card);
-            border-radius: 12px;
-            padding: 32px;
+        .feat {
+            background: var(--bg);
+            padding: 40px 36px;
             display: flex;
             flex-direction: column;
-            gap: 20px;
-            cursor: pointer;
-            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-            position: relative;
-            text-decoration: none;
-            color: inherit;
-            backdrop-filter: blur(20px);
-            overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            gap: 10px;
+            transition: background 0.2s;
         }
+        .feat:hover { background: var(--surface); }
 
-        .portal-card::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            border-radius: 12px;
-            padding: 1px;
-            background: linear-gradient(to bottom, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0));
-            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-            -webkit-mask-composite: xor;
-            mask-composite: exclude;
-            pointer-events: none;
-        }
-
-        .portal-card::after {
-            content: "";
-            position: absolute;
-            width: 160px;
-            height: 160px;
-            background: radial-gradient(circle, var(--accent-emerald-glow) 0%, transparent 70%);
-            top: -80px;
-            right: -80px;
-            opacity: 0.15;
-            transition: all 0.5s ease;
-            pointer-events: none;
-        }
-
-        .portal-card:hover::after {
-            opacity: 0.5;
-            transform: scale(1.3);
-        }
-
-        .portal-card:hover {
-            border-color: rgba(255, 255, 255, 0.2);
-            transform: translateY(-6px);
-            background-color: rgba(14, 14, 16, 0.6);
-            box-shadow: 
-                0 25px 50px rgba(0, 0, 0, 0.6), 
-                0 0 30px rgba(255, 255, 255, 0.05);
-        }
-
-        .portal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .portal-icon {
-            font-size: 24px;
-            transition: transform 0.3s ease;
-        }
-
-        .portal-card:hover .portal-icon {
-            transform: scale(1.15) rotate(8deg);
-        }
-
-        .portal-tag {
-            font-family: var(--font-mono);
-            font-size: 10px;
-            color: var(--text-secondary);
-            border: 1px solid var(--border-color);
-            padding: 4px 10px;
-            border-radius: 100px;
-            background: rgba(0, 0, 0, 0.3);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .portal-card:hover .portal-tag {
-            border-color: rgba(255, 255, 255, 0.15);
-            color: #ffffff;
-            background: rgba(255, 255, 255, 0.05);
-        }
-
-        .portal-title {
-            font-family: var(--font-heading);
-            font-size: 20px;
-            font-weight: 700;
-            color: #ffffff;
-            letter-spacing: -0.01em;
-        }
-
-        .portal-desc {
-            font-size: 13.5px;
-            color: var(--text-secondary);
-            line-height: 1.6;
-            flex-grow: 1;
-            font-weight: 300;
-        }
-
-        .portal-action {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            transition: all 0.3s;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .portal-card:hover .portal-action {
-            color: #ffffff;
-        }
-
-        .portal-action svg {
-            transition: transform 0.2s;
-        }
-        
-        .portal-card:hover .portal-action svg {
-            transform: translateX(3px);
-        }
-
-        /* Matrix Specification Grid */
-        .matrix-section {
-            width: 100%;
-            border-top: 1px solid var(--border-color);
-            padding-top: 80px;
-            animation: fadeInUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.4s;
-            animation-fill-mode: both;
-        }
-
-        .matrix-title {
-            font-family: var(--font-heading);
-            font-size: 32px;
-            font-weight: 800;
-            color: #ffffff;
-            margin-bottom: 12px;
-            text-align: center;
-            letter-spacing: -0.02em;
-            background: linear-gradient(135deg, #ffffff 60%, #a1a1aa 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .matrix-subtitle {
-            font-size: 15px;
-            color: var(--text-secondary);
-            text-align: center;
-            margin-bottom: 56px;
-            max-width: 600px;
-            margin-left: auto;
-            margin-right: auto;
-            font-weight: 300;
-            line-height: 1.6;
-        }
-
-        .matrix-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 32px;
-            width: 100%;
-        }
-
-        .matrix-card {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            border: 1px solid var(--border-color);
-            background: rgba(10, 10, 12, 0.3);
-            padding: 32px;
-            border-radius: 12px;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-            backdrop-filter: blur(10px);
-        }
-
-        .matrix-card::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            border-radius: 12px;
-            padding: 1px;
-            background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
-            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-            -webkit-mask-composite: xor;
-            mask-composite: exclude;
-            pointer-events: none;
-        }
-
-        .matrix-card:hover {
-            border-color: rgba(255, 255, 255, 0.25);
-            background: rgba(10, 10, 12, 0.55);
-            transform: translateY(-4px);
-            box-shadow: 
-                0 20px 40px rgba(0, 0, 0, 0.5),
-                0 0 30px rgba(255, 255, 255, 0.02);
-        }
-
-        .matrix-card-title {
-            font-family: var(--font-heading);
-            font-size: 18px;
-            font-weight: 700;
-            color: #ffffff;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .matrix-card-text {
-            font-size: 13.5px;
-            color: var(--text-secondary);
-            line-height: 1.6;
-            font-weight: 300;
-        }
-
-        /* Comparison Table Styles (xAI / Grok inspired) */
-        .comparison-section {
-            padding: 80px 40px;
-            max-width: 1200px;
-            margin: 0 auto;
-            position: relative;
-        }
-
-        .comparison-title {
-            font-family: var(--font-heading);
-            font-size: 32px;
-            font-weight: 800;
-            color: #ffffff;
-            letter-spacing: -0.03em;
-            text-align: center;
-            margin-bottom: 12px;
-            text-transform: lowercase;
-        }
-
-        .comparison-subtitle {
-            font-size: 16px;
-            color: var(--text-secondary);
-            text-align: center;
-            margin-bottom: 48px;
-            max-width: 600px;
-            margin-left: auto;
-            margin-right: auto;
-            line-height: 1.5;
-            font-weight: 300;
-        }
-
-        .comparison-table-container {
-            width: 100%;
-            overflow-x: auto;
-            border-radius: 12px;
-            border: 1px solid var(--border-color);
-            background: rgba(15, 15, 18, 0.6);
-            backdrop-filter: blur(20px);
-            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.4);
-        }
-
-        .comparison-table {
-            width: 100%;
-            border-collapse: collapse;
-            text-align: left;
-            font-size: 14px;
-        }
-
-        .comparison-table th, .comparison-table td {
-            padding: 18px 24px;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .comparison-table th {
-            font-family: var(--font-heading);
-            font-size: 14px;
-            font-weight: 700;
-            color: #a1a1aa;
-            text-transform: lowercase;
-            letter-spacing: 0.05em;
-            background: rgba(20, 20, 23, 0.8);
-        }
-
-        .comparison-table tr:last-child td {
-            border-bottom: none;
-        }
-
-        .comparison-table .feature-col {
-            font-weight: 500;
-            color: #ffffff;
-            width: 25%;
-            font-family: var(--font-sans);
-        }
-
-        .comparison-table .korg-col {
-            background: rgba(255, 255, 255, 0.02);
-            border-left: 1px solid rgba(255, 255, 255, 0.08);
-            border-right: 1px solid rgba(255, 255, 255, 0.08);
-            width: 35%;
-        }
-
-        .comparison-table th.korg-col {
-            background: rgba(255, 255, 255, 0.04);
-            color: #ffffff;
-            font-weight: 800;
-        }
-
-        .comparison-table .other-col {
-            color: var(--text-secondary);
-            width: 20%;
-        }
-
-        .comparison-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-weight: 500;
-        }
-
-        .comparison-badge.yes {
-            background: rgba(255, 255, 255, 0.08);
-            color: #ffffff;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-        }
-
-        .comparison-badge.no {
-            background: rgba(239, 68, 68, 0.1);
-            color: #ef4444;
-            border: 1px solid rgba(239, 68, 68, 0.2);
-        }
-
-        .comparison-badge.partial {
-            background: rgba(245, 158, 11, 0.1);
-            color: #f59e0b;
-            border: 1px solid rgba(245, 158, 11, 0.2);
-        }
-
-        .table-text {
-            line-height: 1.5;
-            margin-top: 6px;
+        .feat-name {
+            font-family: var(--mono);
             font-size: 13px;
-            color: var(--text-secondary);
-        }
-
-        .korg-col .table-text {
-            color: #e2e8f0;
-        }
-
-        /* Footer */
-        footer {
-            border-top: 1px solid var(--border-color);
-            padding: 40px;
-            text-align: center;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: var(--text-muted);
-            background-color: #030303;
-            letter-spacing: 0.05em;
-        }
-
-        /* Inline Drawers style - 100% Zero-Overlap DOM */
-        .modal-overlay {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.45s cubic-bezier(0.16, 1, 0.3, 1), padding 0.45s ease, margin-top 0.45s ease, opacity 0.45s ease, margin-bottom 0.45s ease;
-            width: 100%;
-            background-color: var(--bg-surface);
-            border: 1px solid transparent;
-            border-radius: 16px;
-            padding: 0 40px;
-            margin-top: 0;
-            margin-bottom: 0;
-            opacity: 0;
-            display: flex;
-            flex-direction: column;
-            box-sizing: border-box;
-        }
-
-        .modal-overlay.active {
-            max-height: 1000px;
-            padding: 32px 40px;
-            margin-top: 24px;
-            margin-bottom: 24px;
-            opacity: 1;
-            border: 1px solid var(--border-color);
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(255, 255, 255, 0.02);
-        }
-
-        .modal-card {
-            background-color: transparent;
-            border: none;
-            border-radius: 0;
-            width: 100%;
-            max-width: 100%;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-            box-shadow: none;
-            position: relative;
-        }
-
-        .modal-title {
-            font-family: var(--font-heading);
-            font-size: 24px;
             font-weight: 700;
-            color: #ffffff;
-            letter-spacing: -0.02em;
-            display: flex;
-            align-items: center;
-            gap: 12px;
+            color: var(--text-1);
+            letter-spacing: 0.02em;
         }
 
-        .modal-desc {
-            font-size: 14px;
-            color: var(--text-secondary);
+        .feat-desc {
+            font-size: 13px;
+            color: var(--text-2);
             line-height: 1.6;
-            font-weight: 300;
+            font-weight: 400;
         }
 
-        .terminal-box {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background-color: #070709;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 16px 20px;
-            font-family: var(--font-mono);
-            font-size: 12px;
-            color: #ffffff;
-            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
-        }
-
-        .terminal-prompt {
-            color: var(--accent-emerald);
-            user-select: none;
-            margin-right: 12px;
-            font-weight: bold;
-        }
-
-        .terminal-command {
-            flex-grow: 1;
-            color: #ffffff;
-        }
-
-        .copy-btn {
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: #d4d4d8;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            font-weight: bold;
-            padding: 6px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            transition: all 0.2s;
-        }
-
-        .copy-btn:hover {
-            border-color: #ffffff;
-            color: #ffffff;
-            background-color: rgba(255, 255, 255, 0.1);
-            box-shadow: 0 0 10px rgba(255, 255, 255, 0.05);
-        }
-
-        .cli-details {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            font-family: var(--font-mono);
-            font-size: 11px;
-            border-top: 1px solid var(--border-color);
-            padding-top: 18px;
-        }
-
-        .cli-detail-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 4px 0;
-        }
-
-        .cli-detail-key {
-            color: var(--accent-cyan);
-            font-weight: bold;
-        }
-
-        .cli-detail-val {
-            color: var(--text-secondary);
-        }
-
-        .btn-modal-close {
-            font-family: var(--font-sans);
-            font-size: 12px;
-            font-weight: 600;
-            padding: 12px 24px;
-            background: linear-gradient(135deg, #ffffff 0%, #e4e4e7 100%);
-            color: #030206;
-            border: 1px solid #ffffff;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .btn-modal-close:hover {
-            background-color: #ffffff;
-            transform: translateY(-1px);
-        }
-
-        /* Provenance Explorer Modal Layout */
-        .modal-dag-layout {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .modal-dag-visual {
-            border: 1px solid var(--border-color);
-            background-color: #070709;
-            border-radius: 8px;
-            padding: 24px 16px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            box-shadow: inset 0 2px 10px rgba(0,0,0,0.8);
-        }
-
-        .mini-edge {
-            stroke: rgba(255, 255, 255, 0.08);
-            stroke-width: 2.5;
-            stroke-dasharray: 4 4;
-            transition: all 0.3s;
-        }
-
-        .mini-node {
-            cursor: pointer;
-        }
-
-        .mini-node .node-base {
-            fill: #09090b;
-            stroke: rgba(255, 255, 255, 0.15);
-            stroke-width: 2.5;
-            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-
-        .mini-node .node-glow {
-            fill: transparent;
-            stroke: transparent;
-            stroke-width: 4;
-            transition: all 0.3s ease;
-        }
-
-        .mini-node:hover .node-base {
-            stroke: #ffffff;
-            fill: rgba(255, 255, 255, 0.1);
-        }
-
-        .mini-node.active .node-base {
-            fill: var(--accent-emerald);
-            stroke: #ffffff;
-        }
-
-        .mini-node.active .node-glow {
-            stroke: var(--accent-emerald-glow);
-            filter: drop-shadow(0 0 8px var(--accent-emerald));
-            animation: pulseGlow 2s infinite alternate;
-        }
-
-        @keyframes pulseGlow {
-            from { r: 18; opacity: 0.5; }
-            to { r: 24; opacity: 0.9; }
-        }
-
-        .mini-node text {
-            font-family: var(--font-mono);
+        .feat-detail {
+            font-family: var(--mono);
             font-size: 10px;
-            fill: var(--text-secondary);
-            text-anchor: middle;
-            user-select: none;
-            font-weight: 700;
+            color: var(--text-3);
+            margin-top: 4px;
         }
 
-        .mini-node.active text {
-            fill: #ffffff;
-        }
-
-        .modal-dag-properties {
-            border: 1px solid var(--border-color);
-            background-color: rgba(7, 7, 9, 0.4);
-            border-radius: 8px;
-            padding: 24px;
-            font-family: var(--font-mono);
-            backdrop-filter: blur(10px);
-        }
-
-        .properties-header {
-            font-size: 11px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-bottom: 16px;
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 10px;
-            font-weight: bold;
-        }
-
-        .prop-table {
+        /* ── Install Strip ──────────────────────────────────────────────────── */
+        .install-strip {
+            width: 100%;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 80px 24px;
             display: flex;
             flex-direction: column;
-            gap: 12px;
-            font-size: 12px;
+            align-items: center;
+            gap: 32px;
+            text-align: center;
         }
 
-        .prop-row {
+        .install-heading {
+            font-size: 28px;
+            font-weight: 300;
+            letter-spacing: -0.02em;
+            color: var(--text-1);
+        }
+
+        .install-box {
             display: flex;
-            align-items: flex-start;
-            padding: 2px 0;
-        }
-
-        .prop-key {
-            width: 150px;
-            color: var(--text-muted);
-            font-weight: 500;
-        }
-
-        .prop-val {
-            flex-grow: 1;
-            color: var(--text-primary);
-            word-break: break-all;
-        }
-
-        /* Animations */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-12px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(24px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        /* Responsive scaling */
-        @media (max-width: 900px) {
-            .logo-sub {
-                display: none;
-            }
-            .hero-title {
-                font-size: 44px;
-            }
-            .portals-grid {
-                grid-template-columns: 1fr;
-            }
-            .matrix-grid {
-                grid-template-columns: 1fr;
-            }
-            .sim-workspace {
-                flex-direction: column;
-                height: auto;
-            }
-            .sim-sidebar {
-                width: 100%;
-                border-right: none;
-                border-bottom: 1px solid var(--border-color);
-                height: 180px;
-            }
-            .simulator-window {
-                height: 620px;
-            }
-            header {
-                padding: 16px 20px;
-            }
-        }
-        /* ── CRT Scanline Overlay ────────────────────────────────────────────────────
-           Full-page atmospheric scanlines. pointer-events: none so it never
-           intercepts clicks. z-index: 9999 sits above all content visually. */
-        body::before {
-            content: "";
-            position: fixed;
-            top: 0;
-            left: 0;
+            align-items: center;
+            gap: 0;
+            border: 1px solid var(--border-hi);
+            overflow: hidden;
+            max-width: 420px;
             width: 100%;
-            height: 100%;
-            z-index: 9999;
-            pointer-events: none;
-            background: repeating-linear-gradient(
-                0deg,
-                rgba(0, 0, 0, 0.10) 0px,
-                rgba(0, 0, 0, 0.10) 1px,
-                transparent 1px,
-                transparent 3px
-            );
-            animation: crt-drift 10s linear infinite;
         }
 
-        @keyframes crt-drift {
-            0%   { background-position: 0 0; }
-            100% { background-position: 0 120px; }
+        .install-prompt {
+            font-family: var(--mono);
+            font-size: 13px;
+            padding: 14px 16px;
+            background: var(--surface);
+            color: var(--text-3);
+            border-right: 1px solid var(--border);
+            flex-shrink: 0;
+            user-select: none;
+        }
+
+        .install-cmd {
+            font-family: var(--mono);
+            font-size: 13px;
+            padding: 14px 16px;
+            color: var(--text-1);
+            flex: 1;
+            letter-spacing: 0.01em;
+        }
+
+        .install-copy {
+            font-family: var(--mono);
+            font-size: 11px;
+            padding: 14px 16px;
+            background: none;
+            border: none;
+            border-left: 1px solid var(--border);
+            color: var(--text-2);
+            cursor: pointer;
+            transition: color 0.15s, background 0.15s;
+        }
+        .install-copy:hover {
+            color: var(--amber);
+            background: var(--amber-dim);
+        }
+
+        .install-links {
+            display: flex;
+            gap: 24px;
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text-3);
+        }
+        .install-links a {
+            color: var(--text-2);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .install-links a:hover { color: var(--text-1); }
+
+        /* ── Footer ─────────────────────────────────────────────────────────── */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 24px 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text-3);
+        }
+
+        .footer-left { display: flex; gap: 16px; }
+        .footer-left a {
+            color: var(--text-3);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .footer-left a:hover { color: var(--text-2); }
+
+        /* ── Animations ─────────────────────────────────────────────────────── */
+        @keyframes fade-up {
+            from { opacity: 0; transform: translateY(12px); }
+            to   { opacity: 1; transform: none; }
+        }
+
+        /* ── Responsive ─────────────────────────────────────────────────────── */
+        @media (max-width: 720px) {
+            nav { padding: 0 20px; }
+            .nav-right .nav-link { display: none; }
+            .hero { padding: 64px 20px 56px; }
+            .features {
+                grid-template-columns: 1fr;
+                padding: 0;
+            }
+            .feat { padding: 28px 20px; }
+            footer { flex-direction: column; gap: 12px; text-align: center; }
         }
     </style>
 </head>
 <body>
-    <div class="ambient-glow"></div>
-    <header>
-        <div class="logo-container">
-            <div class="logo-circle">k</div>
-            <span class="logo">korg</span>
-            <span class="logo-sub">autonomous engineering runtime</span>
-        </div>
-        <div class="header-status">
-            <span class="status-dot"></span>
-            <span class="status-text">provenance node active</span>
-        </div>
-    </header>
 
-    <main>
-        <div class="hero-section">
-            <div class="hero-badge">
-                <span class="hero-badge-dot"></span>
-                <span>korg v0.2.0 is now live</span>
+    <!-- Nav -->
+    <nav>
+        <a href="/" class="nav-logo">korg</a>
+        <div class="nav-right">
+            <div class="nav-badge">
+                <span class="status-dot"></span>
+                <span>v0.1.0 stable</span>
             </div>
-            <h1 class="hero-title">the autonomous software engineering runtime.</h1>
-            <p class="hero-subtitle">
-                Meet the first self-contained AI developer team that lives in your workspace. Korg doesn't just suggest code snippets—it runs a complete, secure environment where specialized AI agents (Architects, Coders, and Testers) collaborate, write code, run builds, and automatically heal broken tests.
-            </p>
-            <div class="hero-ctas">
-                <a href="/dashboard" class="btn-primary">
-                    <span>launch engineering Hub</span>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                </a>
-                <a href="#matrix" class="btn-secondary" onclick="document.getElementById('matrix').scrollIntoView({behavior: 'smooth'}); return false;">
-                    <span>view architecture spec</span>
-                </a>
-            </div>
+            <a href="https://github.com/New1Direction/korg" target="_blank" class="nav-link">github</a>
+            <a href="https://crates.io/crates/korg" target="_blank" class="nav-link">crates.io</a>
+            <a href="/cockpit" class="nav-link">cockpit →</a>
         </div>
+    </nav>
 
-        <!-- Interactive Simulator -->
-        <div class="simulator-section">
-            <div class="simulator-window">
-                <div class="sim-header">
-                    <div class="sim-controls">
-                        <span class="sim-dot dot-red"></span>
-                        <span class="sim-dot dot-yellow"></span>
-                        <span class="sim-dot dot-green"></span>
-                    </div>
-                    <div class="sim-tabs">
-                        <button class="sim-tab active" onclick="switchSimTab('architect')">architect.rs</button>
-                        <button class="sim-tab" onclick="switchSimTab('coder')">coder.rs</button>
-                        <button class="sim-tab" onclick="switchSimTab('tester')">tester.rs</button>
-                        <button class="sim-tab" onclick="switchSimTab('ledger')">ledger.json</button>
-                    </div>
-                    <span class="sim-title-right">korg://swarm-control</span>
-                </div>
-                
-                <div class="sim-workspace">
-                    <div class="sim-sidebar">
-                        <div class="sidebar-header">WORKFLOWS</div>
-                        <div class="sidebar-item active" onclick="startCampaignSim()">
-                            <span class="item-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></span> run swarm campaign
-                        </div>
-                        <div class="sidebar-item" onclick="startPolicySim()">
-                            <span class="item-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></span> verify vision policy
-                        </div>
-                        <div class="sidebar-item" onclick="startDagSim()">
-                            <span class="item-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></span> audit merkle replay
-                        </div>
-                        <div class="sidebar-header" style="margin-top: 20px;">ACTIVE PERSONAS</div>
-                        <div class="sidebar-persona">
-                            <span class="persona-indicator pulse-emerald"></span>
-                            <span class="persona-name">architect_primary</span>
-                        </div>
-                        <div class="sidebar-persona">
-                            <span class="persona-indicator pulse-blue"></span>
-                            <span class="persona-name">coder_synthesis</span>
-                        </div>
-                        <div class="sidebar-persona">
-                            <span class="persona-indicator pulse-green"></span>
-                            <span class="persona-name">tester_verification</span>
-                        </div>
-                    </div>
-                    <div class="sim-editor">
-                        <div class="editor-header" id="editor-file-name">architect.rs</div>
-                        <div class="editor-body">
-                            <pre class="code-output" id="term-output">
-                                <!-- typing simulation content goes here -->
-                            </pre>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="sim-footer-controls">
-                    <button class="sim-action-btn active" id="btn-sim-run" onclick="startCampaignSim()">Execute Swarm Sandbox</button>
-                    <button class="sim-action-btn" id="btn-sim-policy" onclick="startPolicySim()">Verify OCR Intercepts</button>
-                    <button class="sim-action-btn" id="btn-sim-dag" onclick="startDagSim()">Audit Cryptographic Ledger</button>
-                </div>
-            </div>
-        </div>
+    <!-- Hero -->
+    <section class="hero">
+        <p class="hero-label">v0.1.0 · now on crates.io</p>
 
-        <div class="portals-grid">
-            <a href="/dashboard" class="portal-card">
-                <div class="portal-header">
-                    <span class="portal-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></span>
-                    <span class="portal-tag">live dashboard</span>
-                </div>
-                <h3 class="portal-title">enter engineering Hub</h3>
-                <p class="portal-desc">Observe live multi-persona agent execution streams, check real-time OCR visual intercepts, and authorize manual plan overrides.</p>
-                <span class="portal-action">
-                    <span>launch engineering Hub</span>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                </span>
+        <h1 class="hero-title">the first deterministic<br>cognitive runtime.</h1>
+
+        <p class="hero-sub">
+            Every AI agent decision logged, causally ordered, and reversible.
+            Like Git, but for cognition.
+        </p>
+
+        <div class="hero-ctas">
+            <a href="https://github.com/New1Direction/korg" target="_blank" class="cta-primary">
+                <span class="prompt">$</span> cargo install korg
             </a>
-            
-            <div class="portal-card" onclick="openCliModal()">
-                <div class="portal-header">
-                    <span class="portal-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg></span>
-                    <span class="portal-tag">cli engine</span>
-                </div>
-                <h3 class="portal-title">run campaign via cli</h3>
-                <p class="portal-desc">Initiate highly isolated autonomous campaigns directly from your terminal. Full local workspace isolation and rollback support.</p>
-                <span class="portal-action">
-                    <span>reveal schema guidelines</span>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                </span>
-            </div>
-            
-            <div class="portal-card" onclick="openDagModal()">
-                <div class="portal-header">
-                    <span class="portal-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></span>
-                    <span class="portal-tag">provenance ledger</span>
-                </div>
-                <h3 class="portal-title">verify provenance trace</h3>
-                <p class="portal-desc">Audit the cryptographic attestation chain. Verify content-addressed Merkle hashes and ed25519 system signature paths.</p>
-                <span class="portal-action">
-                    <span>execute ledger verification</span>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                </span>
-            </div>
+            <a href="https://github.com/New1Direction/korg" target="_blank" class="cta-secondary">
+                GitHub ↗
+            </a>
         </div>
 
-        <!-- CLI Guide Drawer (Zero-Overlap Inline) -->
-        <div class="modal-overlay" id="cli-modal" onclick="if(event.target === this) closeCliModal()">
-            <div class="modal-card">
-                <div class="modal-title">
-                    <span style="display: flex; align-items: center; gap: 8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg> run campaign via cli</span>
-                </div>
-                <p class="modal-desc">Execute Korg campaigns directly from your system shell. Copy the command below to start an interactive visual campaign:</p>
-                <div class="terminal-box">
-                    <span class="terminal-prompt">$</span> 
-                    <span class="terminal-command" id="cmd-text">korg campaign --web --prompt "Refactor authentication layer"</span>
-                    <button class="copy-btn" onclick="copyCliCommand()">copy</button>
-                </div>
-                <div class="cli-details">
-                    <div class="cli-detail-row">
-                        <span class="cli-detail-key">--web</span>
-                        <span class="cli-detail-val">Launches real-time event visualization in the browser</span>
+        <!-- Live log terminal -->
+        <div class="terminal-wrap">
+            <div class="terminal">
+                <div class="terminal-bar">
+                    <div class="terminal-dots">
+                        <span></span><span></span><span></span>
                     </div>
-                    <div class="cli-detail-row">
-                        <span class="cli-detail-key">--tui</span>
-                        <span class="cli-detail-val">Launches Ratatui-based interactive terminal dashboard</span>
-                    </div>
-                    <div class="cli-detail-row">
-                        <span class="cli-detail-key">--goal</span>
-                        <span class="cli-detail-val">Bypasses plan/arena consensus prompts for autonomous running</span>
-                    </div>
+                    <span class="terminal-title">korg campaign --headless</span>
+                    <span></span>
                 </div>
-                <div class="modal-actions">
-                    <button class="btn-modal-close" onclick="closeCliModal()">close</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Provenance Drawer (Zero-Overlap Inline) -->
-        <div class="modal-overlay" id="dag-modal" onclick="if(event.target === this) closeDagModal()">
-            <div class="modal-card">
-                <div class="modal-title">
-                    <span style="display: flex; align-items: center; gap: 8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg> provenance trace audit verifier</span>
-                </div>
-                <p class="modal-desc">Cryptographically verify the content-addressed chain of custody from genesis state through compilation release.</p>
-                
-                <div class="modal-dag-layout">
-                    <div class="modal-dag-visual">
-                        <svg width="100%" height="120" viewBox="0 0 540 120" id="mini-dag-svg">
-                            <defs>
-                                <marker id="arrow" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                                    <path d="M 0 1 L 10 5 L 0 9 z" fill="rgba(255, 255, 255, 0.15)"/>
-                                </marker>
-                                <linearGradient id="neon-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="var(--accent-emerald)" />
-                                    <stop offset="100%" stop-color="var(--accent-cyan)" />
-                                </linearGradient>
-                            </defs>
-                            
-                            <line x1="60" y1="60" x2="160" y2="60" class="mini-edge" marker-end="url(#arrow)"></line>
-                            <line x1="170" y1="60" x2="270" y2="60" class="mini-edge" marker-end="url(#arrow)"></line>
-                            <line x1="280" y1="60" x2="380" y2="60" class="mini-edge" marker-end="url(#arrow)"></line>
-                            <line x1="390" y1="60" x2="490" y2="60" class="mini-edge" marker-end="url(#arrow)"></line>
-                            
-                            <g class="mini-node active" id="mn-0" onclick="selectMiniNode(0)">
-                                <circle cx="60" cy="60" r="18" class="node-glow"></circle>
-                                <circle cx="60" cy="60" r="14" class="node-base"></circle>
-                                <text x="60" y="64">tx_0</text>
-                            </g>
-                            <g class="mini-node" id="mn-1" onclick="selectMiniNode(1)">
-                                <circle cx="170" cy="60" r="18" class="node-glow"></circle>
-                                <circle cx="170" cy="60" r="14" class="node-base"></circle>
-                                <text x="170" y="64">tx_1</text>
-                            </g>
-                            <g class="mini-node" id="mn-2" onclick="selectMiniNode(2)">
-                                <circle cx="280" cy="60" r="18" class="node-glow"></circle>
-                                <circle cx="280" cy="60" r="14" class="node-base"></circle>
-                                <text x="280" y="64">tx_2</text>
-                            </g>
-                            <g class="mini-node" id="mn-3" onclick="selectMiniNode(3)">
-                                <circle cx="390" cy="60" r="18" class="node-glow"></circle>
-                                <circle cx="390" cy="60" r="14" class="node-base"></circle>
-                                <text x="390" y="64">tx_3</text>
-                            </g>
-                            <g class="mini-node" id="mn-4" onclick="selectMiniNode(4)">
-                                <circle cx="500" cy="60" r="18" class="node-glow"></circle>
-                                <circle cx="500" cy="60" r="14" class="node-base"></circle>
-                                <text x="500" y="64">tx_4</text>
-                            </g>
-                        </svg>
+                <div class="terminal-body">
+                    <div class="log-line">
+                        <span class="log-ts">17:01:00Z</span>
+                        <span class="log-level">INFO</span>
+                        <span class="log-mod">korg::</span>
+                        <span class="log-msg">session_id=<span class="log-seq">019e5333</span> mode=balanced</span>
                     </div>
-                    <div class="modal-dag-properties">
-                        <h4 class="properties-header">node attributes</h4>
-                        <div class="prop-table" id="prop-table-body">
-                            <!-- Filled dynamically -->
-                        </div>
+                    <div class="log-line">
+                        <span class="log-ts">17:01:01Z</span>
+                        <span class="log-level">INFO</span>
+                        <span class="log-mod">leader::</span>
+                        <span class="log-msg">swarm=[captain, harper, benjamin, lucas]</span>
                     </div>
-                </div>
-
-                <div class="modal-actions">
-                    <button class="btn-modal-close" onclick="closeDagModal()">close</button>
+                    <div class="log-line">
+                        <span class="log-ts">17:01:02Z</span>
+                        <span class="log-level">INFO</span>
+                        <span class="log-mod">log::</span>
+                        <span class="log-msg">append <span class="log-seq">seq=1</span> <span class="log-event">TransitionStarted</span></span>
+                    </div>
+                    <div class="log-line">
+                        <span class="log-ts">17:01:03Z</span>
+                        <span class="log-level">INFO</span>
+                        <span class="log-mod">log::</span>
+                        <span class="log-msg">append <span class="log-seq">seq=2</span> <span class="log-event">LeaseAcquired</span> actor=benjamin</span>
+                    </div>
+                    <div class="log-line">
+                        <span class="log-ts">17:01:04Z</span>
+                        <span class="log-level">INFO</span>
+                        <span class="log-mod">log::</span>
+                        <span class="log-msg">append <span class="log-seq">seq=3</span> <span class="log-event">EffectStarted</span> target=src/auth.rs</span>
+                    </div>
+                    <div class="log-line">
+                        <span class="log-ts">17:01:06Z</span>
+                        <span class="log-level">WARN</span>
+                        <span class="log-mod">eval::</span>
+                        <span class="log-msg">verdict=REVISE entropy=0.72 doom_loop_risk=moderate</span>
+                    </div>
+                    <div class="log-line">
+                        <span class="log-ts">17:01:07Z</span>
+                        <span class="log-level">INFO</span>
+                        <span class="log-mod">log::</span>
+                        <span class="log-msg"><span class="log-rewind">↩ rewind --seq 3</span> &nbsp;restoring workspace…</span>
+                    </div>
+                    <div class="log-line">
+                        <span class="log-ts">17:01:07Z</span>
+                        <span class="log-level">INFO</span>
+                        <span class="log-mod">log::</span>
+                        <span class="log-msg">git read-tree O(1) · projections rebuilt · clock=<span class="log-seq">seq=3</span></span>
+                    </div>
+                    <div class="log-line">
+                        <span class="log-ts">17:01:08Z</span>
+                        <span class="log-level">INFO</span>
+                        <span class="log-mod">log::</span>
+                        <span class="log-msg">append <span class="log-seq">seq=4</span> <span class="log-event">EffectStarted</span> branch=b91a4c2e</span>
+                    </div>
+                    <div class="log-line">
+                        <span class="log-ts">17:01:10Z</span>
+                        <span class="log-level">INFO</span>
+                        <span class="log-mod">arena::</span>
+                        <span class="log-msg"><span class="log-ok">✓ ACCEPT</span> trajectory=0.91 entropy=0.89 campaign_complete</span>
+                    </div>
                 </div>
             </div>
         </div>
+    </section>
 
-        <div class="matrix-section" id="matrix">
-            <h2 class="matrix-title">runtime specification matrix</h2>
-            <p class="matrix-subtitle">Every building block of Korg is engineered for deterministic, high-assurance software synthesis.</p>
-            <div class="matrix-grid">
-                <div class="matrix-card">
-                    <div class="matrix-card-title">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8"/><path d="m17 7-5 3-5-3"/><rect x="3" y="14" width="6" height="6" rx="1"/><rect x="15" y="14" width="6" height="6" rx="1"/></svg>
-                        <span>tamper-proof history (merkle ledger)</span>
-                    </div>
-                    <p class="matrix-card-text">Every action Korg takes is recorded into a secure history chain. This makes it impossible for the AI to hide its steps, allowing you to replay and audit everything.</p>
-                </div>
-                <div class="matrix-card">
-                    <div class="matrix-card-title">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                        <span>visual safety &amp; screen guardrails</span>
-                    </div>
-                    <p class="matrix-card-text">Korg continuously takes screenshots and scans its own work. If it accidentally exposes a password, API key, or private data, it automatically blurs it out to protect your security.</p>
-                </div>
-                <div class="matrix-card">
-                    <div class="matrix-card-title">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-                        <span>autonomous team testing (swarm)</span>
-                    </div>
-                    <p class="matrix-card-text">Multiple specialized AI bots review and test the code against five different quality checks before saving. They check each other's work so you don't have to.</p>
-                </div>
-                <div class="matrix-card">
-                    <div class="matrix-card-title">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
-                        <span>safe isolated sandbox (git worktrees)</span>
-                    </div>
-                    <p class="matrix-card-text">Korg works in temporary, isolated safe spaces. If a test fails or something breaks, Korg simply discards the sandbox and rolls back, keeping your main project completely untouched and safe.</p>
-                </div>
-            </div>
+    <!-- Feature strip -->
+    <div class="features">
+        <div class="feat">
+            <div class="feat-name">rewind</div>
+            <div class="feat-desc">Restore any agent decision to any prior state in O(1) time. No re-execution, no guessing.</div>
+            <div class="feat-detail">korg rewind --seq N</div>
         </div>
-
-        <!-- Comparative Matrix Section (xAI/Grok inspired) -->
-        <div class="comparison-section" id="comparison">
-            <h2 class="comparison-title">korg vs. traditional tools</h2>
-            <p class="comparison-subtitle">See how Korg's autonomous engineering runtime compares to standard AI code editors and command-line scripts.</p>
-            
-            <div class="comparison-table-container">
-                <table class="comparison-table">
-                    <thead>
-                        <tr>
-                            <th>Capability</th>
-                            <th class="korg-col">Korg Swarm Runtime</th>
-                            <th>Traditional AI IDEs (e.g. Cursor)</th>
-                            <th>Standard CLI Bots</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td class="feature-col">Who writes &amp; runs the code?</td>
-                            <td class="korg-col">
-                                <span class="comparison-badge yes">Yes (Autonomous Swarm)</span>
-                                <div class="table-text">A collaborative team of AI agents (Architect, Coder, and Tester) writes code, runs builds, and fixes bugs autonomously in the background.</div>
-                            </td>
-                            <td>
-                                <span class="comparison-badge partial">Partial (Autocompletes)</span>
-                                <div class="table-text">Suggests edits line-by-line. You still have to manually run the build, test for errors, and prompt for fixes.</div>
-                            </td>
-                            <td>
-                                <span class="comparison-badge partial">Partial (Single script)</span>
-                                <div class="table-text">Applies static edits sequentially, but lacks multi-persona teamwork and self-contained sandbox execution.</div>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td class="feature-col">Built-in Safe Testing?</td>
-                            <td class="korg-col">
-                                <span class="comparison-badge yes">Yes (Adversarial Sandbox)</span>
-                                <div class="table-text">Every change is built, checked, and tested inside isolated safe sandboxes before being committed to your main branch.</div>
-                            </td>
-                            <td>
-                                <span class="comparison-badge no">No (Runs on Host)</span>
-                                <div class="table-text">Writes code directly into your active project workspace. If the code breaks or contains malware, your local environment suffers.</div>
-                            </td>
-                            <td>
-                                <span class="comparison-badge no">No</span>
-                                <div class="table-text">Edits are applied directly onto your physical files with zero isolated compiler testing.</div>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td class="feature-col">Security Guardrails?</td>
-                            <td class="korg-col">
-                                <span class="comparison-badge yes">Yes (Screen &amp; OCR Policy)</span>
-                                <div class="table-text">Active screen checks and text recognition look at terminal outputs and screenshots to automatically blur and block API keys or secret leaks.</div>
-                            </td>
-                            <td>
-                                <span class="comparison-badge no">No</span>
-                                <div class="table-text">No active UI or screenshot safety firewalls. Relies purely on text-based prompt rules which are easily bypassed.</div>
-                            </td>
-                            <td>
-                                <span class="comparison-badge no">No</span>
-                                <div class="table-text">No visual safety filters or automated secret detection models.</div>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td class="feature-col">Verifiable History Ledger?</td>
-                            <td class="korg-col">
-                                <span class="comparison-badge yes">Yes (Provenance Ledger)</span>
-                                <div class="table-text">Logs all actions to a cryptographically secure, tamper-proof audit trail (Merkle Ledger) so you can verify exactly what the AI did.</div>
-                            </td>
-                            <td>
-                                <span class="comparison-badge no">No</span>
-                                <div class="table-text">Scattered logs that are difficult to trace. No verifiable cryptographic signatures or step-by-step history audits.</div>
-                            </td>
-                            <td>
-                                <span class="comparison-badge no">No</span>
-                                <div class="table-text">Standard git commits only, which don't prove the security or origin of the AI's internal process.</div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
+        <div class="feat">
+            <div class="feat-name">ledger</div>
+            <div class="feat-desc">Append-only HLC-ordered event log. Every transition is signed, sequenced, and cryptographically sealed.</div>
+            <div class="feat-detail">130 tests · 0 failures</div>
         </div>
-    </main>
+        <div class="feat">
+            <div class="feat-name">fork</div>
+            <div class="feat-desc">Branch from any checkpoint. Run parallel strategies, compare outcomes, discard or merge.</div>
+            <div class="feat-detail">speculative execution</div>
+        </div>
+    </div>
 
+    <!-- Install -->
+    <div class="install-strip">
+        <h2 class="install-heading">get started in one command</h2>
+        <div class="install-box">
+            <span class="install-prompt">$</span>
+            <span class="install-cmd" id="icmd">cargo install korg</span>
+            <button class="install-copy" onclick="copyInstall()" id="icopy">copy</button>
+        </div>
+        <div class="install-links">
+            <a href="https://docs.rs/korg" target="_blank">docs.rs/korg</a>
+            <a href="https://crates.io/crates/korg" target="_blank">crates.io/crates/korg</a>
+            <a href="https://github.com/New1Direction/korg" target="_blank">github</a>
+        </div>
+    </div>
+
+    <!-- Footer -->
     <footer>
-        korg v0.2.0 — autonomous software engineering runtime — cryptographically secure
+        <div class="footer-left">
+            <span>korg v0.1.0</span>
+            <a href="https://github.com/New1Direction/korg/blob/main/LICENSE" target="_blank">MIT / Apache-2.0</a>
+            <a href="https://github.com/New1Direction/korg/blob/main/CHANGELOG.md" target="_blank">changelog</a>
+            <a href="https://github.com/New1Direction/korg/blob/main/ROADMAP.md" target="_blank">roadmap</a>
+        </div>
+        <span>github.com/New1Direction/korg</span>
     </footer>
 
-    <!-- CLI Guide Modal -->
-    <div class="modal-overlay" id="cli-modal" onclick="if(event.target === this) closeCliModal()">
-        <div class="modal-card">
-            <div class="modal-title">
-                <span style="display: flex; align-items: center; gap: 8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg> run campaign via cli</span>
-            </div>
-            <p class="modal-desc">Execute Korg campaigns directly from your system shell. Copy the command below to start an interactive visual campaign:</p>
-            <div class="terminal-box">
-                <span class="terminal-prompt">$</span> 
-                <span class="terminal-command" id="cmd-text">korg campaign --web --prompt "Refactor authentication layer"</span>
-                <button class="copy-btn" onclick="copyCliCommand()">copy</button>
-            </div>
-            <div class="cli-details">
-                <div class="cli-detail-row">
-                    <span class="cli-detail-key">--web</span>
-                    <span class="cli-detail-val">Launches real-time event visualization in the browser</span>
-                </div>
-                <div class="cli-detail-row">
-                    <span class="cli-detail-key">--tui</span>
-                    <span class="cli-detail-val">Launches Ratatui-based interactive terminal dashboard</span>
-                </div>
-                <div class="cli-detail-row">
-                    <span class="cli-detail-key">--goal</span>
-                    <span class="cli-detail-val">Bypasses plan/arena consensus prompts for autonomous running</span>
-                </div>
-            </div>
-            <div class="modal-actions">
-                <button class="btn-modal-close" onclick="closeCliModal()">close</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Provenance Modal -->
-    <div class="modal-overlay" id="dag-modal" onclick="if(event.target === this) closeDagModal()">
-        <div class="modal-card">
-            <div class="modal-title">
-                <span style="display: flex; align-items: center; gap: 8px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg> provenance trace audit verifier</span>
-            </div>
-            <p class="modal-desc">Cryptographically verify the content-addressed chain of custody from genesis state through compilation release.</p>
-            
-            <div class="modal-dag-layout">
-                <div class="modal-dag-visual">
-                    <svg width="100%" height="120" viewBox="0 0 540 120" id="mini-dag-svg">
-                        <defs>
-                            <marker id="arrow" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                                <path d="M 0 1 L 10 5 L 0 9 z" fill="rgba(255, 255, 255, 0.15)"/>
-                            </marker>
-                            <linearGradient id="neon-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                                <stop offset="0%" stop-color="var(--accent-emerald)" />
-                                <stop offset="100%" stop-color="var(--accent-cyan)" />
-                            </linearGradient>
-                        </defs>
-                        
-                        <line x1="60" y1="60" x2="160" y2="60" class="mini-edge" marker-end="url(#arrow)"></line>
-                        <line x1="170" y1="60" x2="270" y2="60" class="mini-edge" marker-end="url(#arrow)"></line>
-                        <line x1="280" y1="60" x2="380" y2="60" class="mini-edge" marker-end="url(#arrow)"></line>
-                        <line x1="390" y1="60" x2="490" y2="60" class="mini-edge" marker-end="url(#arrow)"></line>
-                        
-                        <g class="mini-node active" id="mn-0" onclick="selectMiniNode(0)">
-                            <circle cx="60" cy="60" r="18" class="node-glow"></circle>
-                            <circle cx="60" cy="60" r="14" class="node-base"></circle>
-                            <text x="60" y="64">tx_0</text>
-                        </g>
-                        <g class="mini-node" id="mn-1" onclick="selectMiniNode(1)">
-                            <circle cx="170" cy="60" r="18" class="node-glow"></circle>
-                            <circle cx="170" cy="60" r="14" class="node-base"></circle>
-                            <text x="170" y="64">tx_1</text>
-                        </g>
-                        <g class="mini-node" id="mn-2" onclick="selectMiniNode(2)">
-                            <circle cx="280" cy="60" r="18" class="node-glow"></circle>
-                            <circle cx="280" cy="60" r="14" class="node-base"></circle>
-                            <text x="280" y="64">tx_2</text>
-                        </g>
-                        <g class="mini-node" id="mn-3" onclick="selectMiniNode(3)">
-                            <circle cx="390" cy="60" r="18" class="node-glow"></circle>
-                            <circle cx="390" cy="60" r="14" class="node-base"></circle>
-                            <text x="390" y="64">tx_3</text>
-                        </g>
-                        <g class="mini-node" id="mn-4" onclick="selectMiniNode(4)">
-                            <circle cx="500" cy="60" r="18" class="node-glow"></circle>
-                            <circle cx="500" cy="60" r="14" class="node-base"></circle>
-                            <text x="500" y="64">tx_4</text>
-                        </g>
-                    </svg>
-                </div>
-                <div class="modal-dag-properties">
-                    <h4 class="properties-header">node attributes</h4>
-                    <div class="prop-table" id="prop-table-body">
-                        <!-- Filled dynamically -->
-                    </div>
-                </div>
-            </div>
-
-            <div class="modal-actions">
-                <button class="btn-modal-close" onclick="closeDagModal()">close</button>
-            </div>
-        </div>
-    </div>
-
     <script>
-        // Modal functions
-        function openCliModal() { document.getElementById("cli-modal").classList.add("active"); }
-        function closeCliModal() { document.getElementById("cli-modal").classList.remove("active"); }
-        function openDagModal() { document.getElementById("dag-modal").classList.add("active"); selectMiniNode(0); }
-        function closeDagModal() { document.getElementById("dag-modal").classList.remove("active"); }
-        
-        function copyCliCommand() {
-            const text = document.getElementById("cmd-text").innerText;
-            navigator.clipboard.writeText(text).then(() => {
-                const btn = document.querySelector(".copy-btn");
-                btn.innerText = "copied! ✓";
-                setTimeout(() => { btn.innerText = "copy"; }, 2000);
+        function copyInstall() {
+            const btn = document.getElementById('icopy');
+            navigator.clipboard.writeText('cargo install korg').then(() => {
+                btn.textContent = 'copied!';
+                btn.style.color = 'var(--amber)';
+                setTimeout(() => {
+                    btn.textContent = 'copy';
+                    btn.style.color = '';
+                }, 2000);
             });
         }
-
-        // Mini DAG mock database
-        const miniDagDb = [
-            {
-                tx: "tx_00 (genesis)",
-                type: "SYSTEM_GENESIS",
-                hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                signature: "ed25519::verified [8f3c29a2b7e5c4...]",
-                state_root: "a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2 [verified ✓]",
-                status: "attested & finalized"
-            },
-            {
-                tx: "tx_01 (plan)",
-                type: "PLAN_FORMULATION",
-                hash: "6d2d46e3ea406fb2b18ea24bfbd54f97155e8c1cf9e1d8820cf67ef8fc8a385f",
-                signature: "ed25519::verified [4a7d3b2e5f1c9a...]",
-                state_root: "f8e7d6c5b4a39281706f5e4d3c2b1a0f [verified ✓]",
-                status: "approved by operator"
-            },
-            {
-                tx: "tx_02 (code)",
-                type: "WORKSPACE_SYNTHESIS",
-                hash: "5f82c4f1e312a02b1f8d4239824bfbd54f97155e8c1cf9e1d8820cf67ef8fc8a3",
-                signature: "ed25519::verified [3c2b9a8d7e5f4a...]",
-                state_root: "b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9 [verified ✓]",
-                status: "adversarial suite green"
-            },
-            {
-                tx: "tx_03 (policy)",
-                type: "POLICY_REDISTRIBUTION",
-                hash: "4e91a7c3b2e5f1c9a8b7d6e5c4b3a2b1e3f4a5b6c7d8e9a0b1c2d3e4f5a6b7c8",
-                signature: "ed25519::contested [9a8c7b6d5e4f3a...]",
-                state_root: "d8e7c6b5a4938271605f4e3d2c1b0a9f [redacted ✓]",
-                status: "intercepted & redacted"
-            },
-            {
-                tx: "tx_04 (release)",
-                type: "RELEASE_COMMIT",
-                hash: "9f3c2b8a7d5e4f3c2b1a0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a",
-                signature: "ed25519::verified [3c2b7a9f8e7d6c...]",
-                state_root: "e3f2d1c0b9a876543210fedcba987654 [verified ✓]",
-                status: "production build active"
-            }
-        ];
-
-        function selectMiniNode(idx) {
-            document.querySelectorAll(".mini-node").forEach(n => n.classList.remove("active"));
-            document.getElementById(`mn-${idx}`).classList.add("active");
-            
-            const data = miniDagDb[idx];
-            const body = document.getElementById("prop-table-body");
-            body.innerHTML = `
-                <div class="prop-table">
-                    <div class="prop-row">
-                        <div class="prop-key">Transaction ID</div>
-                        <div class="prop-val" style="color: var(--accent-emerald); font-weight: bold;">${data.tx}</div>
-                    </div>
-                    <div class="prop-row">
-                        <div class="prop-key">Event Type</div>
-                        <div class="prop-val" style="color: #ffffff; font-weight: bold;">${data.type}</div>
-                    </div>
-                    <div class="prop-row">
-                        <div class="prop-key">Merkle Hash</div>
-                        <div class="prop-val" style="color: var(--text-secondary); font-family: var(--font-mono);">${data.hash}</div>
-                    </div>
-                    <div class="prop-row">
-                        <div class="prop-key">Attestation</div>
-                        <div class="prop-val" style="color: var(--accent-green);">${data.signature}</div>
-                    </div>
-                    <div class="prop-row">
-                        <div class="prop-key">State Root</div>
-                        <div class="prop-val" style="color: var(--accent-cyan); font-family: var(--font-mono);">${data.state_root}</div>
-                    </div>
-                    <div class="prop-row">
-                        <div class="prop-key">Status</div>
-                        <div class="prop-val" style="color: ${data.tx.includes('tx_03') ? 'var(--accent-gold)' : '#ffffff'}; font-weight: 500;">${data.status}</div>
-                    </div>
-                </div>
-            `;
-        }
-
-        // Terminal Interactive Simulator Logic
-        let simInterval = null;
-        const termElement = document.getElementById("term-output");
-
-        const simulatorScripts = {
-            run: [
-                { type: "input", text: "korg campaign --web --prompt \"Refactor database pool size allocation\"" },
-                { type: "output", text: "[korg] Initializing campaign environment...", color: "#94a3b8" },
-                { type: "output", text: "[korg] Creating transient isolation sandbox (git worktree)...", color: "#94a3b8" },
-                { type: "output", text: "[korg] Sandbox created at: /tmp/korg-worktree-a8f3", color: "#64748b" },
-                { type: "output", text: "[korg] Spawning autonomous swarm (3 personas active):", color: "#ffffff" },
-                { type: "output", text: "   ▸ [architect] Designing execution layout...", color: "#6ee7b7" },
-                { type: "output", text: "   ▸ [coder] Generating patch for src/db.rs...", color: "#38bdf8" },
-                { type: "output", text: "   ▸ [tester] Synthesizing adversarial verification suite...", color: "#34d399" },
-                { type: "output", text: "[korg] Patch formulated. Running adversarial test suite...", color: "#ffffff" },
-                { type: "output", text: "   ✔ Compile check: GREEN (took 1.2s)", color: "#10b981" },
-                { type: "output", text: "   ✔ Unit tests (8/8): GREEN", color: "#10b981" },
-                { type: "output", text: "   ✔ Adversarial Security Scan: CLEAN", color: "#10b981" },
-                { type: "output", text: "[korg] Swarm verification complete. Generating Merkle-DAG attestation...", color: "#ffffff" },
-                { type: "output", text: "[korg] Attestation tx_02 written to cryptographic ledger.", color: "#10b981" },
-                { type: "output", text: "[korg] Campaign successfully finalized! Ready for deployment.", color: "#ffffff" }
-            ],
-            policy: [
-                { type: "input", text: "korg campaign --verify-vision-policy" },
-                { type: "output", text: "[policy-engine] Booting zero-trust visual intercept interceptor...", color: "#94a3b8" },
-                { type: "output", text: "[policy-engine] Monitoring active workspace GUI state...", color: "#94a3b8" },
-                { type: "output", text: "[policy-engine] Screenshot triggered by tester persona.", color: "#ffffff" },
-                { type: "output", text: "[policy-engine] Processing screenshot_382.png through vision firewall...", color: "#ffffff" },
-                { type: "output", text: "   ▸ Scanning metadata and OCR layers...", color: "#64748b" },
-                { type: "output", text: "   ⚠ VIOLATION DETECTED: Found string pattern 'DATABASE_PASSWORD=********' in visual OCR buffer!", color: "#ef4444" },
-                { type: "output", text: "   ⚠ FAIL-SECURE POLICY ACTIVATED: Triggering zero-trust filter.", color: "#ef4444" },
-                { type: "output", text: "[policy-engine] Redacting raw screenshot in memory...", color: "#ffffff" },
-                { type: "output", text: "   ▸ Method: Grayscale Overlay + Total Blur redaction", color: "#94a3b8" },
-                { type: "output", text: "   ✔ Screenshot redacted. Safe base64 broadcast emitted.", color: "#10b981" },
-                { type: "output", text: "[policy-engine] Attestation tx_03 recorded: OCR_VIOLATION_AUTO_REDACTED", color: "#10b981" },
-                { type: "output", text: "[policy-engine] No raw sensitive credentials escaped the sandbox.", color: "#ffffff" }
-            ],
-            dag: [
-                { type: "input", text: "korg dag log --tx tx_04" },
-                { type: "output", text: "[korg-dag] Content-Addressed Merkle ledger audit trace:", color: "#ffffff" },
-                { type: "output", text: "--------------------------------------------------------", color: "#64748b" },
-                { type: "output", text: "Transaction: tx_04", color: "#ffffff" },
-                { type: "output", text: "Parent Hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4...", color: "#94a3b8" },
-                { type: "output", text: "State Root:  9f3c2b8a7d5e4f3c2b1a0d9e8f7a6b5c4d3e2f1a...", color: "#94a3b8" },
-                { type: "output", text: "Signature:   ed25519::verified [attester: leader_primary]", color: "#10b981" },
-                { type: "output", text: "Payload Type: RELEASE_COMMIT", color: "#ffffff" },
-                { type: "output", text: "Diff Attestation:", color: "#94a3b8" },
-                { type: "output", text: "   + modified: src/web.rs (monochrome layout upgrade)", color: "#10b981" },
-                { type: "output", text: "   + verified: adversarial-arena compiler passes", color: "#10b981" },
-                { type: "output", text: "Cryptographic Attestation Chain: VALID", color: "#10b981" },
-                { type: "output", text: "   Genesis (tx_00) ➔ Plan (tx_01) ➔ Synthesis (tx_02) ➔ Intercept (tx_03) ➔ Release (tx_04)", color: "#ffffff" }
-            ]
-        };
-
-        const fileMockContents = {
-            architect: `// korg - Persona: Architect Suite
-// Speculating system changes under ACP-V2 protocol.
-pub struct ArchitectPersona {
-    blackboard: Arc<RwLock<Blackboard>>,
-    cognitive_depth: u32,
-}
-
-impl Persona for ArchitectPersona {
-    fn design_plan(&self, goal: &Goal) -> Result<Plan> {
-        log::info!("Decomposing execution space...");
-        let steps = vec![
-            Step::new("Analyze Database connections"),
-            Step::new("Patch src/db.rs with ConnectionPool"),
-            Step::new("Run Speculative arena check")
-        ];
-        Ok(Plan::formulate(steps))
-    }
-}`,
-            coder: `// korg - Persona: Coder Speculative Engine
-// Translating structural plan steps into Rust code commits.
-use tokio::fs;
-
-pub async fn apply_synthesis(patch: &Patch) -> Result<Attestation> {
-    log::info!("Synthesizing modifications in isolated workspace...");
-    let workspace = Worktree::create_temp().await?;
-    
-    // Apply patch
-    fs::write(workspace.join("src/db.rs"), patch.code()).await?;
-    
-    log::info!("Verifying compiler flags...");
-    workspace.cargo_check().await?;
-    
-    Ok(Attestation::from_workspace(&workspace))
-}`,
-            tester: `// korg - Persona: Tester Arena Suite
-// Subjecting synthesize patches to adversarial validation criteria.
-
-#[tokio::test]
-async fn test_adversarial_security_leaks() {
-    let sandbox = Sandbox::boot_isolated().await;
-    let scanner = SecretScanner::new(Policy::zero_trust());
-    
-    // Intercept code structures for keys/tokens
-    let violations = scanner.scan_files(sandbox.files()).await;
-    assert!(violations.is_empty(), "Violations found: {:?}", violations);
-}`,
-            ledger: `{
-  "attestation_chain": {
-    "tx_00": { "event": "SYSTEM_GENESIS", "status": "finalized" },
-    "tx_01": { "event": "PLAN_FORMULATION", "status": "approved" },
-    "tx_02": { "event": "WORKSPACE_SYNTHESIS", "status": "green" },
-    "tx_03": { "event": "POLICY_REDISTRIBUTION", "status": "redacted" },
-    "tx_04": { "event": "RELEASE_COMMIT", "status": "finalized" }
-  }
-}`
-        };
-
-        function switchSimTab(tabId) {
-            document.querySelectorAll(".sim-tab").forEach(tab => tab.classList.remove("active"));
-            const tabEl = document.querySelector(`[onclick="switchSimTab('${tabId}')"]`);
-            if(tabEl) tabEl.classList.add("active");
-            
-            document.getElementById("editor-file-name").textContent = tabId === 'ledger' ? 'ledger.json' : `${tabId}.rs`;
-            
-            // Set editor text content
-            const codeOutput = document.getElementById("term-output");
-            codeOutput.style.color = tabId === 'ledger' ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.7)';
-            codeOutput.textContent = fileMockContents[tabId];
-            
-            // Pause any running log simulations
-            if (simInterval) {
-                clearInterval(simInterval);
-                simInterval = null;
-            }
-            
-            // Set action active tab
-            document.querySelectorAll(".sim-action-btn").forEach(btn => btn.classList.remove("active"));
-            document.querySelectorAll(".sidebar-item").forEach(item => item.classList.remove("active"));
-        }
-
-        function setSimButtonActive(simId) {
-            document.querySelectorAll(".sim-action-btn").forEach(btn => btn.classList.remove("active"));
-            document.querySelectorAll(".sidebar-item").forEach(item => item.classList.remove("active"));
-            
-            if (simId === "run") {
-                document.getElementById("btn-sim-run").classList.add("active");
-                document.querySelector(`[onclick="startCampaignSim()"]`).classList.add("active");
-            }
-            if (simId === "policy") {
-                document.getElementById("btn-sim-policy").classList.add("active");
-                document.querySelector(`[onclick="startPolicySim()"]`).classList.add("active");
-            }
-            if (simId === "dag") {
-                document.getElementById("btn-sim-dag").classList.add("active");
-                document.querySelector(`[onclick="startDagSim()"]`).classList.add("active");
-            }
-        }
-
-        function runSimScript(script) {
-            if (simInterval) clearInterval(simInterval);
-            termElement.innerHTML = "";
-            let lineIndex = 0;
-            
-            function printNextLine() {
-                if (lineIndex >= script.length) return;
-                
-                const line = script[lineIndex];
-                const div = document.createElement("div");
-                div.style.marginBottom = "4px";
-                
-                if (line.type === "input") {
-                    div.innerHTML = `<span style="color: var(--accent-emerald); user-select: none; font-weight: bold;">$</span> <span style="color: #ffffff; font-weight: 500;"></span>`;
-                    termElement.appendChild(div);
-                    
-                    // Typewriter effect for input line
-                    let charIndex = 0;
-                    const textSpan = div.querySelector("span:nth-child(2)");
-                    
-                    const typeInterval = setInterval(() => {
-                        if (charIndex < line.text.length) {
-                            textSpan.textContent += line.text[charIndex];
-                            charIndex++;
-                        } else {
-                            clearInterval(typeInterval);
-                            lineIndex++;
-                            setTimeout(printNextLine, 400);
-                        }
-                    }, 15);
-                } else {
-                    div.style.color = line.color || "var(--text-secondary)";
-                    div.textContent = line.text;
-                    termElement.appendChild(div);
-                    termElement.scrollTop = termElement.scrollHeight;
-                    lineIndex++;
-                    setTimeout(printNextLine, 350);
-                }
-            }
-            
-            printNextLine();
-        }
-
-        function startCampaignSim() {
-            setSimButtonActive("run");
-            document.getElementById("editor-file-name").textContent = "terminal://campaign-log";
-            document.querySelectorAll(".sim-tab").forEach(tab => tab.classList.remove("active"));
-            termElement.style.color = "var(--text-secondary)";
-            runSimScript(simulatorScripts.run);
-        }
-
-        function startPolicySim() {
-            setSimButtonActive("policy");
-            document.getElementById("editor-file-name").textContent = "terminal://policy-firewall";
-            document.querySelectorAll(".sim-tab").forEach(tab => tab.classList.remove("active"));
-            termElement.style.color = "var(--text-secondary)";
-            runSimScript(simulatorScripts.policy);
-        }
-
-        function startDagSim() {
-            setSimButtonActive("dag");
-            document.getElementById("editor-file-name").textContent = "terminal://merkle-audit";
-            document.querySelectorAll(".sim-tab").forEach(tab => tab.classList.remove("active"));
-            termElement.style.color = "var(--text-secondary)";
-            runSimScript(simulatorScripts.dag);
-        }
-
-        // Run default simulation on page load
-        window.addEventListener("DOMContentLoaded", () => {
-            startCampaignSim();
-        });
     </script>
+
 </body>
-</html>
-"##;
+</html>"##;
