@@ -672,8 +672,11 @@ async fn agent_tool_call_handler(
     Json(req): Json<AgentToolCallRequest>,
 ) -> impl IntoResponse {
     use crate::registry::CapabilityEvent;
+    use crate::registry::log::{EventMetadata, EventTier};
     use axum::http::StatusCode;
     use chrono::Utc;
+    use std::collections::BTreeMap;
+    use uuid::Uuid;
 
     let event = CapabilityEvent::AgentToolCall {
         source_agent: req.source_agent,
@@ -688,49 +691,67 @@ async fn agent_tool_call_handler(
 
     let mut resolver = state.capability_resolver.lock().await;
 
-    // If the caller supplied a triggered_by, we need append_with_metadata so we
-    // can pass it through. Otherwise the standard append() path is fine.
-    let seq_id = if let Some(triggered_by_seq) = req.triggered_by {
-        use crate::registry::log::{EventMetadata, EventTier};
-        use std::collections::BTreeMap;
-        use uuid::Uuid;
+    // ALWAYS use append_with_metadata for external agent events.
+    //
+    // The standard append() auto-sets triggered_by to the previous journal
+    // event's seq_id — which for external agents is whatever internal korg
+    // event happened to be last. That silently chains root agent events (e.g.
+    // user_prompt with triggered_by=None) to internal governance events,
+    // breaking the causal tree.
+    //
+    // Dogfood finding (2026-05-24): backward chain from a leaf walked back
+    // through 354 internal korg events to a non-AgentToolCall root instead
+    // of stopping at the user_prompt root. Root cause: this branch.
+    //
+    // Fix: always construct metadata explicitly and call append_with_metadata,
+    // preserving the caller's triggered_by value exactly — including None.
 
-        let event_id = Uuid::new_v4();
-        let wall_clock = chrono::Utc::now().timestamp_millis();
-        let emitted_at = resolver.journal.clock.tick(wall_clock);
+    let event_id = Uuid::new_v4();
+    let wall_clock = Utc::now().timestamp_millis();
+    let emitted_at = resolver.journal.clock.tick(wall_clock);
 
-        // Inherit root_event_id from the triggered_by event if it exists
-        let root_event_id = resolver
-            .journal
-            .events
-            .iter()
-            .find(|e| e.seq_id == triggered_by_seq)
-            .map(|e| e.metadata.root_event_id)
-            .unwrap_or(event_id);
-
-        let metadata = EventMetadata {
-            event_id,
-            correlation_id: Uuid::nil(), // AgentToolCall has no plan_id
-            causation_id: resolver.journal.events.last().map(|e| e.metadata.event_id),
-            root_event_id,
-            actor_id: format!("{}", &event.campaign_id()), // overridden below via source_agent
-            campaign_id: Uuid::nil(),
-            emitted_at,
-            branch_id: None,
-            speculative: false,
-            retry_count: 0,
-            tier: EventTier::Telemetry,
-            span_id: None,
-            tags: BTreeMap::new(),
-            triggered_by: Some(triggered_by_seq),
-        };
-
-        resolver.journal.append_with_metadata(event, metadata);
-        resolver.journal.last_seq_id
-    } else {
-        resolver.journal.append(event);
-        resolver.journal.last_seq_id
+    let (root_event_id, causation_id) = match req.triggered_by {
+        Some(triggered_by_seq) => {
+            // Inherit root_event_id from the triggered_by event's root chain.
+            // causation_id = UUID of the triggering event (for internal UUID graph).
+            let parent = resolver
+                .journal
+                .events
+                .iter()
+                .find(|e| e.seq_id == triggered_by_seq);
+            let root = parent
+                .map(|e| e.metadata.root_event_id)
+                .unwrap_or(event_id);
+            let causation = parent.map(|e| e.metadata.event_id);
+            (root, causation)
+        }
+        None => {
+            // Root event: this event IS its own root. triggered_by=None means
+            // "I am the beginning of a new causal chain." Do not inherit from
+            // whatever korg internal event happened to be last.
+            (event_id, None)
+        }
     };
+
+    let metadata = EventMetadata {
+        event_id,
+        correlation_id: Uuid::nil(), // AgentToolCall has no internal plan_id
+        causation_id,
+        root_event_id,
+        actor_id: "korg:api".to_string(), // ingestion endpoint identity
+        campaign_id: Uuid::nil(),
+        emitted_at,
+        branch_id: None,
+        speculative: false,
+        retry_count: 0,
+        tier: EventTier::Telemetry,
+        span_id: None,
+        tags: BTreeMap::new(),
+        triggered_by: req.triggered_by, // preserved exactly — None means root
+    };
+
+    resolver.journal.append_with_metadata(event, metadata);
+    let seq_id = resolver.journal.last_seq_id;
 
     drop(resolver);
 
