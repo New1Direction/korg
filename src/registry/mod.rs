@@ -10,8 +10,8 @@ pub mod validator;
 pub use checkpoint::{CheckpointMetadata, ExecutionCheckpoint};
 pub use executor::CapabilityExecutor;
 pub use log::{
-    CapabilityEvent, CapabilityJournal, CapabilitySnapshot, HlcTimestamp, JournalEvent,
-    IS_PREVIEW_MODE,
+    CapabilityEvent, CapabilityJournal, CapabilitySnapshot, ContentRef, HlcTimestamp,
+    JournalEvent, IS_PREVIEW_MODE,
 };
 pub use plan::{MutationStep, SafetyCheck, TransitionExecution, TransitionPlan, TransitionState};
 pub use planner::CapabilityPlanner;
