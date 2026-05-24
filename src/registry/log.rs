@@ -13,9 +13,23 @@ pub static IS_PREVIEW_MODE: AtomicBool = AtomicBool::new(false);
 use super::plan::TransitionState;
 use super::types::CapabilityState;
 
+/// Content-addressed reference for large payloads (file contents, command output, etc.).
+/// Store the payload outside the ledger; record only the digest + size here.
+/// This keeps the ledger lightweight and replayable without carrying large blobs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContentRef {
+    /// SHA-256 hex digest of the referenced content
+    pub sha256: String,
+    /// Size of the content in bytes
+    pub size_bytes: u64,
+    /// Human-readable label describing what this content represents
+    pub label: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "event_type")]
 pub enum CapabilityEvent {
+    // ── Internal korg governance events ─────────────────────────────────────
     CapabilityEnabled {
         plan_id: Uuid,
         id: String,
@@ -89,6 +103,41 @@ pub enum CapabilityEvent {
         owner_id: Uuid,
         timestamp: DateTime<Utc>,
     },
+
+    // ── Universal external agent event (schema v1.0) ─────────────────────────
+    //
+    // Any agent runtime — korgex, Claude Code, Codex, Amp, or a future MCP
+    // client — can emit this event into a korg ledger. It is the primary
+    // surface the MCP server will expose once the schema is frozen.
+    //
+    // Design rules (do not relax without bumping schema_version):
+    //   1. Large payloads go in `payload_refs`, not inline in `args`/`result`.
+    //   2. `source_agent` identifies the runtime, not the model.
+    //   3. `triggered_by` on EventMetadata carries the causal seq_id pointer.
+    AgentToolCall {
+        /// Identity of the emitting agent runtime.
+        /// Convention: lowercase, hyphenated. e.g. "korgex", "claude-code", "korg".
+        source_agent: String,
+        /// Name of the tool called. Should match the agent's own tool registry name.
+        /// e.g. "Edit", "Bash", "Read", "korg_append_event".
+        tool_name: String,
+        /// Tool arguments. Keep small/scalar values inline.
+        /// For large values (file contents, diffs), use payload_refs and record a
+        /// ContentRef here instead: { "_ref": "sha256:<digest>" }.
+        args: serde_json::Value,
+        /// Tool result. Same content-addressing convention as args.
+        result: serde_json::Value,
+        /// Content-addressed references for any large payloads associated with
+        /// this tool call (file contents, command output, diffs, etc.).
+        #[serde(default)]
+        payload_refs: Vec<ContentRef>,
+        /// Whether the tool call succeeded.
+        success: bool,
+        /// Wall-clock duration of the tool call in milliseconds.
+        duration_ms: u64,
+        /// ISO-8601 timestamp of when the tool call was issued.
+        timestamp: DateTime<Utc>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -114,6 +163,8 @@ impl CapabilityEvent {
             CapabilityEvent::TransitionRolledBack { plan_id, .. } => *plan_id,
             CapabilityEvent::LeaseAcquired { owner_id, .. } => *owner_id,
             CapabilityEvent::LeaseReleased { owner_id, .. } => *owner_id,
+            // External agent events have no plan_id — use nil UUID as a stable sentinel
+            CapabilityEvent::AgentToolCall { .. } => Uuid::nil(),
         }
     }
 
@@ -132,6 +183,9 @@ impl CapabilityEvent {
             | CapabilityEvent::EffectCompleted { .. }
             | CapabilityEvent::EffectFailed { .. }
             | CapabilityEvent::EffectRetrying { .. } => EventTier::Effect,
+
+            // External agent tool calls are telemetry-tier: high-volume, low-privilege
+            CapabilityEvent::AgentToolCall { .. } => EventTier::Telemetry,
         }
     }
 }
@@ -238,13 +292,37 @@ pub struct EventMetadata {
     pub span_id: Option<Uuid>,
 
     pub tags: BTreeMap<String, String>,
+
+    /// Sequence number of the event that causally triggered this one.
+    ///
+    /// More human-readable than `causation_id` (UUID) for external consumers
+    /// and auditors. When set, reading the ledger entry at `triggered_by` tells
+    /// you *why* this event happened — the full causal chain is walkable by
+    /// following seq_id pointers back to the root.
+    ///
+    /// Example: if seq=47 is an `AgentToolCall { tool_name: "Edit" }` that
+    /// happened because seq=30 produced a failing test, set `triggered_by = Some(30)`.
+    #[serde(default)]
+    pub triggered_by: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JournalEvent {
+    /// Schema version for forward compatibility.
+    /// All events written by this release carry "1.0".
+    /// Consumers MUST reject events with an unrecognised version.
+    /// Bump to "1.1" for additive changes, "2.0" for breaking changes.
+    #[serde(default = "JournalEvent::default_schema_version")]
+    pub schema_version: String,
     pub seq_id: u64,
     pub metadata: EventMetadata,
     pub event: CapabilityEvent,
+}
+
+impl JournalEvent {
+    pub fn default_schema_version() -> String {
+        "1.0".to_string()
+    }
 }
 
 /// Periodic state checkpoint to bypass full event replay cold-starts
@@ -353,6 +431,7 @@ impl CapabilityJournal {
         self.clock = self.clock.merge(&metadata.emitted_at, wall_clock);
 
         let journal_event = JournalEvent {
+            schema_version: JournalEvent::default_schema_version(),
             seq_id: self.last_seq_id,
             metadata,
             event,
@@ -369,6 +448,7 @@ impl CapabilityJournal {
 
         let causation_id = parent.map(|e| e.metadata.event_id);
         let root_event_id = parent.map(|e| e.metadata.root_event_id).unwrap_or(event_id);
+        let triggered_by = parent.map(|e| e.seq_id);
         let tier = event.tier();
 
         let retry_count = match &event {
@@ -393,11 +473,13 @@ impl CapabilityJournal {
             tier,
             span_id: None,
             tags: BTreeMap::new(),
+            triggered_by,
         };
 
         self.last_seq_id += 1;
         self.clock = emitted_at;
         let journal_event = JournalEvent {
+            schema_version: JournalEvent::default_schema_version(),
             seq_id: self.last_seq_id,
             metadata,
             event,
