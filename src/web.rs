@@ -162,6 +162,7 @@ pub async fn run_web_with_campaign(
         .route("/api/metrics", get(metrics_handler))
         .route("/api/workspaces", get(workspaces_handler))
         .route("/api/campaign/abort", post(campaign_abort_handler))
+        .route("/api/agent/tool-call", post(agent_tool_call_handler))
         .route(
             "/api/projections/campaign",
             get(campaign_projection_handler),
@@ -267,6 +268,7 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
         .route("/api/metrics", get(metrics_handler))
         .route("/api/workspaces", get(workspaces_handler))
         .route("/api/campaign/abort", post(campaign_abort_handler))
+        .route("/api/agent/tool-call", post(agent_tool_call_handler))
         .route(
             "/api/projections/campaign",
             get(campaign_projection_handler),
@@ -620,6 +622,119 @@ async fn journal_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
         format!("// total events: {}\n{}", total, jsonl),
     )
         .into_response()
+}
+
+/// POST `/api/agent/tool-call`
+///
+/// External agent ingestion endpoint — schema v1.0.
+///
+/// Any agent runtime (korgex, Claude Code via MCP, etc.) posts an `AgentToolCallRequest`
+/// here. korg appends it to the live capability journal with a fresh HLC timestamp and
+/// returns the assigned `seq_id` so the caller can wire `triggered_by` on the next event.
+///
+/// **Design rules (see agent_event_spec.md):**
+/// - One event per *completed* call. Emit after the tool returns, not before.
+/// - `triggered_by` should be the `seq_id` of the event that caused this call.
+/// - Payloads over 1 KB must be content-addressed: write the blob to `.korg/blobs/`
+///   and pass a `ContentRef` instead of the raw content.
+/// - This handler never blocks the caller's agent loop — failures are logged internally.
+
+#[derive(Debug, serde::Deserialize)]
+struct AgentToolCallRequest {
+    /// Agent runtime identity. Convention: "agent:<name>@<version>" or "human:<id>".
+    source_agent: String,
+    /// Name of the tool called. Should match the agent's own tool registry name.
+    tool_name: String,
+    /// Tool arguments. Large values must be content-addressed (see ContentRef rules).
+    args: serde_json::Value,
+    /// Tool result. Large values must be content-addressed.
+    result: serde_json::Value,
+    /// Content-addressed references for large payloads (optional).
+    #[serde(default)]
+    payload_refs: Vec<crate::registry::ContentRef>,
+    /// Whether the tool call succeeded.
+    success: bool,
+    /// Wall-clock duration of the tool call in milliseconds.
+    duration_ms: u64,
+    /// seq_id of the event that causally triggered this call (None for root events).
+    #[serde(default)]
+    triggered_by: Option<u64>,
+}
+
+#[derive(serde::Serialize)]
+struct AgentToolCallResponse {
+    /// Assigned journal sequence number. Use as `triggered_by` on the next event.
+    seq_id: u64,
+}
+
+async fn agent_tool_call_handler(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AgentToolCallRequest>,
+) -> impl IntoResponse {
+    use crate::registry::CapabilityEvent;
+    use axum::http::StatusCode;
+    use chrono::Utc;
+
+    let event = CapabilityEvent::AgentToolCall {
+        source_agent: req.source_agent,
+        tool_name: req.tool_name,
+        args: req.args,
+        result: req.result,
+        payload_refs: req.payload_refs,
+        success: req.success,
+        duration_ms: req.duration_ms,
+        timestamp: Utc::now(),
+    };
+
+    let mut resolver = state.capability_resolver.lock().await;
+
+    // If the caller supplied a triggered_by, we need append_with_metadata so we
+    // can pass it through. Otherwise the standard append() path is fine.
+    let seq_id = if let Some(triggered_by_seq) = req.triggered_by {
+        use crate::registry::log::{EventMetadata, EventTier};
+        use std::collections::BTreeMap;
+        use uuid::Uuid;
+
+        let event_id = Uuid::new_v4();
+        let wall_clock = chrono::Utc::now().timestamp_millis();
+        let emitted_at = resolver.journal.clock.tick(wall_clock);
+
+        // Inherit root_event_id from the triggered_by event if it exists
+        let root_event_id = resolver
+            .journal
+            .events
+            .iter()
+            .find(|e| e.seq_id == triggered_by_seq)
+            .map(|e| e.metadata.root_event_id)
+            .unwrap_or(event_id);
+
+        let metadata = EventMetadata {
+            event_id,
+            correlation_id: Uuid::nil(), // AgentToolCall has no plan_id
+            causation_id: resolver.journal.events.last().map(|e| e.metadata.event_id),
+            root_event_id,
+            actor_id: format!("{}", &event.campaign_id()), // overridden below via source_agent
+            campaign_id: Uuid::nil(),
+            emitted_at,
+            branch_id: None,
+            speculative: false,
+            retry_count: 0,
+            tier: EventTier::Telemetry,
+            span_id: None,
+            tags: BTreeMap::new(),
+            triggered_by: Some(triggered_by_seq),
+        };
+
+        resolver.journal.append_with_metadata(event, metadata);
+        resolver.journal.last_seq_id
+    } else {
+        resolver.journal.append(event);
+        resolver.journal.last_seq_id
+    };
+
+    drop(resolver);
+
+    (StatusCode::OK, Json(AgentToolCallResponse { seq_id })).into_response()
 }
 
 /// GET `/api/metrics`
