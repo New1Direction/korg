@@ -95,6 +95,7 @@ class TestKorgStreamAdapter(unittest.TestCase):
         posted = mock_post.call_args[1]["json"]
         self.assertEqual(posted["tool_name"], "user_prompt")
         self.assertEqual(posted["source_agent"], "human:claude-code-user")
+        self.assertEqual(posted["args"]["prompt"], "[adapter-synthesized: original CLI prompt not captured in stream-json; see v1.2]")
 
     @patch("requests.post")
     def test_user_prompt_becomes_root(self, mock_post):
@@ -405,8 +406,10 @@ class TestKorgStreamAdapter(unittest.TestCase):
         calls = mock_post.call_args_list
         self.assertEqual(calls[0][1]["json"]["tool_name"], "user_prompt")
         self.assertEqual(calls[0][1]["json"]["source_agent"], "human:claude-code-user")
+        self.assertEqual(calls[0][1]["json"]["args"]["prompt"], "[adapter-synthesized: original CLI prompt not captured in stream-json; see v1.2]")
         self.assertEqual(calls[1][1]["json"]["tool_name"], "user_prompt")
         self.assertEqual(calls[1][1]["json"]["source_agent"], "human:claude-code-user")
+        self.assertEqual(calls[1][1]["json"]["args"]["prompt"], "Initial prompt without system init")
 
     @patch("requests.post")
     def test_user_prompt_emitted_as_root(self, mock_post):
@@ -429,6 +432,7 @@ class TestKorgStreamAdapter(unittest.TestCase):
         posted_data = mock_post.call_args[1]["json"]
         self.assertEqual(posted_data["tool_name"], "user_prompt")
         self.assertEqual(posted_data["source_agent"], "human:claude-code-user")
+        self.assertEqual(posted_data["args"]["prompt"], "[adapter-synthesized: original CLI prompt not captured in stream-json; see v1.2]")
         self.assertIsNone(posted_data["triggered_by"])
 
     @patch("requests.post")
@@ -490,6 +494,7 @@ class TestKorgStreamAdapter(unittest.TestCase):
         # 1. user_prompt synthesized on system/init
         self.assertEqual(calls[0]["tool_name"], "user_prompt")
         self.assertEqual(calls[0]["source_agent"], "human:claude-code-user")
+        self.assertEqual(calls[0]["args"]["prompt"], "[adapter-synthesized: original CLI prompt not captured in stream-json; see v1.2]")
         self.assertIsNone(calls[0]["triggered_by"])
         
         # 2. llm_inference from first assistant turn

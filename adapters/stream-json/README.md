@@ -48,9 +48,23 @@ claude -p --verbose --output-format stream-json "list files in this directory" |
 
 ---
 
+## Known Limitations & Roadmap
+
+### 1. Synthesized Prompt Root (For Non-Interactive CLI Runs)
+* **v1.1 limitation**: When Claude Code is run non-interactively using the CLI command parameter (e.g. `claude -p "prompt"`), the original CLI prompt is **not present** in the stream-json output. To preserve the causal backward walk root invariant (spec §7.6), the adapter synthesizes an honest placeholder root event:
+  `"prompt": "[adapter-synthesized: original CLI prompt not captured in stream-json; see v1.2]"`
+* **interactive runs**: For interactive sessions, any user plain text turns *are* correctly captured and emitted as real, non-synthesized `user_prompt` root events.
+* **v1.2 fix**: Capture CLI prompts directly from the shell invocation context (via environment variables or custom shell aliases).
+
+### 2. Payload Refs Label Disambiguation
+* **v1.1 limitation**: Large tool outputs currently register their `payload_refs` label matching the tool name (e.g. `label: "Bash"`). Disambiguating multiple large bash tool runs requires manual digest correlation.
+* **v1.2 fix**: Capture and append descriptive labels like `"Bash:stdout"`, `"Bash[ls -la]"`, or `"<seq_id>:Bash"`.
+
+---
+
 ## Verification and Testing
 
-Execute the robust unit test suite containing 10 strict causal and functional invariants:
+Execute the robust unit test suite containing 12 strict causal and functional invariants:
 
 ```bash
 python3 -m unittest discover -s adapters/stream-json/tests -p "test_*.py"

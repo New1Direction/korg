@@ -352,7 +352,7 @@ def parse_stream_line(line):
         mapped_prompt = {
             "source_agent": "human:claude-code-user",
             "tool_name": "user_prompt",
-            "args": {"prompt": f"Claude Code session {session_id} initialized without system init (passive fallback)"},
+            "args": {"prompt": "[adapter-synthesized: original CLI prompt not captured in stream-json; see v1.2]"},
             "result": "Success",
             "payload_refs": [],
             "success": True,
@@ -388,7 +388,7 @@ def parse_stream_line(line):
             mapped_prompt = {
                 "source_agent": "human:claude-code-user",
                 "tool_name": "user_prompt",
-                "args": {"prompt": f"Claude Code session {session_id} initialized via stream-json adapter"},
+                "args": {"prompt": "[adapter-synthesized: original CLI prompt not captured in stream-json; see v1.2]"},
                 "result": "Success",
                 "payload_refs": [],
                 "success": True,
