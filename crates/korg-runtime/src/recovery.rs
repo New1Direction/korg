@@ -15,6 +15,19 @@ pub struct RewindCandidate {
     pub invalidates: Vec<u64>,
 }
 
+/// Load candidates against the current journal tail — for on-demand Ctrl-R rewind.
+///
+/// Uses the highest seq_id currently in the journal as the anchor so the two
+/// candidates describe "undo the most recent action" and "reset to before the
+/// causal chain that led here." Returns an empty vec if the journal is empty.
+pub fn on_demand_candidates() -> Vec<RewindCandidate> {
+    let journal = CapabilityJournal::default_journal();
+    if journal.last_seq_id == 0 {
+        return vec![];
+    }
+    rewind_candidates(&journal, journal.last_seq_id)
+}
+
 /// Compute recovery candidates from the journal at the moment of failure.
 ///
 /// Returns up to two candidates ordered from surgical to broad:
