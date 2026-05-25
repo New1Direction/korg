@@ -1,4 +1,4 @@
-# Korg stream-json Adapter Mapping Table
+# Korg stream-json Adapter Mapping Table (v1.2)
 #
 # This adapter transforms Claude Code's `--output-format stream-json --verbose`
 # stdin stream into Korg v1 AgentToolCall JSON events and POSTs them to the
@@ -8,53 +8,59 @@
 #
 # 1. system event with subtype: "init"
 #    -> No AgentToolCall emitted.
-#    -> Extract session_id, claude_code_version, cwd, model, and permissionMode to store as adapter state.
-#    -> Use version for source_agent: "agent:claude-code@<version>".
-#    -> If a second system init event occurs mid-stream: Log a WARNING to stderr, discard it,
+#    -> Extract session_id, claude_code_version, cwd, model, permissionMode, and tools list.
+#    -> tools list populates known_tools set. "Agent" (wire name) is recognized as "Task" (display
+#       name) — the only known wire/display mismatch as of Claude Code 2.1.150.
+#    -> source_agent for main spine: "agent:claude-code/main@<version>".
+#    -> If a second system init event occurs mid-stream: Log WARNING to stderr, discard,
 #       and continue with original session metadata.
 #
-# 2. user event with content as plain text or content array without tool_use_id
-#    -> Emit user_prompt AgentToolCall.
+# 2. user event, parent_tool_use_id=null, plain text or content array without tool_use_id
+#    -> Emit user_prompt AgentToolCall (main spine).
 #    -> Set triggered_by = null (root event per spec §7.6).
-#    -> Note on v1.1 limitation: For non-interactive sessions started via the CLI (e.g. `claude -p "prompt"`),
-#       Claude Code does not emit a "user" stream event for the initial prompt. To preserve the causal
-#       walk root invariant, the adapter synthesizes a root "user_prompt" event upon system init.
-#       This is a known limitation of v1.1 passive stream auditing; in v1.2, the adapter will capture the
-#       original prompt directly from the CLI invocation context.
+#    -> Note on v1.1/v1.2 limitation: For non-interactive sessions started via the CLI (e.g.
+#       `claude -p "prompt"`), Claude Code does not emit a "user" stream event for the initial
+#       prompt. To preserve the causal walk root invariant, the adapter synthesizes a root
+#       "user_prompt" event upon system init. v1.2 captures the CLI prompt directly from
+#       the invocation context.
 #
-# 3. user event with content array containing a block with tool_use_id
-#    -> This represents a tool_result.
-#    -> Pair with the buffered tool_use from pending_tool_uses[tool_use_id].
-#    -> Emit one AgentToolCall with:
-#       - args: from the buffered tool_use.input
-#       - result: direct string of the tool result content (Option 1: Always use
-#         user.message.content[].content as the single source of truth for all tools,
-#         preventing duplication of tool_use_result fields and remaining general).
-#       - If the result string is >1KB, the string value is replaced directly by the sentinel
-#         {"_ref": "sha256:<digest>", "size_bytes": N} without wrapping (spec §3).
-#       - tool_name: from the buffered tool_use.name
-#       - triggered_by: last_llm_seq (the llm_inference that returned it)
-#       - success: not is_error
-#       - duration_ms: derived via wall-clock time.monotonic() delta from buffer-time
-#    -> Per spec §1, single event per completed call.
+# 2b. user event, parent_tool_use_id non-null, plain text (VALIDATED 2026-05-25)
+#    -> Sub-agent user_prompt.
+#    -> source_agent: "agent:claude-code/sub-{parent_tool_use_id[:8]}@{version}".
+#    -> triggered_by: main spine last_llm_seq (cross-spine causal link per spec §2b).
+#    -> Initiates a per-ptuid causality bucket in sub_agent_state.
 #
-# 4. assistant event with content array containing tool_use blocks
-#    -> For each tool_use:
-#       - Buffer in pending_tool_uses[tool_use.id], recording time.monotonic() start time.
-#       - Do NOT emit yet.
-#    -> Emit exactly one llm_inference AgentToolCall for the assistant turn itself:
-#       - triggered_by: last_user_or_result_seq (most recent user_prompt or tool_result seq_id)
+# 3. user event, parent_tool_use_id=null, content array with tool_use_id
+#    -> Main-spine tool_result: pair with buffered tool_use, emit AgentToolCall.
+#    -> Option 1: use user.message.content[].content as the result string — single source of
+#       truth for all tools, prevents duplication of tool_use_result fields.
+#    -> If result >1KB: replace with content-ref sentinel (spec §3).
+#    -> triggered_by: main spine last_llm_seq.
 #
-# 5. assistant event with no tool_use blocks (text-only response)
+# 3b. user event, parent_tool_use_id non-null, content array with tool_use_id
+#    -> Sub-agent tool_result: pair with buffered tool_use, emit to sub-agent causality spine.
+#
+# 4. assistant event, parent_tool_use_id=null
+#    -> Emit exactly one llm_inference AgentToolCall (main spine).
+#    -> Buffer each tool_use in pending_tool_uses keyed by tool_use_id.
+#    -> Deduplication by message.id: streaming deltas for the same message arrive as multiple
+#       assistant events with the same message.id. Only emit llm_inference on the first;
+#       subsequent deltas only buffer new tool_uses (if any).
+#    -> "Agent" (wire name for Task tool) is recognized and buffered like any standard tool.
+#
+# 4b. assistant event, parent_tool_use_id non-null
+#    -> Emit sub-agent llm_inference. Buffer tool_uses on sub-agent spine.
+#    -> source_agent: "agent:claude-code/sub-{parent_tool_use_id[:8]}@{version}".
+#
+# 5. assistant event, no tool_use blocks (text-only response)
 #    -> Emit exactly one llm_inference AgentToolCall.
-#    -> triggered_by: last_user_or_result_seq.
+#    -> triggered_by: last_user_or_result_seq on the appropriate spine.
 #    -> No buffered tools.
 #
 # 6. result event (terminal)
 #    -> Emit a session_complete AgentToolCall event.
-#    -> triggered_by: last_emitted_seq.
-#    -> args: Environment metadata stored in adapter state:
-#       {"cwd": cwd, "model": model, "permission_mode": permission_mode}
+#    -> triggered_by: main spine last_emitted_seq.
+#    -> args: environment metadata (cwd, model, permission_mode).
 #    -> result (Strict Allowlist):
 #       - subtype (success/failure)
 #       - duration_ms (session runtime)
@@ -66,21 +72,24 @@
 #       - num_turns
 #    -> Pruned/Dropped fields: usage, modelUsage, ttft_ms, api_error_status.
 #
-# 7. Fallback for Stream Starting Without system init
-#    -> Log a loud WARNING at startup on stderr:
-#       "stream began without system init event, source_agent defaulting to claude-code@unknown, this may indicate a format change or upstream error."
-#    -> Default source_agent = "agent:claude-code@unknown".
+# 7. Fallback for stream starting without system init
+#    -> Log WARNING to stderr.
+#    -> source_agent = "agent:claude-code/main@unknown".
 #    -> Generate a random session ID and proceed without crashing.
 #
 # 8. Unmapped/Unknown top-level event types
-#    -> Any top-level 'type' value not in {system, assistant, user, result}
-#       is written to unknown_events.log and no event is emitted.
+#    -> Written to unknown_events.log. No event emitted.
+#    -> rate_limit_event: silently dropped (intentionally-not audited — rate-limit noise).
+#    -> system subtype hook_started/hook_response: silently dropped (hook lifecycle, not agent behavior).
+#    -> system subtype task_started/task_notification: silently dropped (task lifecycle, redundant).
+#    -> system subtype task_progress: silently dropped (v1.3 may emit ProgressUpdate events).
+#    -> Unknown system subtypes: written to unknown_events.log.
 #
 # Causality State:
-# - last_emitted_seq: seq_id returned by Korg for the most recent POST
-# - last_user_or_result_seq: seq_id of the most recent user_prompt or tool_result
-# - last_llm_seq: seq_id of the most recent llm_inference
-# - pending_tool_uses: dict keyed by tool_use_id holding (tool_use, start_time)
+# - Main spine globals: last_local_user_or_result_seq, last_local_llm_seq, last_local_emitted_seq
+# - Sub-agent spine: sub_agent_state[ptuid] = {last_user_or_result_seq, last_llm_seq, last_emitted_seq}
+# - pending_tool_uses: global {tool_use_id: (tool_use, start_time)} — shared across all spines
+# - seen_assistant_ids: deduplicates streaming assistant events by message.id
 
 import sys
 import json
@@ -95,11 +104,19 @@ import queue
 try:
     import requests
 except ImportError:
-    # Standard fallback so users know what to install
     sys.stderr.write("ERROR: The 'requests' library is required. Install it using: pip install requests\n")
     sys.exit(1)
 
-# Global Causality State
+# System subtypes that are silently dropped (not audited)
+_SILENT_SYSTEM_SUBTYPES = frozenset({
+    "hook_started", "hook_response",      # hook lifecycle — not agent behavior
+    "task_started", "task_notification",  # task lifecycle — redundant with agent events
+    "task_progress",                      # deferred (v1.3 may emit ProgressUpdate)
+})
+# Top-level event types that are silently dropped
+_SILENT_EVENT_TYPES = frozenset({"rate_limit_event"})
+
+# Global Causality State (main spine)
 last_emitted_seq = None
 pending_tool_uses = {}
 
@@ -110,14 +127,23 @@ last_local_user_or_result_seq = None
 last_local_llm_seq = None
 last_local_emitted_seq = None
 
+# Sub-agent causality state — keyed by parent_tool_use_id
+sub_agent_state = {}
+
 # Session Metadata State
 session_id = None
 claude_code_version = None
 cwd = None
 model = None
 permission_mode = None
-source_agent = "agent:claude-code@unknown"
+source_agent = "agent:claude-code/main@unknown"
 init_received = False
+
+# Tools recognized from system/init; "Agent" (wire) maps to "Task" (display).
+known_tools = set()
+
+# Streaming assistant event deduplication by message.id
+seen_assistant_ids = set()
 
 # Queue & Background Writer Setup (Preserving §7.5 causality)
 event_queue = queue.Queue(maxsize=256)
@@ -132,17 +158,17 @@ def korg_writer_worker():
         if event is None:
             event_queue.task_done()
             break
-        
+
         # Pull parsing-side local IDs
         local_seq_id = event.pop("local_seq_id", None)
         local_triggered_by = event.pop("local_triggered_by", None)
-        
+
         # Translate local_triggered_by to the server's seq_id
         if local_triggered_by is not None:
             event["triggered_by"] = local_to_server_seq.get(local_triggered_by)
         else:
             event["triggered_by"] = None
-        
+
         # Issue synchronous serial POST request
         url = f"{korg_base_url.rstrip('/')}/api/agent/tool-call"
         try:
@@ -159,7 +185,7 @@ def korg_writer_worker():
                 sys.stderr.write(f"WARNING: Korg server returned {res.status_code}: {res.text}\n")
         except Exception as e:
             sys.stderr.write(f"WARNING: Failed to POST event to Korg: {e}\n")
-        
+
         event_queue.task_done()
 
 # Start background worker thread
@@ -189,22 +215,22 @@ def canonical_hash_and_store_blob(value, project_cwd):
     else:
         serialized = str(value)
         raw_bytes = serialized.encode("utf-8")
-        
+
     sha256 = hashlib.sha256(raw_bytes).hexdigest()
     size_bytes = len(raw_bytes)
-    
+
     # Save physically to the workspace .korg/blobs/
     base_dir = project_cwd if project_cwd else os.getcwd()
     blob_dir = os.path.join(base_dir, ".korg", "blobs", sha256[:2])
     blob_path = os.path.join(blob_dir, sha256)
-    
+
     try:
         os.makedirs(blob_dir, exist_ok=True)
         with open(blob_path, "wb") as f:
             f.write(raw_bytes)
     except Exception as e:
         sys.stderr.write(f"ERROR: Failed to write content-addressed blob {sha256}: {e}\n")
-        
+
     return sha256, size_bytes
 
 def process_content_refs(obj, project_cwd):
@@ -216,7 +242,6 @@ def process_content_refs(obj, project_cwd):
         new_dict = {}
         for k, v in obj.items():
             if isinstance(v, (dict, list)):
-                # If the nested structure serialized exceeds 1KB, chunk it
                 serialized = json.dumps(v, separators=(',', ':'), sort_keys=True)
                 if len(serialized.encode("utf-8")) > 1024:
                     digest, size = canonical_hash_and_store_blob(v, project_cwd)
@@ -237,45 +262,65 @@ def process_content_refs(obj, project_cwd):
     else:
         return obj
 
-def enqueue_korg_event(mapped_event):
+def enqueue_korg_event(mapped_event, ptuid=None):
     """
     Locks the queue and puts the event, executing drop-oldest if full.
     Tracks and sets local sequence IDs and causal triggered_by links synchronously.
+    ptuid: parent_tool_use_id — when non-None, routes causality through the sub-agent spine.
     """
     global local_seq_counter, last_local_emitted_seq, last_local_user_or_result_seq, last_local_llm_seq
-    
-    # Increment local sequence counter and stamp local keys
+
+    # Increment local sequence counter and stamp local key
     local_seq_counter += 1
     local_seq_id = local_seq_counter
     mapped_event["local_seq_id"] = local_seq_id
-    
-    tool_name = mapped_event.get("tool_name")
-    
-    # Establish causal triggered_by links locally
-    if tool_name == "user_prompt":
-        mapped_event["local_triggered_by"] = None
-    elif tool_name == "llm_inference":
-        mapped_event["local_triggered_by"] = last_local_user_or_result_seq
-    elif tool_name == "session_complete":
-        mapped_event["local_triggered_by"] = last_local_emitted_seq
-    else:
-        # A standard tool_call (Read, Write, Edit, Bash) is triggered by its LLM round
-        mapped_event["local_triggered_by"] = last_local_llm_seq
 
-    # Update main-thread local causality trackers instantly
-    if tool_name == "user_prompt" or tool_name not in ["llm_inference", "session_complete"]:
-        last_local_user_or_result_seq = local_seq_id
-    elif tool_name == "llm_inference":
-        last_local_llm_seq = local_seq_id
-        
-    last_local_emitted_seq = local_seq_id
+    tool_name = mapped_event.get("tool_name")
+
+    if ptuid is not None:
+        # Sub-agent spine — per-ptuid causality bucket
+        state = sub_agent_state.setdefault(ptuid, {
+            "last_user_or_result_seq": None,
+            "last_llm_seq": None,
+            "last_emitted_seq": None,
+        })
+        if tool_name == "user_prompt":
+            # Cross-spine: sub-agent root triggered by main spine's last llm_inference
+            mapped_event["local_triggered_by"] = last_local_llm_seq
+        elif tool_name == "llm_inference":
+            mapped_event["local_triggered_by"] = state["last_user_or_result_seq"]
+        elif tool_name == "session_complete":
+            mapped_event["local_triggered_by"] = state["last_emitted_seq"]
+        else:
+            mapped_event["local_triggered_by"] = state["last_llm_seq"]
+
+        if tool_name == "user_prompt" or tool_name not in ["llm_inference", "session_complete"]:
+            state["last_user_or_result_seq"] = local_seq_id
+        elif tool_name == "llm_inference":
+            state["last_llm_seq"] = local_seq_id
+        state["last_emitted_seq"] = local_seq_id
+    else:
+        # Main spine
+        if tool_name == "user_prompt":
+            mapped_event["local_triggered_by"] = None
+        elif tool_name == "llm_inference":
+            mapped_event["local_triggered_by"] = last_local_user_or_result_seq
+        elif tool_name == "session_complete":
+            mapped_event["local_triggered_by"] = last_local_emitted_seq
+        else:
+            # Standard tool_call triggered by its LLM round
+            mapped_event["local_triggered_by"] = last_local_llm_seq
+
+        if tool_name == "user_prompt" or tool_name not in ["llm_inference", "session_complete"]:
+            last_local_user_or_result_seq = local_seq_id
+        elif tool_name == "llm_inference":
+            last_local_llm_seq = local_seq_id
+        last_local_emitted_seq = local_seq_id
 
     # Run the content-ref chunking processor on both args and result fields
     if "args" in mapped_event:
         mapped_event["args"] = process_content_refs(mapped_event["args"], cwd)
     if "result" in mapped_event:
-        # If the result field itself is a string > 1KB, process_content_refs won't chunk the top-level
-        # directly because it only iterates lists and dicts. Let's handle top-level string/bytes result chunking:
         result_val = mapped_event["result"]
         if isinstance(result_val, str) and len(result_val.encode("utf-8")) > 1024:
             digest, size = canonical_hash_and_store_blob(result_val, cwd)
@@ -285,7 +330,7 @@ def enqueue_korg_event(mapped_event):
             mapped_event["result"] = {"_ref": f"sha256:{digest}", "size_bytes": size}
         else:
             mapped_event["result"] = process_content_refs(result_val, cwd)
-        
+
     # Populate payload_refs with all ContentRef dicts referenced in content refs
     payload_refs = []
     def extract_refs(val, key_label=""):
@@ -303,11 +348,11 @@ def enqueue_korg_event(mapped_event):
         elif isinstance(val, list):
             for item in val:
                 extract_refs(item, key_label)
-                
+
     extract_refs(mapped_event.get("args"))
     extract_refs(mapped_event.get("result"))
     mapped_event["payload_refs"] = payload_refs
-        
+
     with queue_lock:
         if event_queue.full():
             try:
@@ -317,38 +362,45 @@ def enqueue_korg_event(mapped_event):
                 pass
         event_queue.put_nowait(mapped_event)
 
+def _sub_agent_source(ptuid):
+    """Returns source_agent string for a sub-agent identified by ptuid."""
+    version = claude_code_version or "unknown"
+    return f"agent:claude-code/sub-{ptuid[:8]}@{version}"
+
 def parse_stream_line(line):
     """Parses a single JSON line and executes the mapped event transforms."""
     global init_received, session_id, claude_code_version, cwd, model, permission_mode, source_agent
-    
+
     if not line.strip():
         return
-        
+
     try:
         event = json.loads(line)
     except json.JSONDecodeError:
-        # Invalid JSON is skipped/logged
         sys.stderr.write("WARNING: Failed to parse JSON line from stream\n")
         return
-        
+
     event_type = event.get("type")
-    
+
+    # Silent-drop known-but-unaudited top-level types (e.g. rate_limit_event)
+    if event_type in _SILENT_EVENT_TYPES:
+        return
+
     # 8. Unmapped/Unknown top-level event types
-    if event_type not in ["system", "assistant", "user", "result"]:
+    if event_type not in {"system", "assistant", "user", "result"}:
         log_unknown_event(event)
         return
-        
-    # 7. Fallback for Stream Starting Without system init
+
+    # 7. Fallback for stream starting without system init
     if not init_received and event_type != "system":
         init_received = True
         session_id = str(uuid.uuid4())
-        source_agent = "agent:claude-code@unknown"
+        source_agent = "agent:claude-code/main@unknown"
         sys.stderr.write(
             "WARNING: stream began without system init event, "
-            "source_agent defaulting to claude-code@unknown, this may indicate a format change or upstream error.\n"
+            "source_agent defaulting to claude-code/main@unknown, this may indicate a format change or upstream error.\n"
         )
         # Synthesize user prompt root event for fallback starting
-        # Note: Synthesized root prompt is a known v1.1 limitation for stream-only capture of non-interactive CLI sessions.
         mapped_prompt = {
             "source_agent": "human:claude-code-user",
             "tool_name": "user_prompt",
@@ -359,9 +411,14 @@ def parse_stream_line(line):
             "duration_ms": 0
         }
         enqueue_korg_event(mapped_prompt)
-        
+
     if event_type == "system":
         subtype = event.get("subtype")
+
+        # Silently drop hook and task lifecycle subtypes
+        if subtype in _SILENT_SYSTEM_SUBTYPES:
+            return
+
         if subtype == "init":
             if init_received:
                 # Mid-stream second system init
@@ -370,21 +427,24 @@ def parse_stream_line(line):
                     "Discarding it to preserve original session metadata.\n"
                 )
                 return
-            
+
             init_received = True
             session_id = event.get("session_id", str(uuid.uuid4()))
             claude_code_version = event.get("claude_code_version")
             cwd = event.get("cwd")
             model = event.get("model")
             permission_mode = event.get("permissionMode")
-            
+
+            # Populate recognized tools from init list
+            known_tools.clear()
+            known_tools.update(event.get("tools", []))
+
             if claude_code_version:
-                source_agent = f"agent:claude-code@{claude_code_version}"
+                source_agent = f"agent:claude-code/main@{claude_code_version}"
             else:
-                source_agent = "agent:claude-code@unknown"
-                
-            # Synthesize user prompt root event for normal initialization
-            # Note: Synthesized root prompt is a known v1.1 limitation for stream-only capture of non-interactive CLI sessions.
+                source_agent = "agent:claude-code/main@unknown"
+
+            # Synthesize user prompt root event
             mapped_prompt = {
                 "source_agent": "human:claude-code-user",
                 "tool_name": "user_prompt",
@@ -395,68 +455,93 @@ def parse_stream_line(line):
                 "duration_ms": 0
             }
             enqueue_korg_event(mapped_prompt)
-                
+        else:
+            # Unknown system subtype — log for investigation
+            log_unknown_event(event)
+
     elif event_type == "user":
         message = event.get("message", {})
         content = message.get("content", [])
-        
-        # Check if this content is a list containing a tool_result block
+        ptuid = event.get("parent_tool_use_id")
+
+        # Check if this content contains a tool_result block
         tool_result_block = None
         if isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     tool_result_block = block
                     break
-                    
+
         if tool_result_block:
-            # 3. Pair buffered tool_use with this tool_result
+            # 3/3b. Pair buffered tool_use with this tool_result
             tool_use_id = tool_result_block.get("tool_use_id")
             if tool_use_id in pending_tool_uses:
                 tool_use, start_time = pending_tool_uses.pop(tool_use_id)
-                duration_monotonic = time.monotonic() - start_time
-                duration_ms = int(duration_monotonic * 1000)
-                
-                # Option 1: Always use user.message.content[].content as tool result string
+                duration_ms = int((time.monotonic() - start_time) * 1000)
+
+                # Option 1: use user.message.content[].content as result string
                 result_content = tool_result_block.get("content", "")
-                
-                # Emit completed AgentToolCall event
+
+                # Flatten content list to string (Agent/Task tool returns [{type:text, text:...}])
+                if isinstance(result_content, list):
+                    result_content = "\n".join(
+                        b.get("text", "") for b in result_content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+
+                agent = _sub_agent_source(ptuid) if ptuid else source_agent
                 mapped = {
-                    "source_agent": source_agent,
+                    "source_agent": agent,
                     "tool_name": tool_use.get("name"),
                     "args": tool_use.get("input", {}),
-                    "result": result_content, # direct string, replaced directly with sentinel if >1KB
+                    "result": result_content,
                     "payload_refs": [],
                     "success": not tool_result_block.get("is_error", False),
                     "duration_ms": duration_ms
                 }
-                enqueue_korg_event(mapped)
+                enqueue_korg_event(mapped, ptuid=ptuid)
         else:
-            # 2. Plain text user event -> user_prompt
+            # 2/2b. Plain text user event -> user_prompt
             prompt_text = ""
             if isinstance(content, str):
                 prompt_text = content
             elif isinstance(content, list):
-                # Extract text blocks
                 prompt_text = "\n".join([
-                    block.get("text", "") for block in content 
+                    block.get("text", "") for block in content
                     if isinstance(block, dict) and block.get("type") == "text"
                 ])
-                
-            mapped = {
-                "source_agent": "human:claude-code-user",
-                "tool_name": "user_prompt",
-                "args": {"prompt": prompt_text},
-                "result": {"success": True},
-                "payload_refs": [],
-                "success": True,
-                "duration_ms": 0
-            }
-            enqueue_korg_event(mapped)
-            
+
+            if ptuid:
+                # 2b. Sub-agent user_prompt — cross-spine causal link
+                mapped = {
+                    "source_agent": _sub_agent_source(ptuid),
+                    "tool_name": "user_prompt",
+                    "args": {"prompt": prompt_text},
+                    "result": {"success": True},
+                    "payload_refs": [],
+                    "success": True,
+                    "duration_ms": 0
+                }
+                enqueue_korg_event(mapped, ptuid=ptuid)
+            else:
+                # 2. Main-spine user_prompt
+                mapped = {
+                    "source_agent": "human:claude-code-user",
+                    "tool_name": "user_prompt",
+                    "args": {"prompt": prompt_text},
+                    "result": {"success": True},
+                    "payload_refs": [],
+                    "success": True,
+                    "duration_ms": 0
+                }
+                enqueue_korg_event(mapped)
+
     elif event_type == "assistant":
         message = event.get("message", {})
         content = message.get("content", [])
-        
+        ptuid = event.get("parent_tool_use_id")
+        msg_id = message.get("id")
+
         tool_uses = []
         thinking_texts = []
         if isinstance(content, list):
@@ -466,33 +551,43 @@ def parse_stream_line(line):
                         tool_uses.append(block)
                     elif block.get("type") == "thinking":
                         thinking_texts.append(block.get("thinking", ""))
-                        
+
         thinking_summary = "\n".join(thinking_texts)
-        
-        # 4 & 5. Emit llm_inference for the assistant turn itself
-        mapped_inference = {
-            "source_agent": source_agent,
-            "tool_name": "llm_inference",
-            "args": {"thinking": thinking_summary} if thinking_summary else {},
-            "result": {"success": True},
-            "payload_refs": [],
-            "success": True,
-            "duration_ms": 0
-        }
-        enqueue_korg_event(mapped_inference)
-        
-        # Buffer tool uses for pairing on completion
+
+        # Deduplication: same message.id may arrive as multiple streaming deltas
+        is_new_message = msg_id not in seen_assistant_ids
+        if msg_id:
+            seen_assistant_ids.add(msg_id)
+
+        agent = _sub_agent_source(ptuid) if ptuid else source_agent
+
+        if is_new_message:
+            # 4/4b/5. Emit llm_inference for this assistant turn
+            mapped_inference = {
+                "source_agent": agent,
+                "tool_name": "llm_inference",
+                "args": {"thinking": thinking_summary} if thinking_summary else {},
+                "result": {"success": True},
+                "payload_refs": [],
+                "success": True,
+                "duration_ms": 0
+            }
+            enqueue_korg_event(mapped_inference, ptuid=ptuid)
+
+        # Buffer tool_uses (may arrive in a later streaming chunk for the same message.id)
         for tool_use in tool_uses:
-            tool_name = tool_use.get("name")
-            # Filter standard handling tools. If unknown, log and skip emission.
-            if tool_name in ["Read", "Write", "Edit", "Bash"]:
-                pending_tool_uses[tool_use.get("id")] = (tool_use, time.monotonic())
+            tname = tool_use.get("name")
+            tid = tool_use.get("id")
+            if tid in pending_tool_uses:
+                continue  # already buffered from an earlier streaming chunk
+            is_known = tname in known_tools or (tname == "Agent" and "Task" in known_tools)
+            if is_known:
+                pending_tool_uses[tid] = (tool_use, time.monotonic())
             else:
                 log_unknown_event(event)
-                
+
     elif event_type == "result":
         # 6. Terminal result event -> session_complete
-        # Strict Allowlist parsing
         subtype = event.get("subtype")
         duration_ms = event.get("duration_ms", 0)
         total_cost_usd = event.get("total_cost_usd", 0.0)
@@ -500,10 +595,10 @@ def parse_stream_line(line):
         terminal_reason = event.get("terminal_reason")
         stop_reason = event.get("stop_reason")
         permission_denials = event.get("permission_denials", [])
-        
+
         usage = event.get("usage", {})
         num_turns = usage.get("num_turns", event.get("num_turns", 0))
-        
+
         mapped_complete = {
             "source_agent": source_agent,
             "tool_name": "session_complete",

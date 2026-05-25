@@ -13,9 +13,10 @@ distinction and classifies the 14 metadata fields. It will commit once
 the Rust `EventMetadata` struct is confirmed stable and no field names
 change in a near-term release.
 
-§2b is **PROPOSED**. It will commit (or revise) once a real Claude Code
-capture confirms the sub-agent causal model holds. See the §2b heading
-for the discipline pact.
+§2b is **VALIDATED** (2026-05-25). A real Claude Code 2.1.150 stream-json
+capture confirmed the sub-agent causal model. The worked example has been
+corrected: sub-agent's first event is `user_prompt` (triggered by parent's
+last `llm_inference`), not `llm_inference` (triggered by spawn tool_call).
 
 ## Scope
 
@@ -272,14 +273,7 @@ Naive chaining produces a topology that walks through tool calls between
 inferences, which breaks replay (the tool's result is not the prompt to
 the next round; the prior inference is). See §3 for full rewind semantics.
 
-### §2b (PROPOSED) — sub-agent inference parent rule (cross-agent spine)
-
-> **PROPOSED status.** §2b will commit or revise once a real Claude
-> Code `--output-format stream-json --verbose` capture confirms the
-> sub-agent causal model holds against `parent_tool_use_id`. Until
-> then, this section may change. Local mirrors (e.g., the docstring in
-> `korgex/src/korg_ledger.py`) do not include §2b — the spec leads
-> reality by at most one PROPOSED rule.
+### §2b (VALIDATED — 2026-05-25) — sub-agent inference parent rule (cross-agent spine)
 
 §2a's linked list holds within a `source_agent`. Across agents, spines
 fork at spawn tool_calls and rejoin nowhere — each sub-agent's spine
@@ -287,39 +281,48 @@ terminates independently when its loop exits. The union of all spines
 is still a tree rooted at `user_prompt`, but recovering a single
 agent's linked list requires filtering by `source_agent`.
 
-When a tool call spawns a sub-agent — i.e., its implementation invokes
-a new LLM loop with its own tools and context, rather than executing a
-deterministic operation — the sub-agent's first `llm_inference` points
-at the spawning tool_call seq_id, NOT at any `llm_inference`.
+In Claude Code's stream-json, spawning a sub-agent (Task tool) injects
+a `user/text` event tagged with `parent_tool_use_id` before any sub-agent
+`assistant` events. This is rendered as a `user_prompt` AgentToolCall on the
+sub-agent spine. The sub-agent's first `user_prompt` has `triggered_by` =
+the parent spine's most recent `llm_inference` seq_id at the time the
+sub-agent events begin.
 
-Each agent has its own §2a spine. Sub-agent spines branch off tool
-calls in the parent agent, not off `llm_inference` events. The
-`source_agent` field distinguishes which spine an event belongs to.
+The parent Agent tool call is buffered (not yet emitted) while sub-agent
+events flow; it is emitted as a tool_result event when the Agent invocation
+completes. Both the sub-agent's first `user_prompt` and the parent Agent
+tool_result point at the same parent `llm_inference`. This creates a
+diamond in the causality graph at the parent `llm_inference` node.
 
-**Worked example:**
+Each agent has its own §2a spine. The `source_agent` field distinguishes
+which spine an event belongs to. The `source_agent` naming convention is:
+`agent:<runtime>/main@{version}` for the main agent and
+`agent:<runtime>/sub-{ptuid[:8]}@{version}` for each sub-agent, where
+`ptuid` is the `parent_tool_use_id` (unique per spawned sub-agent).
+
+**Worked example** (from a real Claude Code 2.1.150 stream-json capture):
 
     seq=1  user_prompt              triggered_by=None      source=human:dusk
     seq=2  llm_inference            triggered_by=1         source=agent:main
-    seq=3  Agent (spawn)            triggered_by=2         source=agent:main
+    seq=3  user_prompt              triggered_by=2         source=agent:sub  (cross-spine: parent last_llm_seq)
     seq=4  llm_inference            triggered_by=3         source=agent:sub
-    seq=5  Read                     triggered_by=4         source=agent:sub
-    seq=6  llm_inference            triggered_by=4         source=agent:sub  (§2a within sub)
-    seq=7  llm_inference            triggered_by=2         source=agent:main (§2a within main,
-                                                                              skipping the
-                                                                              entire sub subtree)
+    seq=5  Read                     triggered_by=4         source=agent:sub  (§2a within sub)
+    seq=6  Agent (spawn result)     triggered_by=2         source=agent:main (emitted when tool_result arrives;
+                                                                              triggered_by=parent last_llm_seq)
+    seq=7  llm_inference            triggered_by=6         source=agent:main (§2a continues from Agent result)
 
-Walking back through main's spine: `7 → 2 → 1`.
-Walking back through sub's spine:  `6 → 4 → 3 → 2 → 1`.
-The two spines cross at `seq=3` (the spawn tool_call).
+Walking back through main's spine: `7 → 6 → 2 → 1`.
+Walking back through sub's spine:  `5 → 4 → 3 → 2 → 1`.
+Both spines converge at `seq=2` (the parent `llm_inference` that invoked the spawn).
 
 **Recursive nesting.** Sub-agents may themselves spawn sub-agents; §2b
-applies recursively. The `source_agent` naming convention for nested
-spawns (depth 3+) is deferred until a captured session exercises it.
+applies recursively. The `ptuid[:8]` suffix disambiguates at depth 2;
+depth-3+ naming is deferred until a captured session exercises it.
 
-**Mapping to existing protocols.** In Claude Code's stream-json this
-is signalled by `parent_tool_use_id` on the spawned events; in korgex
-(once the Agent tool is implemented) it will be the seq_id of the
-Agent tool's call event.
+**Mapping to existing protocols.** In Claude Code's stream-json this is
+signalled by `parent_tool_use_id` on the spawned events. The wire name
+for the Task tool is `"Agent"` (display name is `"Task"`); adapters must
+bridge this mismatch when recognizing spawn tool_calls.
 
 ---
 
@@ -1050,6 +1053,19 @@ multi-tenant deployments. No other URI form should ever need to change.
   VALIDATED. Cursor direction convention codified at §8.3.1: per-
   endpoint natural direction (tail = newest→oldest, head =
   oldest→newest) with the direction repeated inline at each endpoint.
+- **2026-05-25** — §2b promoted from PROPOSED to VALIDATED. Real Claude Code
+  2.1.150 stream-json capture (`subagent_session.jsonl`) confirmed the
+  `parent_tool_use_id` causal model. Worked example corrected: sub-agent's
+  first event is `user_prompt` (cross-spine triggered_by=parent last_llm_seq),
+  not `llm_inference` (triggered_by=Agent spawn). Both sub-agent spine and
+  parent Agent tool_result point to the same parent `llm_inference` (diamond).
+  `source_agent` naming convention documented:
+  `agent:<rt>/main@{v}` and `agent:<rt>/sub-{ptuid[:8]}@{v}`.
+  stream-json adapter v1.2 ships: dynamic tool list from init, sub-agent
+  spine routing, streaming deduplication by `message.id`, system subtype
+  decisions (`hook_*`, `task_*`, `rate_limit_event` — see adapter README).
+  13-test suite passes. §2b fixture committed to
+  `adapters/stream-json/tests/fixtures/subagent_session.jsonl`.
 - **2026-05-25** — §1.2 added (PROPOSED) — append shape vs journal shape.
   Documents the 9-field POST body (§1.2.1), the 4-field journal envelope
   (§1.2.2), the 14 metadata fields classified as load-bearing /
