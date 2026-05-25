@@ -161,8 +161,9 @@ impl CapabilityEvent {
             CapabilityEvent::LeaseAcquired { owner_id, .. } => *owner_id,
             CapabilityEvent::LeaseReleased { owner_id, .. } => *owner_id,
             // External agent events have no plan_id — use nil UUID as a stable sentinel
-            CapabilityEvent::AgentToolCall { .. }
-            | CapabilityEvent::ProxyAuditTrail { .. } => Uuid::nil(),
+            CapabilityEvent::AgentToolCall { .. } | CapabilityEvent::ProxyAuditTrail { .. } => {
+                Uuid::nil()
+            }
         }
     }
 
@@ -423,7 +424,11 @@ impl CapabilityJournal {
             self.rebuild_triggered_by_index();
 
             let elapsed = start_time.elapsed().as_millis();
-            eprintln!("journal load: {} events in {}ms", self.events.len(), elapsed);
+            eprintln!(
+                "journal load: {} events in {}ms",
+                self.events.len(),
+                elapsed
+            );
 
             let _ = lock_file.unlock();
         }
@@ -444,7 +449,10 @@ impl CapabilityJournal {
             event,
         };
         if let Some(tb) = journal_event.metadata.triggered_by {
-            self.triggered_by_index.entry(tb).or_insert_with(Vec::new).push(self.events.len());
+            self.triggered_by_index
+                .entry(tb)
+                .or_insert_with(Vec::new)
+                .push(self.events.len());
         }
         self.events.push(journal_event);
         let _ = self.flush();
@@ -661,7 +669,10 @@ impl CapabilityJournal {
                     let prefix = &sha256[..2];
                     let blob_path = blobs_dir.join(prefix).join(sha256);
                     if !blob_path.exists() {
-                        return Err(format!("Ledger integrity failure: missing blob for sha256: {}", sha256));
+                        return Err(format!(
+                            "Ledger integrity failure: missing blob for sha256: {}",
+                            sha256
+                        ));
                     }
                 }
             }

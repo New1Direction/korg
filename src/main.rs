@@ -438,8 +438,12 @@ async fn main() -> Result<()> {
                 "Launching web dashboard with live campaign for prompt: {}",
                 prompt
             );
-            korg_server::run_web_with_campaign(prompt.to_string(), None, Some(parse_cognition_mode(&cli.mode)))
-                .await?;
+            korg_server::run_web_with_campaign(
+                prompt.to_string(),
+                None,
+                Some(parse_cognition_mode(&cli.mode)),
+            )
+            .await?;
         } else if cli.goal {
             // Goal mode: use the full Heavy-Tier swarm campaign
             let cyan = "\x1b[38;2;0;240;255m";
@@ -704,7 +708,8 @@ async fn main() -> Result<()> {
                     }
                 };
             println!("Indexing workspace at {}...", path);
-            let index = korg_runtime::code_indexer::index_workspace(&path, &*embedding_model).await?;
+            let index =
+                korg_runtime::code_indexer::index_workspace(&path, &*embedding_model).await?;
             let index_path = std::path::Path::new(&path).join(".korg").join("index.json");
             let index_path_str = index_path.to_string_lossy().to_string();
             korg_runtime::code_indexer::save_index(&index, &index_path_str)?;
@@ -773,7 +778,8 @@ async fn main() -> Result<()> {
                 AuthSubcommands::Login { provider, device } => {
                     let config = korg_auth::AuthConfig::from_env();
                     let providers = korg_auth::providers::AuthProviders::new(&config);
-                    let store = korg_auth::store::JsonTokenStore::new(config.token_store_path.clone());
+                    let store =
+                        korg_auth::store::JsonTokenStore::new(config.token_store_path.clone());
 
                     let is_anthropic = provider.to_lowercase() == "anthropic";
                     let client = if is_anthropic {
@@ -796,11 +802,15 @@ async fn main() -> Result<()> {
                     let gold = "\x1b[38;2;255;215;0m";
 
                     println!("\n{bold}{cyan}=== ⚡ Korg Headless OAuth Login ⚡ ==={reset}\n");
-                    println!("1. Please open the following URL in your local browser to authenticate:");
+                    println!(
+                        "1. Please open the following URL in your local browser to authenticate:"
+                    );
                     println!("   {gold}{}{reset}\n", flow.authorize_url);
 
                     if device {
-                        println!("2. Once authorized, your browser will redirect to a callback URL.");
+                        println!(
+                            "2. Once authorized, your browser will redirect to a callback URL."
+                        );
                         println!("   If you have SSH port forwarding enabled (e.g. -L 8080:localhost:8080),");
                         println!("   the authorization will complete automatically.");
                         println!("   Otherwise, copy the redirect URL from your address bar and paste it below.\n");
@@ -815,22 +825,34 @@ async fn main() -> Result<()> {
 
                         let code = if let Some(idx) = input_trimmed.find("code=") {
                             let start = idx + "code=".len();
-                            let end = input_trimmed[start..].find('&').map(|i| start + i).unwrap_or(input_trimmed.len());
+                            let end = input_trimmed[start..]
+                                .find('&')
+                                .map(|i| start + i)
+                                .unwrap_or(input_trimmed.len());
                             input_trimmed[start..end].to_string()
                         } else {
-                            return Err(anyhow::anyhow!("Could not find 'code' parameter in input."));
+                            return Err(anyhow::anyhow!(
+                                "Could not find 'code' parameter in input."
+                            ));
                         };
 
                         let state = if let Some(idx) = input_trimmed.find("state=") {
                             let start = idx + "state=".len();
-                            let end = input_trimmed[start..].find('&').map(|i| start + i).unwrap_or(input_trimmed.len());
+                            let end = input_trimmed[start..]
+                                .find('&')
+                                .map(|i| start + i)
+                                .unwrap_or(input_trimmed.len());
                             input_trimmed[start..end].to_string()
                         } else {
-                            return Err(anyhow::anyhow!("Could not find 'state' parameter in input."));
+                            return Err(anyhow::anyhow!(
+                                "Could not find 'state' parameter in input."
+                            ));
                         };
 
                         if state != flow.csrf_state {
-                            return Err(anyhow::anyhow!("CSRF validation failed: State parameter mismatch."));
+                            return Err(anyhow::anyhow!(
+                                "CSRF validation failed: State parameter mismatch."
+                            ));
                         }
 
                         // Exchange authorization code for token
@@ -843,25 +865,33 @@ async fn main() -> Result<()> {
 
                         let token_response = match token_result {
                             Ok(res) => res,
-                            Err(e) => return Err(anyhow::anyhow!("Token exchange failed: {:?}", e)),
+                            Err(e) => {
+                                return Err(anyhow::anyhow!("Token exchange failed: {:?}", e))
+                            }
                         };
 
                         let access_token = token_response.access_token().secret().clone();
                         let user_id = "claude-code-user";
 
-                        let mut session = store.load_session(user_id).unwrap_or_else(|| korg_auth::store::UserSession {
-                            user_id: user_id.to_string(),
-                            codex_access_token: "".to_string(),
-                            subscription_tier: korg_core::SubscriptionTier::Standard,
-                            anthropic_access_token: "".to_string(),
-                            refresh_token: None,
-                            expires_at: chrono::Utc::now(),
+                        let mut session = store.load_session(user_id).unwrap_or_else(|| {
+                            korg_auth::store::UserSession {
+                                user_id: user_id.to_string(),
+                                codex_access_token: "".to_string(),
+                                subscription_tier: korg_core::SubscriptionTier::Standard,
+                                anthropic_access_token: "".to_string(),
+                                refresh_token: None,
+                                expires_at: chrono::Utc::now(),
+                            }
                         });
 
                         if is_anthropic {
-                            let refresh_token = token_response.refresh_token().map(|rt| rt.secret().clone());
-                            let expires_in = token_response.expires_in().unwrap_or(std::time::Duration::from_secs(3600));
-                            let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires_in.as_secs() as i64);
+                            let refresh_token =
+                                token_response.refresh_token().map(|rt| rt.secret().clone());
+                            let expires_in = token_response
+                                .expires_in()
+                                .unwrap_or(std::time::Duration::from_secs(3600));
+                            let expires_at = chrono::Utc::now()
+                                + chrono::Duration::seconds(expires_in.as_secs() as i64);
 
                             session.anthropic_access_token = access_token;
                             session.refresh_token = refresh_token;
@@ -879,23 +909,32 @@ async fn main() -> Result<()> {
                     } else {
                         println!("2. Automatically launching local browser...");
                         #[cfg(target_os = "macos")]
-                        let _ = std::process::Command::new("open").arg(&flow.authorize_url).status();
+                        let _ = std::process::Command::new("open")
+                            .arg(&flow.authorize_url)
+                            .status();
                         #[cfg(target_os = "windows")]
-                        let _ = std::process::Command::new("cmd").args(&["/C", "start", &flow.authorize_url]).status();
+                        let _ = std::process::Command::new("cmd")
+                            .args(&["/C", "start", &flow.authorize_url])
+                            .status();
                         #[cfg(target_os = "linux")]
-                        let _ = std::process::Command::new("xdg-open").arg(&flow.authorize_url).status();
+                        let _ = std::process::Command::new("xdg-open")
+                            .arg(&flow.authorize_url)
+                            .status();
 
                         println!("Waiting for browser redirect on http://localhost:8080 ...");
                         println!("Keep this window open until authorization completes.");
-                        
+
                         providers.save_pending_pkce(flow.csrf_state.clone(), flow.pkce_verifier);
-                        
+
                         println!("\nStarting local background listener on port 8080...");
-                        let (feedback_tx, _) = tokio::sync::mpsc::channel::<korg_tui::ContractResponse>(128);
-                        let (broadcaster_tx, _) = tokio::sync::broadcast::channel::<korg_tui::TuiUpdate>(256);
-                        let capability_resolver_container = std::sync::Arc::new(tokio::sync::Mutex::new(
-                            korg_registry::CapabilityResolver::default_resolver(),
-                        ));
+                        let (feedback_tx, _) =
+                            tokio::sync::mpsc::channel::<korg_tui::ContractResponse>(128);
+                        let (broadcaster_tx, _) =
+                            tokio::sync::broadcast::channel::<korg_tui::TuiUpdate>(256);
+                        let capability_resolver_container =
+                            std::sync::Arc::new(tokio::sync::Mutex::new(
+                                korg_registry::CapabilityResolver::default_resolver(),
+                            ));
 
                         let app_state = std::sync::Arc::new(korg_server::AppState {
                             broadcaster: broadcaster_tx,
@@ -906,8 +945,14 @@ async fn main() -> Result<()> {
                         });
 
                         let router = axum::Router::new()
-                            .route("/auth/codex/callback", axum::routing::get(korg_server::oauth_codex_callback_handler))
-                            .route("/auth/anthropic/callback", axum::routing::get(korg_server::oauth_anthropic_callback_handler))
+                            .route(
+                                "/auth/codex/callback",
+                                axum::routing::get(korg_server::oauth_codex_callback_handler),
+                            )
+                            .route(
+                                "/auth/anthropic/callback",
+                                axum::routing::get(korg_server::oauth_anthropic_callback_handler),
+                            )
                             .with_state(app_state);
 
                         let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
@@ -1251,8 +1296,12 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
                     "{}• Scanning codebase semantically for \"{}\"...{}",
                     slate, clean_query, reset
                 );
-                let matches =
-                    korg_runtime::code_indexer::query_codebase(idx, &clean_query, &*embedding_model, 3);
+                let matches = korg_runtime::code_indexer::query_codebase(
+                    idx,
+                    &clean_query,
+                    &*embedding_model,
+                    3,
+                );
                 for (sim, block) in matches {
                     prompt_context.push_str(&format!(
                         "\nSemantic Match [similarity={:.2}]: {} ({}:{}-{})\n```\n{}\n```\n",
@@ -1282,7 +1331,8 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
         );
 
         println!("\n{}🧠 Swarm is thinking...{}", gold, reset);
-        let result = korg_runtime::personas::run_persona(query_persona, &final_prompt, "shell-chat").await;
+        let result =
+            korg_runtime::personas::run_persona(query_persona, &final_prompt, "shell-chat").await;
 
         println!("\n{}🤖 Swarm Output:{}", bold, reset);
         if let Some(text) = result.output.get("explanation").and_then(|v| v.as_str()) {
@@ -1699,7 +1749,9 @@ fn scan_and_publish_diagnostics<W: std::io::Write>(
     Ok(())
 }
 
-pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) -> Result<std::path::PathBuf> {
+pub async fn run_demo_internal(
+    temp_dir_override: Option<std::path::PathBuf>,
+) -> Result<std::path::PathBuf> {
     use std::collections::BTreeMap;
     use uuid::Uuid;
 
@@ -1722,17 +1774,13 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     std::fs::create_dir_all(&temp_dir)?;
 
     println!("{slate}[korg]{reset} Initializing sandboxed demo environment...");
-    
+
     // Create journal
     let journal_path = temp_dir.join("journal.json");
     let snapshot_path = temp_dir.join("snapshot.json");
     let lock_path = temp_dir.join("lock.lock");
-    let mut journal = korg_registry::CapabilityJournal::new(
-        journal_path.clone(),
-        snapshot_path,
-        10,
-        lock_path,
-    );
+    let mut journal =
+        korg_registry::CapabilityJournal::new(journal_path.clone(), snapshot_path, 10, lock_path);
 
     // Setup math_utils.py
     let file_path = temp_dir.join("math_utils.py");
@@ -1742,7 +1790,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     println!("{bold}{pink}🚀 PHASE 1: AGENT INITIATES RUN (WRONG PATH){reset}");
-    
+
     // Event 390: user_prompt
     let ev390 = korg_registry::CapabilityEvent::AgentToolCall {
         source_agent: "agent:claude-code@0.2.29".to_string(),
@@ -1812,7 +1860,8 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     // Event 392 (bad fix): Edit
-    let wrong_fix_code = "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    return a + b\n";
+    let wrong_fix_code =
+        "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    return a + b\n";
     std::fs::write(&file_path, wrong_fix_code)?;
     let ev392 = korg_registry::CapabilityEvent::AgentToolCall {
         source_agent: "agent:claude-code@0.2.29".to_string(),
@@ -1888,20 +1937,25 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
             korg_registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
             _ => "Governance".to_string(),
         };
-        println!("    ├── seq {} ({}) -> triggered_by: {:?}", e.seq_id, event_type, e.metadata.triggered_by);
+        println!(
+            "    ├── seq {} ({}) -> triggered_by: {:?}",
+            e.seq_id, event_type, e.metadata.triggered_by
+        );
     }
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     println!("\n{bold}{yellow}⏳ PHASE 2: INITIATING REVERSIBLE REWIND TO SEQ 391{reset}");
     println!("  {slate}[korg]{reset} Truncating journal ledger to sequence ID 391...");
     journal.rewind(391).map_err(|e| anyhow::anyhow!(e))?;
-    
+
     println!("  {slate}[korg]{reset} Restoring workspace snapshot via git read-tree (O(1))...");
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    
+
     // Simulate workspace snapshot restore by writing buggy code back!
     std::fs::write(&file_path, buggy_code)?;
-    println!("  {slate}[korg]{reset} Reset math_utils.py file state back to sequence 391 bug state.");
+    println!(
+        "  {slate}[korg]{reset} Reset math_utils.py file state back to sequence 391 bug state."
+    );
     println!("  {slate}[korg]{reset} Rebuilding 3 read-model projections...");
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
 
@@ -1912,14 +1966,20 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
             korg_registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
             _ => "Governance".to_string(),
         };
-        println!("    ├── seq {} ({}) -> triggered_by: {:?}", e.seq_id, event_type, e.metadata.triggered_by);
+        println!(
+            "    ├── seq {} ({}) -> triggered_by: {:?}",
+            e.seq_id, event_type, e.metadata.triggered_by
+        );
     }
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    println!("\n{bold}{green}🚀 PHASE 3: AGENT DIVERGES DOWN CORRECT PATH (SPECULATIVE REPLAY){reset}");
-    
+    println!(
+        "\n{bold}{green}🚀 PHASE 3: AGENT DIVERGES DOWN CORRECT PATH (SPECULATIVE REPLAY){reset}"
+    );
+
     // Event 392 (good fix): Edit
-    let right_fix_code = "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    return a - b\n";
+    let right_fix_code =
+        "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    return a - b\n";
     std::fs::write(&file_path, right_fix_code)?;
     let ev392_div = korg_registry::CapabilityEvent::AgentToolCall {
         source_agent: "agent:claude-code@0.2.29".to_string(),
@@ -1998,7 +2058,10 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
             korg_registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
             _ => "Governance".to_string(),
         };
-        println!("    ├── seq {} ({}) -> triggered_by: {:?}", e.seq_id, event_type, e.metadata.triggered_by);
+        println!(
+            "    ├── seq {} ({}) -> triggered_by: {:?}",
+            e.seq_id, event_type, e.metadata.triggered_by
+        );
     }
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
@@ -2014,49 +2077,68 @@ mod tests {
 
     #[tokio::test]
     async fn test_korg_demo_ledger_invariants() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_demo_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_demo_test_{}", uuid::Uuid::new_v4()));
         let res = run_demo_internal(Some(temp_dir.clone())).await;
         assert!(res.is_ok(), "Demo run should succeed");
-        
+
         let journal_path = temp_dir.join("journal.json");
         let content = std::fs::read_to_string(&journal_path).unwrap();
         let events: Vec<korg_registry::log::JournalEvent> = serde_json::from_str(&content).unwrap();
-        
+
         // Assert the ledger has exactly 4 events
         assert_eq!(events.len(), 4, "Should contain exactly 4 events");
-        
+
         // Assert sequence IDs
         assert_eq!(events[0].seq_id, 390);
         assert_eq!(events[1].seq_id, 391);
         assert_eq!(events[2].seq_id, 392);
         assert_eq!(events[3].seq_id, 393);
-        
+
         // Assert triggered_by causal chain
         assert_eq!(events[0].metadata.triggered_by, None);
         assert_eq!(events[1].metadata.triggered_by, Some(390));
         assert_eq!(events[2].metadata.triggered_by, Some(391));
         assert_eq!(events[3].metadata.triggered_by, Some(392));
-        
+
         // Assert content is the correct one (divergent success edit and passed test)
-        if let korg_registry::CapabilityEvent::AgentToolCall { tool_name, args, .. } = &events[2].event {
+        if let korg_registry::CapabilityEvent::AgentToolCall {
+            tool_name, args, ..
+        } = &events[2].event
+        {
             assert_eq!(tool_name, "Edit");
-            assert!(args.to_string().contains("return a - b"), "Should contain the correct fix");
+            assert!(
+                args.to_string().contains("return a - b"),
+                "Should contain the correct fix"
+            );
         } else {
             panic!("Event 2 should be AgentToolCall");
         }
-        
-        if let korg_registry::CapabilityEvent::AgentToolCall { tool_name, result, .. } = &events[3].event {
+
+        if let korg_registry::CapabilityEvent::AgentToolCall {
+            tool_name, result, ..
+        } = &events[3].event
+        {
             assert_eq!(tool_name, "Bash");
-            assert!(result.to_string().contains("passed"), "Should contain passed tests");
+            assert!(
+                result.to_string().contains("passed"),
+                "Should contain passed tests"
+            );
         } else {
             panic!("Event 3 should be AgentToolCall");
         }
-        
+
         // Assert file state is corrected on disk
         let file_path = temp_dir.join("math_utils.py");
         let file_content = std::fs::read_to_string(&file_path).unwrap();
-        assert!(file_content.contains("return a - b"), "File should contain correct subtraction code");
-        assert!(!file_content.contains("def subtract(a, b):\n    # Intended bug\n    return a + b"), "File should not contain wrong subtraction code");
+        assert!(
+            file_content.contains("return a - b"),
+            "File should contain correct subtraction code"
+        );
+        assert!(
+            !file_content.contains("def subtract(a, b):\n    # Intended bug\n    return a + b"),
+            "File should not contain wrong subtraction code"
+        );
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);

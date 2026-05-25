@@ -4,9 +4,9 @@
 //! into logical codeblocks, generates dense vector embeddings, and supports
 //! fast cosine similarity matches.
 
+use anyhow::{Context, Result};
 use korg_embeddings::EmbeddingModel;
 use korg_embeddings::{cosine_similarity, CodebaseIndex, IndexedCodeBlock};
-use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 

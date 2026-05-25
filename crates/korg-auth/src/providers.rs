@@ -3,8 +3,8 @@ use oauth2::{
     AuthUrl, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl,
     Scope, TokenResponse, TokenUrl,
 };
-use std::sync::Arc;
 use serde::Deserialize;
+use std::sync::Arc;
 
 // SubscriptionTier lives in korg-core so that both korg-auth and korg-registry
 // can reference it without a circular dependency.
@@ -46,16 +46,24 @@ impl CodexProvider {
             AuthUrl::new("https://codex.auth.com/oauth/authorize".to_string()).unwrap(),
             Some(TokenUrl::new("https://codex.auth.com/oauth/token".to_string()).unwrap()),
         )
-        .set_redirect_uri(RedirectUrl::new(format!("{}/auth/codex/callback", config.base_url)).unwrap());
+        .set_redirect_uri(
+            RedirectUrl::new(format!("{}/auth/codex/callback", config.base_url)).unwrap(),
+        );
         Self { client }
     }
 }
 
 #[async_trait::async_trait]
 impl OAuthProvider for CodexProvider {
-    fn id(&self) -> &'static str { "codex" }
-    fn client(&self) -> &BasicClient { &self.client }
-    fn scopes(&self) -> Vec<String> { vec!["subscription".to_string()] }
+    fn id(&self) -> &'static str {
+        "codex"
+    }
+    fn client(&self) -> &BasicClient {
+        &self.client
+    }
+    fn scopes(&self) -> Vec<String> {
+        vec!["subscription".to_string()]
+    }
 }
 
 pub(crate) struct AnthropicProvider {
@@ -70,16 +78,24 @@ impl AnthropicProvider {
             AuthUrl::new("https://api.anthropic.com/oauth2/authorize".to_string()).unwrap(),
             Some(TokenUrl::new("https://api.anthropic.com/oauth2/token".to_string()).unwrap()),
         )
-        .set_redirect_uri(RedirectUrl::new(format!("{}/auth/anthropic/callback", config.base_url)).unwrap());
+        .set_redirect_uri(
+            RedirectUrl::new(format!("{}/auth/anthropic/callback", config.base_url)).unwrap(),
+        );
         Self { client }
     }
 }
 
 #[async_trait::async_trait]
 impl OAuthProvider for AnthropicProvider {
-    fn id(&self) -> &'static str { "anthropic" }
-    fn client(&self) -> &BasicClient { &self.client }
-    fn scopes(&self) -> Vec<String> { vec!["messages".to_string()] }
+    fn id(&self) -> &'static str {
+        "anthropic"
+    }
+    fn client(&self) -> &BasicClient {
+        &self.client
+    }
+    fn scopes(&self) -> Vec<String> {
+        vec!["messages".to_string()]
+    }
 }
 
 pub struct AuthProviders {
@@ -130,7 +146,11 @@ impl AuthProviders {
 
     /// Generates PKCE challenge and CSRF state parameters.
     /// Security Guard (Hermes Lesson #1): code_verifier and state MUST be entirely distinct.
-    pub fn initiate_pkce_flow(&self, client: &BasicClient, scopes: Vec<String>) -> OAuthFlowInitiation {
+    pub fn initiate_pkce_flow(
+        &self,
+        client: &BasicClient,
+        scopes: Vec<String>,
+    ) -> OAuthFlowInitiation {
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
         let csrf_state = CsrfToken::new_random();
 
@@ -167,7 +187,9 @@ impl AuthProviders {
         match res {
             Ok(resp) => {
                 #[derive(Deserialize)]
-                struct CodexSubResponse { tier: String }
+                struct CodexSubResponse {
+                    tier: String,
+                }
                 if let Ok(sub) = resp.json::<CodexSubResponse>().await {
                     tier_from_str(&sub.tier)
                 } else {

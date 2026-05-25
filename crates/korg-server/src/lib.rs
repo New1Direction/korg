@@ -35,7 +35,8 @@ pub struct AppState {
     pub broadcaster: broadcast::Sender<TuiUpdate>,
     pub feedback_tx: Mutex<Option<mpsc::Sender<ContractResponse>>>,
     pub capability_resolver: Arc<tokio::sync::Mutex<korg_registry::CapabilityResolver>>,
-    pub runtime_coordinator: Arc<std::sync::Mutex<Option<Arc<korg_runtime::runtime::RuntimeCoordinator>>>>,
+    pub runtime_coordinator:
+        Arc<std::sync::Mutex<Option<Arc<korg_runtime::runtime::RuntimeCoordinator>>>>,
     pub auth: Arc<korg_auth::AuthState>,
 }
 
@@ -114,7 +115,8 @@ pub async fn run_web_with_campaign(
                                 if verdict == "REDACTED" || verdict == "BLOCKED" {
                                     if let Some(data) = att.get_mut("data_base64") {
                                         *data = serde_json::Value::String(
-                                            korg_runtime::vision_policy::BLACKOUT_PNG_BASE64.to_string(),
+                                            korg_runtime::vision_policy::BLACKOUT_PNG_BASE64
+                                                .to_string(),
                                         );
                                     }
                                 }
@@ -174,8 +176,14 @@ pub async fn run_web_with_campaign(
         )
         .route("/auth/login", get(oauth_login_handler))
         .route("/auth/codex/callback", get(oauth_codex_callback_handler))
-        .route("/auth/anthropic/callback", get(oauth_anthropic_callback_handler))
-        .route("/api/v1/anthropic/messages", post(anthropic_messages_proxy_handler))
+        .route(
+            "/auth/anthropic/callback",
+            get(oauth_anthropic_callback_handler),
+        )
+        .route(
+            "/api/v1/anthropic/messages",
+            post(anthropic_messages_proxy_handler),
+        )
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
@@ -228,7 +236,8 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
                                 if verdict == "REDACTED" || verdict == "BLOCKED" {
                                     if let Some(data) = att.get_mut("data_base64") {
                                         *data = serde_json::Value::String(
-                                            korg_runtime::vision_policy::BLACKOUT_PNG_BASE64.to_string(),
+                                            korg_runtime::vision_policy::BLACKOUT_PNG_BASE64
+                                                .to_string(),
                                         );
                                     }
                                 }
@@ -288,8 +297,14 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
         )
         .route("/auth/login", get(oauth_login_handler))
         .route("/auth/codex/callback", get(oauth_codex_callback_handler))
-        .route("/auth/anthropic/callback", get(oauth_anthropic_callback_handler))
-        .route("/api/v1/anthropic/messages", post(anthropic_messages_proxy_handler))
+        .route(
+            "/auth/anthropic/callback",
+            get(oauth_anthropic_callback_handler),
+        )
+        .route(
+            "/api/v1/anthropic/messages",
+            post(anthropic_messages_proxy_handler),
+        )
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
@@ -602,8 +617,12 @@ async fn semantic_search_handler(
         };
 
     let top_n = payload.top_n.unwrap_or(5);
-    let matches =
-        korg_runtime::code_indexer::query_codebase(&index, &payload.query, &*embedding_model, top_n);
+    let matches = korg_runtime::code_indexer::query_codebase(
+        &index,
+        &payload.query,
+        &*embedding_model,
+        top_n,
+    );
 
     let results: Vec<SemanticSearchResult> = matches
         .into_iter()
@@ -635,7 +654,9 @@ async fn journal_handler(
     Query(params): Query<JournalQuery>,
 ) -> impl IntoResponse {
     let resolver = state.capability_resolver.lock().await;
-    let jsonl = resolver.journal.to_json_lines_filtered(params.triggered_by, 100);
+    let jsonl = resolver
+        .journal
+        .to_json_lines_filtered(params.triggered_by, 100);
     let total = resolver.journal.len();
     drop(resolver);
 
@@ -770,10 +791,10 @@ async fn agent_tool_call_handler(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AgentToolCallRequest>,
 ) -> impl IntoResponse {
-    use korg_registry::CapabilityEvent;
-    use korg_registry::log::{EventMetadata, EventTier};
     use axum::http::StatusCode;
     use chrono::Utc;
+    use korg_registry::log::{EventMetadata, EventTier};
+    use korg_registry::CapabilityEvent;
     use std::collections::BTreeMap;
     use uuid::Uuid;
 
@@ -818,9 +839,7 @@ async fn agent_tool_call_handler(
                 .events
                 .iter()
                 .find(|e| e.seq_id == triggered_by_seq);
-            let root = parent
-                .map(|e| e.metadata.root_event_id)
-                .unwrap_or(event_id);
+            let root = parent.map(|e| e.metadata.root_event_id).unwrap_or(event_id);
             let causation = parent.map(|e| e.metadata.event_id);
             (root, causation)
         }
@@ -1612,7 +1631,6 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
 </body>
 </html>"##;
 
-
 // ============================================================================
 // OAUTH & GATEWAY AUTHENTICATION LAYER HANDLERS
 // ============================================================================
@@ -1640,7 +1658,10 @@ async fn oauth_login_handler(
     };
 
     let flow = state.auth.providers.initiate_pkce_flow(client, scopes);
-    state.auth.providers.save_pending_pkce(flow.csrf_state.clone(), flow.pkce_verifier);
+    state
+        .auth
+        .providers
+        .save_pending_pkce(flow.csrf_state.clone(), flow.pkce_verifier);
 
     axum::response::Redirect::to(&flow.authorize_url).into_response()
 }
@@ -1692,7 +1713,11 @@ pub async fn oauth_codex_callback_handler(
     };
 
     let access_token = token_response.access_token().secret().clone();
-    let tier = app_state.auth.providers.verify_codex_subscription(&access_token).await;
+    let tier = app_state
+        .auth
+        .providers
+        .verify_codex_subscription(&access_token)
+        .await;
 
     let user_id = "claude-code-user";
     let mut session = app_state
@@ -1784,7 +1809,9 @@ pub async fn oauth_anthropic_callback_handler(
 
     let access_token = token_response.access_token().secret().clone();
     let refresh_token = token_response.refresh_token().map(|rt| rt.secret().clone());
-    let expires_in = token_response.expires_in().unwrap_or(std::time::Duration::from_secs(3600));
+    let expires_in = token_response
+        .expires_in()
+        .unwrap_or(std::time::Duration::from_secs(3600));
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires_in.as_secs() as i64);
 
     let user_id = "claude-code-user";
@@ -1872,13 +1899,22 @@ where
             if let Some(cookie_val) = cookie_header {
                 if let Some(idx) = cookie_val.find("korg_session=") {
                     let start = idx + "korg_session=".len();
-                    let end = cookie_val[start..].find(';').map(|i| start + i).unwrap_or(cookie_val.len());
+                    let end = cookie_val[start..]
+                        .find(';')
+                        .map(|i| start + i)
+                        .unwrap_or(cookie_val.len());
                     cookie_val[start..end].trim().to_string()
                 } else {
-                    return Err((axum::http::StatusCode::UNAUTHORIZED, "Missing korg_session cookie or authorization header"));
+                    return Err((
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        "Missing korg_session cookie or authorization header",
+                    ));
                 }
             } else {
-                return Err((axum::http::StatusCode::UNAUTHORIZED, "Missing authorization header or cookie"));
+                return Err((
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "Missing authorization header or cookie",
+                ));
             }
         };
 
@@ -1899,9 +1935,15 @@ where
                         expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
                     };
                     let _ = app_state.auth.store.save_session(mock_session.clone());
-                    Ok(AuthenticatedUser { user_id, session: mock_session })
+                    Ok(AuthenticatedUser {
+                        user_id,
+                        session: mock_session,
+                    })
                 } else {
-                    Err((axum::http::StatusCode::UNAUTHORIZED, "Active session not found. Please log in first."))
+                    Err((
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        "Active session not found. Please log in first.",
+                    ))
                 }
             }
         }
@@ -1915,8 +1957,14 @@ async fn anthropic_messages_proxy_handler(
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     // Proxy Audit Logging (Observability)
-    let model = payload.get("model").and_then(|m| m.as_str()).unwrap_or("claude-3-5-sonnet");
-    let input_chars = payload.get("messages").map(|m| m.to_string().len()).unwrap_or(0);
+    let model = payload
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("claude-3-5-sonnet");
+    let input_chars = payload
+        .get("messages")
+        .map(|m| m.to_string().len())
+        .unwrap_or(0);
     let estimated_tokens = input_chars / 4;
     let cost_estimate = (estimated_tokens as f64) * 0.000003; // $3 per million input tokens
 
@@ -1956,9 +2004,7 @@ async fn anthropic_messages_proxy_handler(
     let anthropic_url = "https://api.anthropic.com/v1/messages";
 
     let make_request = |token: &str| {
-        let mut builder = client
-            .post(anthropic_url)
-            .json(&payload);
+        let mut builder = client.post(anthropic_url).json(&payload);
 
         if let Some(version) = req_headers.get("anthropic-version") {
             builder = builder.header("anthropic-version", version);
@@ -1976,16 +2022,20 @@ async fn anthropic_messages_proxy_handler(
 
     let mut token = user.session.anthropic_access_token.clone();
     let is_expired = user.session.expires_at < chrono::Utc::now();
-    
+
     // 2. Coordinated Proactive Singleflight Token Refresh (Hermes Lesson #4 + Singleflight blueprint)
     if is_expired && user.session.refresh_token.is_some() {
         let app_state_clone = app_state.clone();
         let user_id_clone = user.user_id.clone();
         let session_clone = user.session.clone();
-        
-        let refresh_result = app_state.auth.refresher.execute_refresh(&user.user_id, || async move {
-            refresh_anthropic_token(&app_state_clone, &user_id_clone, &session_clone).await
-        }).await;
+
+        let refresh_result = app_state
+            .auth
+            .refresher
+            .execute_refresh(&user.user_id, || async move {
+                refresh_anthropic_token(&app_state_clone, &user_id_clone, &session_clone).await
+            })
+            .await;
 
         if let Ok(new_session) = refresh_result {
             token = new_session.anthropic_access_token;
@@ -2009,10 +2059,14 @@ async fn anthropic_messages_proxy_handler(
             let app_state_clone = app_state.clone();
             let user_id_clone = user.user_id.clone();
             let session_clone = user.session.clone();
-            
-            let refresh_result = app_state.auth.refresher.execute_refresh(&user.user_id, || async move {
-                refresh_anthropic_token(&app_state_clone, &user_id_clone, &session_clone).await
-            }).await;
+
+            let refresh_result = app_state
+                .auth
+                .refresher
+                .execute_refresh(&user.user_id, || async move {
+                    refresh_anthropic_token(&app_state_clone, &user_id_clone, &session_clone).await
+                })
+                .await;
 
             if let Ok(new_session) = refresh_result {
                 let retry_token = new_session.anthropic_access_token;
@@ -2072,7 +2126,9 @@ async fn refresh_anthropic_token(
 
     let access_token = token_result.access_token().secret().clone();
     let new_refresh_token = token_result.refresh_token().map(|rt| rt.secret().clone());
-    let expires_in = token_result.expires_in().unwrap_or(std::time::Duration::from_secs(3600));
+    let expires_in = token_result
+        .expires_in()
+        .unwrap_or(std::time::Duration::from_secs(3600));
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires_in.as_secs() as i64);
 
     let mut new_session = session.clone();
@@ -2089,23 +2145,23 @@ async fn refresh_anthropic_token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use korg_registry::{CapabilityResolver, CapabilityJournal};
+    use crate::AgentToolCallRequest;
     use crate::AppState;
-    use std::sync::Arc;
-    use tokio::sync::Mutex as TokioMutex;
-    use std::sync::Mutex as StdMutex;
     use axum::extract::State;
     use axum::Json;
-    use crate::AgentToolCallRequest;
+    use korg_registry::{CapabilityJournal, CapabilityResolver};
+    use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
+    use tokio::sync::Mutex as TokioMutex;
 
     #[tokio::test]
     async fn test_agent_tool_call_actor_id_always_korg_api() {
         let (broadcaster_tx, _) = tokio::sync::broadcast::channel(16);
         let (feedback_tx, _) = tokio::sync::mpsc::channel(16);
-        
+
         let temp_dir = std::env::temp_dir().join(format!("korg_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
-        
+
         let journal = CapabilityJournal::new(
             temp_dir.join("journal.json"),
             temp_dir.join("snapshot.json"),
@@ -2114,7 +2170,7 @@ mod tests {
         );
         let resolver = CapabilityResolver::new(std::collections::HashMap::new(), journal);
         let capability_resolver_container = Arc::new(TokioMutex::new(resolver));
-        
+
         let auth_state = Arc::new(korg_auth::AuthState::new(korg_auth::AuthConfig {
             base_url: "http://localhost:8080".to_string(),
             codex_client_id: "mock-codex-client-id".to_string(),
@@ -2144,23 +2200,20 @@ mod tests {
         };
 
         // Call the handler directly!
-        let _response = agent_tool_call_handler(
-            State(app_state),
-            Json(req),
-        ).await;
+        let _response = agent_tool_call_handler(State(app_state), Json(req)).await;
 
         // Verify the event was added and metadata.actor_id == "korg:api"
         let resolver_lock = capability_resolver_container.lock().await;
         let events = &resolver_lock.journal.events;
         assert!(!events.is_empty(), "Events should not be empty");
         let last_event = &events[events.len() - 1];
-        
+
         // Assert actor_id is "korg:api"
         assert_eq!(last_event.metadata.actor_id, "korg:api");
-        
+
         // Assert triggered_by is None (preserved correctly)
         assert_eq!(last_event.metadata.triggered_by, None);
-        
+
         // Clean up temp dir
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -2176,26 +2229,28 @@ mod tests {
             token_store_path: std::path::PathBuf::from(".korg/test_auth.json"),
         };
         let providers = korg_auth::providers::AuthProviders::new(&config);
-        
-        let flow = providers.initiate_pkce_flow(&providers.codex_client, vec!["subscription".to_string()]);
-        
+
+        let flow =
+            providers.initiate_pkce_flow(&providers.codex_client, vec!["subscription".to_string()]);
+
         assert!(!flow.csrf_state.is_empty());
         assert!(!flow.pkce_verifier.is_empty());
         assert!(!flow.authorize_url.is_empty());
-        
+
         // Assert that they are distinct (Hermes Lesson #1)
         assert_ne!(flow.csrf_state, flow.pkce_verifier);
     }
 
     #[test]
     fn test_absolute_expiry_persistence() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_test_store_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_test_store_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
         let store_path = temp_dir.join("auth.json");
-        
+
         let store = korg_auth::store::JsonTokenStore::new(store_path.clone());
         let original_expires_at = chrono::Utc::now() + chrono::Duration::hours(2);
-        
+
         let session = korg_auth::store::UserSession {
             user_id: "test-user".to_string(),
             codex_access_token: "codex-token".to_string(),
@@ -2204,26 +2259,32 @@ mod tests {
             refresh_token: Some("refresh-token".to_string()),
             expires_at: original_expires_at,
         };
-        
+
         store.save_session(session).unwrap();
-        
+
         // Simulate cold restart by dropping the store and creating a new one loading from same path
         drop(store);
         let store2 = korg_auth::store::JsonTokenStore::new(store_path.clone());
-        
-        let loaded = store2.load_session("test-user").expect("Session should be loaded");
-        
+
+        let loaded = store2
+            .load_session("test-user")
+            .expect("Session should be loaded");
+
         // Assert absolute expiry match (Hermes Lesson #3)
-        assert_eq!(loaded.expires_at.timestamp(), original_expires_at.timestamp());
-        
+        assert_eq!(
+            loaded.expires_at.timestamp(),
+            original_expires_at.timestamp()
+        );
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[tokio::test]
     async fn test_stale_token_auto_refresh() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_test_refresh_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_test_refresh_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
-        
+
         let (broadcaster_tx, _) = tokio::sync::broadcast::channel(16);
         let (feedback_tx, _) = tokio::sync::mpsc::channel(16);
         let journal = CapabilityJournal::new(
@@ -2234,7 +2295,7 @@ mod tests {
         );
         let resolver = CapabilityResolver::new(std::collections::HashMap::new(), journal);
         let capability_resolver_container = Arc::new(TokioMutex::new(resolver));
-        
+
         let auth_state = Arc::new(korg_auth::AuthState::new(korg_auth::AuthConfig {
             base_url: "http://localhost:8080".to_string(),
             codex_client_id: "mock-codex-client-id".to_string(),
@@ -2251,7 +2312,7 @@ mod tests {
             runtime_coordinator: Arc::new(StdMutex::new(None)),
             auth: auth_state.clone(),
         });
-        
+
         // Save an expired session
         let expired_at = chrono::Utc::now() - chrono::Duration::minutes(5);
         let session = korg_auth::store::UserSession {
@@ -2263,17 +2324,25 @@ mod tests {
             expires_at: expired_at,
         };
         auth_state.store.save_session(session.clone()).unwrap();
-        
+
         // Execute token refresh
-        let refreshed = refresh_anthropic_token(&app_state, "claude-code-user", &session).await.unwrap();
-        
-        assert_eq!(refreshed.anthropic_access_token, "mock-refreshed-anthropic-token");
+        let refreshed = refresh_anthropic_token(&app_state, "claude-code-user", &session)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            refreshed.anthropic_access_token,
+            "mock-refreshed-anthropic-token"
+        );
         assert!(refreshed.expires_at > chrono::Utc::now());
-        
+
         // Load session and verify persistent update
         let loaded = auth_state.store.load_session("claude-code-user").unwrap();
-        assert_eq!(loaded.anthropic_access_token, "mock-refreshed-anthropic-token");
-        
+        assert_eq!(
+            loaded.anthropic_access_token,
+            "mock-refreshed-anthropic-token"
+        );
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
@@ -2281,30 +2350,35 @@ mod tests {
     fn test_codex_subscription_acp_gates() {
         let journal = CapabilityJournal::default_journal();
         let resolver = CapabilityResolver::new(std::collections::HashMap::new(), journal);
-        
+
         // Standard tier should be gated from high-blast-radius tools like Bash and docker_sandbox
-        let res_std_bash = resolver.authorize_tool_use(korg_core::SubscriptionTier::Standard, "Bash");
+        let res_std_bash =
+            resolver.authorize_tool_use(korg_core::SubscriptionTier::Standard, "Bash");
         assert!(res_std_bash.is_err());
         assert!(res_std_bash.err().unwrap().contains("ACP Gated"));
-        
-        let res_std_sandbox = resolver.authorize_tool_use(korg_core::SubscriptionTier::Standard, "docker_sandbox");
+
+        let res_std_sandbox =
+            resolver.authorize_tool_use(korg_core::SubscriptionTier::Standard, "docker_sandbox");
         assert!(res_std_sandbox.is_err());
-        
+
         // Standard tier should be allowed to run other standard tools
-        let res_std_read = resolver.authorize_tool_use(korg_core::SubscriptionTier::Standard, "Read");
+        let res_std_read =
+            resolver.authorize_tool_use(korg_core::SubscriptionTier::Standard, "Read");
         assert!(res_std_read.is_ok());
-        
+
         // Premium tier should be unrestricted for Bash
-        let res_prem_bash = resolver.authorize_tool_use(korg_core::SubscriptionTier::Premium, "Bash");
+        let res_prem_bash =
+            resolver.authorize_tool_use(korg_core::SubscriptionTier::Premium, "Bash");
         assert!(res_prem_bash.is_ok());
     }
 
     #[test]
     fn test_secure_token_store_encryption() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_test_encrypt_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_test_encrypt_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
         let store_path = temp_dir.join("auth.json");
-        
+
         let store = korg_auth::store::JsonTokenStore::new(store_path.clone());
         let session = korg_auth::store::UserSession {
             user_id: "test-user".to_string(),
@@ -2314,19 +2388,19 @@ mod tests {
             refresh_token: Some("secret-refresh-token".to_string()),
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         };
-        
+
         store.save_session(session).unwrap();
-        
+
         // Assert that the stored file is NOT plain text JSON (it is encrypted!)
         let raw_file_content = std::fs::read_to_string(&store_path).unwrap_or_default();
         assert!(!raw_file_content.contains("secret-codex-token"));
         assert!(!raw_file_content.contains("secret-anthropic-token"));
-        
+
         // Assert it can be successfully loaded back and deciphered
         let loaded = store.load_session("test-user").unwrap();
         assert_eq!(loaded.codex_access_token, "secret-codex-token");
         assert_eq!(loaded.anthropic_access_token, "secret-anthropic-token");
-        
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
@@ -2334,46 +2408,49 @@ mod tests {
     async fn test_singleflight_concurrent_refreshes() {
         let refresher = std::sync::Arc::new(korg_auth::SingleflightRefresher::new());
         let execution_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        
+
         let mut join_handles = vec![];
-        
+
         for _ in 0..10 {
             let refresher_clone = refresher.clone();
             let execution_count_clone = execution_count.clone();
-            
+
             let handle = tokio::spawn(async move {
-                refresher_clone.execute_refresh("claude-code-user", || async move {
-                    // Simulate delay and increment counter
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                    execution_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    
-                    Ok(korg_auth::store::UserSession {
-                        user_id: "claude-code-user".to_string(),
-                        codex_access_token: "refreshed-token".to_string(),
-                        subscription_tier: korg_core::SubscriptionTier::Premium,
-                        anthropic_access_token: "refreshed-token".to_string(),
-                        refresh_token: None,
-                        expires_at: chrono::Utc::now() + chrono::Duration::hours(2),
+                refresher_clone
+                    .execute_refresh("claude-code-user", || async move {
+                        // Simulate delay and increment counter
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        execution_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+                        Ok(korg_auth::store::UserSession {
+                            user_id: "claude-code-user".to_string(),
+                            codex_access_token: "refreshed-token".to_string(),
+                            subscription_tier: korg_core::SubscriptionTier::Premium,
+                            anthropic_access_token: "refreshed-token".to_string(),
+                            refresh_token: None,
+                            expires_at: chrono::Utc::now() + chrono::Duration::hours(2),
+                        })
                     })
-                }).await
+                    .await
             });
             join_handles.push(handle);
         }
-        
+
         for handle in join_handles {
             let res = handle.await.unwrap().unwrap();
             assert_eq!(res.anthropic_access_token, "refreshed-token");
         }
-        
+
         // Assert that the refresh operation was executed EXACTLY ONCE across all 10 concurrent requests!
         assert_eq!(execution_count.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     async fn test_ledger_proxy_audit_trail() {
-        let temp_dir = std::env::temp_dir().join(format!("korg_test_audit_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_test_audit_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
-        
+
         let journal = CapabilityJournal::new(
             temp_dir.join("journal.json"),
             temp_dir.join("snapshot.json"),
@@ -2381,7 +2458,7 @@ mod tests {
             temp_dir.join("lock.lock"),
         );
         let mut resolver = CapabilityResolver::new(std::collections::HashMap::new(), journal);
-        
+
         let audit_event = korg_registry::CapabilityEvent::ProxyAuditTrail {
             user_id: "claude-code-user".to_string(),
             subscription_tier: "Premium".to_string(),
@@ -2390,13 +2467,13 @@ mod tests {
             estimated_cost_usd: 0.000375,
             timestamp: chrono::Utc::now(),
         };
-        
+
         resolver.append_and_project(audit_event);
-        
+
         // Assert event was logged to signed ledger
         let events = &resolver.journal.events;
         assert!(!events.is_empty());
-        
+
         let last_event = &events[events.len() - 1];
         if let korg_registry::CapabilityEvent::ProxyAuditTrail {
             user_id,
@@ -2405,7 +2482,8 @@ mod tests {
             estimated_input_tokens,
             estimated_cost_usd,
             ..
-        } = &last_event.event {
+        } = &last_event.event
+        {
             assert_eq!(user_id, "claude-code-user");
             assert_eq!(subscription_tier, "Premium");
             assert_eq!(model, "claude-3-5-sonnet");
@@ -2414,7 +2492,7 @@ mod tests {
         } else {
             panic!("Expected ProxyAuditTrail variant");
         }
-        
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

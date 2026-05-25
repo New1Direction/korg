@@ -1920,7 +1920,7 @@ mod tests {
     async fn test_execute_semantic_search() {
         let args = serde_json::json!({"query": "agent", "top_n": 2});
         let result = execute_semantic_search(&args).await;
-        
+
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let index_exists = manifest_dir.join(".korg/index.json").exists();
 

@@ -15,10 +15,10 @@ pub struct AuthConfig {
 
 impl AuthConfig {
     pub fn from_env() -> Self {
-        let base_url = std::env::var("KORG_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:8080".to_string());
-        let codex_client_id = std::env::var("CODEX_CLIENT_ID")
-            .unwrap_or_else(|_| "mock-codex-client-id".to_string());
+        let base_url =
+            std::env::var("KORG_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+        let codex_client_id =
+            std::env::var("CODEX_CLIENT_ID").unwrap_or_else(|_| "mock-codex-client-id".to_string());
         let codex_client_secret = std::env::var("CODEX_CLIENT_SECRET")
             .unwrap_or_else(|_| "mock-codex-client-secret".to_string());
         let anthropic_client_id = std::env::var("ANTHROPIC_CLIENT_ID")
@@ -63,7 +63,9 @@ impl AuthState {
 }
 
 pub struct SingleflightRefresher {
-    in_flight: tokio::sync::Mutex<std::collections::HashMap<String, tokio::sync::watch::Receiver<Option<store::UserSession>>>>,
+    in_flight: tokio::sync::Mutex<
+        std::collections::HashMap<String, tokio::sync::watch::Receiver<Option<store::UserSession>>>,
+    >,
 }
 
 impl SingleflightRefresher {
@@ -91,7 +93,9 @@ impl SingleflightRefresher {
                     return Ok(session);
                 }
             }
-            return Err(anyhow::anyhow!("Coordinated refresh failed in parallel thread."));
+            return Err(anyhow::anyhow!(
+                "Coordinated refresh failed in parallel thread."
+            ));
         }
 
         let (tx, rx) = tokio::sync::watch::channel(None);
