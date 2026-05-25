@@ -1,0 +1,32 @@
+[package]
+name = "korg-server"
+version = "0.1.0"
+edition = "2021"
+description = "Axum HTTP server and SSE cockpit for korg"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+korg-core     = { path = "../korg-core" }
+korg-auth     = { path = "../korg-auth" }
+korg-registry = { path = "../korg-registry" }
+korg-llm      = { path = "../korg-llm" }
+korg-runtime  = { path = "../korg-runtime" }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+anyhow        = { workspace = true }
+tokio         = { workspace = true }
+uuid          = { workspace = true }
+tracing       = { workspace = true }
+axum          = { workspace = true }
+tower-http    = { version = "0.5", features = ["cors", "fs"] }
+tokio-stream  = { version = "0.1", features = ["sync"] }
+futures-util    = "0.3"
+oauth2          = "4.4"
+chrono          = { workspace = true }
+korg-embeddings = { path = "../korg-embeddings" }
+reqwest         = { workspace = true }
+bytes           = "1"
+
+[features]
+default = ["server"]
+server = []
