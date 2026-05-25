@@ -202,6 +202,7 @@ pub struct KorgTui {
     pub rewind_candidates: Vec<RewindCandidate>,
     pub rewind_mode: bool,
     pub rewind_cursor: usize,
+    pub rewind_prompt: String,
 }
 
 impl Default for KorgTui {
@@ -324,6 +325,7 @@ impl Default for KorgTui {
             rewind_candidates: vec![],
             rewind_mode: false,
             rewind_cursor: 0,
+            rewind_prompt: String::new(),
         };
 
         app.rebuild_file_tree();
@@ -1819,6 +1821,23 @@ async fn run_tui_event_loop(
                         }
                     } else {
                         if key.modifiers.contains(event::KeyModifiers::CONTROL)
+                            && key.code == KeyCode::Char('r')
+                            && !app.rewind_mode
+                        {
+                            let candidates = korg_runtime::recovery::on_demand_candidates();
+                            if candidates.is_empty() {
+                                app.log("Rewind: no journal entries yet — nothing to rewind to");
+                            } else {
+                                app.rewind_candidates = candidates;
+                                app.rewind_cursor = 0;
+                                app.rewind_prompt =
+                                    "on-demand rewind — choose a rollback point".to_string();
+                                app.rewind_mode = true;
+                            }
+                            continue;
+                        }
+
+                        if key.modifiers.contains(event::KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('w')
                         {
                             if app.active_tab == TuiTab::Workspace {
@@ -2566,6 +2585,8 @@ async fn run_tui_event_loop(
                 TuiUpdate::RewindAvailable(candidates) => {
                     app.rewind_candidates = candidates;
                     app.rewind_cursor = 0;
+                    app.rewind_prompt =
+                        "campaign failure detected — choose a recovery point".to_string();
                     app.rewind_mode = true;
                 }
             }
@@ -3768,7 +3789,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         let area = centered_rect(72, 40, f.size());
         let mut lines: Vec<Line> = vec![
             Line::from(Span::styled(
-                "  campaign failure detected — choose a recovery point",
+                format!("  {}", app.rewind_prompt),
                 Style::default().fg(Color::Rgb(255, 215, 0)).bold(),
             )),
             Line::from(""),
