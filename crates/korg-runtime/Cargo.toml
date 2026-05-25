@@ -26,6 +26,8 @@ rand            = "0.8"
 tokio-util      = { version = "0.7", features = ["rt"] }
 lru             = "0.12"
 shell-words     = "1.1"
+regex           = "1"
+dirs            = "5"
 base64          = "0.22"
 fs2             = "0.4"
 libc            = "0.2"
@@ -36,4 +38,5 @@ tree-sitter-rust    = "0.24.2"
 tree-sitter-python  = "0.25.0"
 
 [dev-dependencies]
-tokio-test = "0.4"
+tokio-test  = "0.4"
+tempfile    = "3"
