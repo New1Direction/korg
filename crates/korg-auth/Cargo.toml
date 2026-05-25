@@ -1,0 +1,23 @@
+[package]
+name = "korg-auth"
+version = "0.1.0"
+edition = "2021"
+description = "Authentication, authorization, and subscription tier logic for korg"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+korg-core    = { path = "../korg-core" }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+tokio        = { workspace = true }
+uuid         = { workspace = true }
+chrono       = { workspace = true }
+reqwest      = { workspace = true }
+oauth2       = "4.4"
+async-trait  = "0.1"
+aes-gcm      = "0.10"
+pbkdf2       = "0.12"
+sha2         = "0.10"
+fs2          = "0.4"
+rand         = "0.8"

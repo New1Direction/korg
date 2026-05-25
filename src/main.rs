@@ -26,38 +26,9 @@ use clap::{Parser, Subcommand};
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-mod acp;
-mod agent;
-mod arena;
-mod blackboard;
-mod campaign;
-pub mod code_indexer;
-pub mod code_intel;
-mod dag;
-mod embeddings;
-mod evaluator;
-mod harness;
-mod leader;
-pub mod llm;
-mod metrics;
-mod paths;
-mod personas;
-pub mod provenance;
-pub mod registry;
-mod runtime;
-mod session;
-mod skills;
-mod telemetry;
-mod tools;
-mod tui;
-pub mod vision_policy;
-mod web;
-mod workers;
-mod workspace;
-
-use acp::AcpClient;
-use harness::SingleWorkerHarness;
-use leader::LeaderOrchestrator;
+use korg_runtime::acp::AcpClient;
+use korg_runtime::harness::SingleWorkerHarness;
+use korg_runtime::leader::LeaderOrchestrator;
 
 #[derive(Parser)]
 #[command(name = "korg")]
@@ -252,6 +223,26 @@ enum Commands {
 
     /// Run the premium Claude Code cooperative session replay and speculative rewind demo
     Demo,
+
+    /// Manage Korg authentication and delegated credentials
+    Auth {
+        #[command(subcommand)]
+        subcommand: AuthSubcommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuthSubcommands {
+    /// Initiate a PKCE OAuth login flow for Codex or Anthropic
+    Login {
+        /// The auth provider (codex or anthropic)
+        #[arg(long, default_value = "codex")]
+        provider: String,
+
+        /// Launch the Device Authorization Grant flow for fully headless remote VM / SSH environments
+        #[arg(long)]
+        device: bool,
+    },
 }
 
 fn print_welcome_banner() {
@@ -304,7 +295,7 @@ fn print_welcome_banner() {
 
     println!("{}⚙️  {}SYSTEM ECOSYSTEM STATUS:{}", bold, cyan, reset);
     println!("  {}• Swarm Engine:{}   5 Adversarial Personas (Captain, Harper, Benjamin, Lucas, Evaluator)", slate, reset);
-    let llm_config = crate::llm::KorgConfig::load();
+    let llm_config = korg_llm::KorgConfig::load();
     let model_str = llm_config
         .default_model
         .clone()
@@ -372,51 +363,51 @@ fn parse_cognition_mode(mode_str: &str) -> &'static str {
 ///
 /// Priority: Explicit config > Anthropic (if key set) > OpenAI (if key set) > Grok > Ollama > Mock.
 fn auto_detect_provider(
-    config: &crate::llm::KorgConfig,
-) -> std::sync::Arc<dyn crate::llm::LlmProvider> {
+    config: &korg_llm::KorgConfig,
+) -> std::sync::Arc<dyn korg_llm::LlmProvider> {
     // If explicitly configured, use that
     if config.default_llm != "mock" {
-        return crate::llm::build_provider(config);
+        return korg_llm::build_provider(config);
     }
 
     // Auto-detect from API keys
     if config.anthropic_api_key.is_some() {
-        let mut auto_config = crate::llm::KorgConfig::from_env();
+        let mut auto_config = korg_llm::KorgConfig::from_env();
         auto_config.default_llm = "anthropic".to_string();
         if auto_config.default_model.is_none() {
             auto_config.default_model = Some("claude-sonnet-4-20250514".to_string());
         }
-        return crate::llm::build_provider(&auto_config);
+        return korg_llm::build_provider(&auto_config);
     }
 
     if config.openai_api_key.is_some() {
-        let mut auto_config = crate::llm::KorgConfig::from_env();
+        let mut auto_config = korg_llm::KorgConfig::from_env();
         auto_config.default_llm = "openai".to_string();
         if auto_config.default_model.is_none() {
             auto_config.default_model = Some("gpt-4o".to_string());
         }
-        return crate::llm::build_provider(&auto_config);
+        return korg_llm::build_provider(&auto_config);
     }
 
     if config.grok_api_key.is_some() {
-        let mut auto_config = crate::llm::KorgConfig::from_env();
+        let mut auto_config = korg_llm::KorgConfig::from_env();
         auto_config.default_llm = "grok".to_string();
         if auto_config.default_model.is_none() {
             auto_config.default_model = Some("grok-3".to_string());
         }
-        return crate::llm::build_provider(&auto_config);
+        return korg_llm::build_provider(&auto_config);
     }
 
     if config.ollama_base_url.is_some() {
-        let mut auto_config = crate::llm::KorgConfig::from_env();
+        let mut auto_config = korg_llm::KorgConfig::from_env();
         auto_config.default_llm = "ollama".to_string();
-        return crate::llm::build_provider(&auto_config);
+        return korg_llm::build_provider(&auto_config);
     }
 
     // Fallback: mock provider
     eprintln!("\x1b[38;2;255;215;0m⚠ No API key detected. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GROK_API_KEY.\x1b[0m");
     eprintln!("\x1b[38;2;255;215;0m  Running in mock mode — tool calls will be simulated.\x1b[0m");
-    crate::llm::build_provider(config)
+    korg_llm::build_provider(config)
 }
 
 #[tokio::main]
@@ -424,7 +415,7 @@ async fn main() -> Result<()> {
     // Initialize structured tracing before any async tasks.
     // Controlled via KORG_LOG env var (e.g. KORG_LOG=info,korg=debug)
     // and KORG_LOG_JSON=1 for JSON output suitable for log shippers.
-    crate::telemetry::init_tracing();
+    korg_core::telemetry::init_tracing();
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "korg starting");
 
     let mut cli = Cli::parse();
@@ -438,7 +429,7 @@ async fn main() -> Result<()> {
     }
 
     if cli.preview {
-        crate::registry::IS_PREVIEW_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
+        korg_registry::IS_PREVIEW_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     if let Some(prompt) = &cli.prompt {
@@ -447,7 +438,7 @@ async fn main() -> Result<()> {
                 "Launching web dashboard with live campaign for prompt: {}",
                 prompt
             );
-            crate::web::run_web_with_campaign(prompt.to_string(), None, Some(parse_cognition_mode(&cli.mode)))
+            korg_server::run_web_with_campaign(prompt.to_string(), None, Some(parse_cognition_mode(&cli.mode)))
                 .await?;
         } else if cli.goal {
             // Goal mode: use the full Heavy-Tier swarm campaign
@@ -473,7 +464,7 @@ async fn main() -> Result<()> {
             leader.run_observable_campaign().await?;
         } else {
             // Default: real agentic tool-use loop
-            let config = crate::llm::KorgConfig::load();
+            let config = korg_llm::KorgConfig::load();
             let provider = auto_detect_provider(&config);
 
             let cyan = "\x1b[38;2;0;240;255m";
@@ -489,11 +480,11 @@ async fn main() -> Result<()> {
             );
             println!(
                 "{slate}├──{reset} Workspace: {bold}{}{reset}",
-                crate::paths::project_root_string()
+                korg_core::paths::project_root_string()
             );
             println!("{slate}└──{reset} Prompt: {bold}{pink}{}{reset}\n", prompt);
 
-            let result = crate::agent::run_agent_loop(&prompt, provider, None).await?;
+            let result = korg_runtime::agent::run_agent_loop(&prompt, provider, None).await?;
 
             println!("\n{bold}{cyan}──── Agent Run Complete ────{reset}");
             println!("{slate}├──{reset} Turns: {}", result.turns);
@@ -526,10 +517,10 @@ async fn main() -> Result<()> {
 
         // Automatic post-campaign reconciliation and synthesis steps
         if !cli.no_reconcile {
-            crate::skills::run_reconcile(None).await?;
+            korg_runtime::skills::run_reconcile(None).await?;
         }
         if !cli.no_synthesize {
-            crate::skills::run_synthesize().await?;
+            korg_runtime::skills::run_synthesize().await?;
         }
 
         return Ok(());
@@ -551,7 +542,7 @@ async fn main() -> Result<()> {
                     "Starting SingleWorkerHarness (id={}) in stdio framed mode",
                     id
                 );
-                crate::harness::SingleWorkerHarness::run_as_stdio_worker(id).await?;
+                korg_runtime::harness::SingleWorkerHarness::run_as_stdio_worker(id).await?;
             } else {
                 println!("Starting SingleWorkerHarness (id={})", id);
                 println!("Connecting to ACP endpoint: {}", endpoint);
@@ -608,10 +599,10 @@ async fn main() -> Result<()> {
                 }
             } else if web {
                 println!("Launching web-based korg dashboard for leader mode...");
-                crate::web::run_web_with_leader(leader).await?;
+                korg_server::run_web_with_leader(leader).await?;
             } else if tui || (!cli.headless && !goal && !cli.goal) {
                 println!("Launching Ratatui dashboard for Leader mode...");
-                crate::tui::run_tui_with_leader(leader).await?;
+                korg_tui::run_tui_with_leader(leader).await?;
             } else {
                 let cyan = "\x1b[38;2;0;240;255m";
                 let slate = "\x1b[38;2;120;125;140m";
@@ -644,14 +635,14 @@ async fn main() -> Result<()> {
 
             if web {
                 println!("Launching web-based korg dashboard with live campaign...");
-                crate::web::run_web_with_campaign(
+                korg_server::run_web_with_campaign(
                     "Implement production-grade semantic evaluation guardrail with 5 adversarial rubrics".to_string(),
                     sid,
                     Some(parse_cognition_mode(&mode)),
                 ).await?;
             } else if tui || (!cli.headless && !goal && !cli.goal) {
                 println!("Launching Ratatui dashboard with live campaign...");
-                crate::tui::run_tui_with_campaign(
+                korg_tui::run_tui_with_campaign(
                     "Implement production-grade semantic evaluation guardrail with 5 adversarial rubrics".to_string(),
                     sid,
                 ).await?;
@@ -682,24 +673,24 @@ async fn main() -> Result<()> {
                 println!("Starting Korg TUI + live observable campaign...");
             }
             // Launch the Ratatui dashboard with a real live campaign.
-            crate::tui::run_tui_with_campaign("Korg TUI Live Campaign".to_string(), None).await?;
+            korg_tui::run_tui_with_campaign("Korg TUI Live Campaign".to_string(), None).await?;
         }
 
         Commands::Reconcile { topic } => {
-            crate::skills::run_reconcile(topic).await?;
+            korg_runtime::skills::run_reconcile(topic).await?;
         }
 
         Commands::Synthesize => {
-            crate::skills::run_synthesize().await?;
+            korg_runtime::skills::run_synthesize().await?;
         }
 
         Commands::VerifyProvenance { path } => {
-            crate::provenance::verify_cli_command(&path)?;
+            korg_runtime::provenance::verify_cli_command(&path)?;
         }
 
         Commands::Index { path } => {
-            let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> =
-                match crate::embeddings::CandleEmbeddingModel::load() {
+            let embedding_model: Box<dyn korg_embeddings::EmbeddingModel> =
+                match korg_embeddings::CandleEmbeddingModel::load() {
                     Ok(real) => {
                         println!("Loaded real CandleEmbeddingModel (all-MiniLM-L6-v2)");
                         Box::new(real)
@@ -709,14 +700,14 @@ async fn main() -> Result<()> {
                             "Using FakeEmbeddingModel (Candle model offline or not enabled: {})",
                             e
                         );
-                        Box::new(crate::embeddings::FakeEmbeddingModel::default())
+                        Box::new(korg_embeddings::FakeEmbeddingModel::default())
                     }
                 };
             println!("Indexing workspace at {}...", path);
-            let index = crate::code_indexer::index_workspace(&path, &*embedding_model).await?;
+            let index = korg_runtime::code_indexer::index_workspace(&path, &*embedding_model).await?;
             let index_path = std::path::Path::new(&path).join(".korg").join("index.json");
             let index_path_str = index_path.to_string_lossy().to_string();
-            crate::code_indexer::save_index(&index, &index_path_str)?;
+            korg_runtime::code_indexer::save_index(&index, &index_path_str)?;
             println!("Index successfully written to {}", index_path_str);
             println!("Total indexed blocks: {}", index.blocks.len());
         }
@@ -730,7 +721,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::Rewind { seq } => {
-            let mut journal = crate::registry::CapabilityJournal::default_journal();
+            let mut journal = korg_registry::CapabilityJournal::default_journal();
             let prev_count = journal.events.len();
             match journal.rewind(seq) {
                 Ok(()) => {
@@ -752,7 +743,7 @@ async fn main() -> Result<()> {
                     );
 
                     // Trigger read-model rebuilds dynamically
-                    let mut engine = crate::registry::ProjectionEngine::new();
+                    let mut engine = korg_registry::ProjectionEngine::new();
                     if let Err(e) = engine.rebuild_all(&journal.events) {
                         eprintln!("\n\x1b[38;2;255;0;180m⚠ Failed to rebuild projections after rewind: {}\x1b[0m", e);
                     } else {
@@ -774,6 +765,155 @@ async fn main() -> Result<()> {
             if let Err(e) = run_demo_internal(None).await {
                 eprintln!("\x1b[38;2;255;0;180m❌ Demo failed: {}\x1b[0m", e);
                 return Err(e);
+            }
+        }
+
+        Commands::Auth { subcommand } => {
+            match subcommand {
+                AuthSubcommands::Login { provider, device } => {
+                    let config = korg_auth::AuthConfig::from_env();
+                    let providers = korg_auth::providers::AuthProviders::new(&config);
+                    let store = korg_auth::store::JsonTokenStore::new(config.token_store_path.clone());
+
+                    let is_anthropic = provider.to_lowercase() == "anthropic";
+                    let client = if is_anthropic {
+                        &providers.anthropic_client
+                    } else {
+                        &providers.codex_client
+                    };
+
+                    let scopes = if is_anthropic {
+                        vec!["messages".to_string()]
+                    } else {
+                        vec!["subscription".to_string()]
+                    };
+
+                    let flow = providers.initiate_pkce_flow(client, scopes);
+
+                    let cyan = "\x1b[38;2;0;240;255m";
+                    let bold = "\x1b[1m";
+                    let reset = "\x1b[0m";
+                    let gold = "\x1b[38;2;255;215;0m";
+
+                    println!("\n{bold}{cyan}=== ⚡ Korg Headless OAuth Login ⚡ ==={reset}\n");
+                    println!("1. Please open the following URL in your local browser to authenticate:");
+                    println!("   {gold}{}{reset}\n", flow.authorize_url);
+
+                    if device {
+                        println!("2. Once authorized, your browser will redirect to a callback URL.");
+                        println!("   If you have SSH port forwarding enabled (e.g. -L 8080:localhost:8080),");
+                        println!("   the authorization will complete automatically.");
+                        println!("   Otherwise, copy the redirect URL from your address bar and paste it below.\n");
+
+                        print!("Enter redirect URL or callback query string: ");
+                        use std::io::Write;
+                        std::io::stdout().flush().ok();
+
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input)?;
+                        let input_trimmed = input.trim();
+
+                        let code = if let Some(idx) = input_trimmed.find("code=") {
+                            let start = idx + "code=".len();
+                            let end = input_trimmed[start..].find('&').map(|i| start + i).unwrap_or(input_trimmed.len());
+                            input_trimmed[start..end].to_string()
+                        } else {
+                            return Err(anyhow::anyhow!("Could not find 'code' parameter in input."));
+                        };
+
+                        let state = if let Some(idx) = input_trimmed.find("state=") {
+                            let start = idx + "state=".len();
+                            let end = input_trimmed[start..].find('&').map(|i| start + i).unwrap_or(input_trimmed.len());
+                            input_trimmed[start..end].to_string()
+                        } else {
+                            return Err(anyhow::anyhow!("Could not find 'state' parameter in input."));
+                        };
+
+                        if state != flow.csrf_state {
+                            return Err(anyhow::anyhow!("CSRF validation failed: State parameter mismatch."));
+                        }
+
+                        // Exchange authorization code for token
+                        use oauth2::{AuthorizationCode, TokenResponse};
+                        let token_result = client
+                            .exchange_code(AuthorizationCode::new(code))
+                            .set_pkce_verifier(oauth2::PkceCodeVerifier::new(flow.pkce_verifier))
+                            .request_async(oauth2::reqwest::async_http_client)
+                            .await;
+
+                        let token_response = match token_result {
+                            Ok(res) => res,
+                            Err(e) => return Err(anyhow::anyhow!("Token exchange failed: {:?}", e)),
+                        };
+
+                        let access_token = token_response.access_token().secret().clone();
+                        let user_id = "claude-code-user";
+
+                        let mut session = store.load_session(user_id).unwrap_or_else(|| korg_auth::store::UserSession {
+                            user_id: user_id.to_string(),
+                            codex_access_token: "".to_string(),
+                            subscription_tier: korg_core::SubscriptionTier::Standard,
+                            anthropic_access_token: "".to_string(),
+                            refresh_token: None,
+                            expires_at: chrono::Utc::now(),
+                        });
+
+                        if is_anthropic {
+                            let refresh_token = token_response.refresh_token().map(|rt| rt.secret().clone());
+                            let expires_in = token_response.expires_in().unwrap_or(std::time::Duration::from_secs(3600));
+                            let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires_in.as_secs() as i64);
+
+                            session.anthropic_access_token = access_token;
+                            session.refresh_token = refresh_token;
+                            session.expires_at = expires_at;
+                            println!("✓ Successfully authorized Anthropic delegated OAuth.");
+                        } else {
+                            let tier = providers.verify_codex_subscription(&access_token).await;
+                            session.codex_access_token = access_token;
+                            session.subscription_tier = tier;
+                            println!("✓ Successfully authorized Codex. Subscription tier verified as: {}.", tier.as_str());
+                        }
+
+                        store.save_session(session)?;
+                        println!("\nSession saved. Headless authentication complete.\n");
+                    } else {
+                        println!("2. Automatically launching local browser...");
+                        #[cfg(target_os = "macos")]
+                        let _ = std::process::Command::new("open").arg(&flow.authorize_url).status();
+                        #[cfg(target_os = "windows")]
+                        let _ = std::process::Command::new("cmd").args(&["/C", "start", &flow.authorize_url]).status();
+                        #[cfg(target_os = "linux")]
+                        let _ = std::process::Command::new("xdg-open").arg(&flow.authorize_url).status();
+
+                        println!("Waiting for browser redirect on http://localhost:8080 ...");
+                        println!("Keep this window open until authorization completes.");
+                        
+                        providers.save_pending_pkce(flow.csrf_state.clone(), flow.pkce_verifier);
+                        
+                        println!("\nStarting local background listener on port 8080...");
+                        let (feedback_tx, _) = tokio::sync::mpsc::channel::<korg_tui::ContractResponse>(128);
+                        let (broadcaster_tx, _) = tokio::sync::broadcast::channel::<korg_tui::TuiUpdate>(256);
+                        let capability_resolver_container = std::sync::Arc::new(tokio::sync::Mutex::new(
+                            korg_registry::CapabilityResolver::default_resolver(),
+                        ));
+
+                        let app_state = std::sync::Arc::new(korg_server::AppState {
+                            broadcaster: broadcaster_tx,
+                            feedback_tx: tokio::sync::Mutex::new(Some(feedback_tx)),
+                            capability_resolver: capability_resolver_container,
+                            runtime_coordinator: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                            auth: std::sync::Arc::new(korg_auth::AuthState::new(config)),
+                        });
+
+                        let router = axum::Router::new()
+                            .route("/auth/codex/callback", axum::routing::get(korg_server::oauth_codex_callback_handler))
+                            .route("/auth/anthropic/callback", axum::routing::get(korg_server::oauth_anthropic_callback_handler))
+                            .with_state(app_state);
+
+                        let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
+                        axum::serve(listener, router).await?;
+                    }
+                }
             }
         }
     }
@@ -810,9 +950,9 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
     let mut context_buffer = String::new();
 
     // Check if index exists, otherwise asynchronously build it or suggest running /index
-    let index_path = crate::paths::project_root().join(".korg/index.json");
+    let index_path = korg_core::paths::project_root().join(".korg/index.json");
     let mut index = if index_path.exists() {
-        match crate::code_indexer::load_index(&index_path) {
+        match korg_runtime::code_indexer::load_index(&index_path) {
             Ok(idx) => {
                 println!(
                     "{}• Loaded codebase semantic index ({} blocks){} ",
@@ -971,26 +1111,26 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
         }
 
         if line == "/reconcile" {
-            crate::skills::run_reconcile(None).await?;
+            korg_runtime::skills::run_reconcile(None).await?;
             continue;
         }
 
         if line == "/synthesize" {
-            crate::skills::run_synthesize().await?;
+            korg_runtime::skills::run_synthesize().await?;
             continue;
         }
 
         if line == "/index" {
             println!("Building semantic index for current directory...");
-            let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> =
-                match crate::embeddings::CandleEmbeddingModel::load() {
+            let embedding_model: Box<dyn korg_embeddings::EmbeddingModel> =
+                match korg_embeddings::CandleEmbeddingModel::load() {
                     Ok(real) => Box::new(real),
-                    Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
+                    Err(_) => Box::new(korg_embeddings::FakeEmbeddingModel::default()),
                 };
-            match crate::code_indexer::index_workspace(".", &*embedding_model).await {
+            match korg_runtime::code_indexer::index_workspace(".", &*embedding_model).await {
                 Ok(idx) => {
                     let index_path_str = ".korg/index.json";
-                    if let Err(e) = crate::code_indexer::save_index(&idx, index_path_str) {
+                    if let Err(e) = korg_runtime::code_indexer::save_index(&idx, index_path_str) {
                         println!("{}❌ Failed to save index: {}{}", pink, e, reset);
                     } else {
                         println!(
@@ -1017,8 +1157,8 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
                     slate, file_path, instruction, reset
                 );
                 // Dispatch Benjamin via run_persona
-                let result = crate::personas::run_persona(
-                    crate::personas::Persona::Benjamin,
+                let result = korg_runtime::personas::run_persona(
+                    korg_runtime::personas::Persona::Benjamin,
                     &format!("Edit file {}: {}", file_path, instruction),
                     "shell-edit",
                 )
@@ -1054,10 +1194,10 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
 
         // Handle regular chat prompts / /explain
         let mut explain_query = line;
-        let mut query_persona = crate::personas::Persona::Captain; // default to Captain
+        let mut query_persona = korg_runtime::personas::Persona::Captain; // default to Captain
         if line.starts_with("/explain ") {
             explain_query = line["/explain ".len()..].trim();
-            query_persona = crate::personas::Persona::Captain;
+            query_persona = korg_runtime::personas::Persona::Captain;
         }
 
         // Parse @files and @codebase tags
@@ -1096,10 +1236,10 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
         // Load @codebase semantic matches
         if codebase_search_requested {
             if let Some(ref idx) = index {
-                let embedding_model: Box<dyn crate::embeddings::EmbeddingModel> =
-                    match crate::embeddings::CandleEmbeddingModel::load() {
+                let embedding_model: Box<dyn korg_embeddings::EmbeddingModel> =
+                    match korg_embeddings::CandleEmbeddingModel::load() {
                         Ok(real) => Box::new(real),
-                        Err(_) => Box::new(crate::embeddings::FakeEmbeddingModel::default()),
+                        Err(_) => Box::new(korg_embeddings::FakeEmbeddingModel::default()),
                     };
                 let clean_query: String = explain_query
                     .split_whitespace()
@@ -1112,7 +1252,7 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
                     slate, clean_query, reset
                 );
                 let matches =
-                    crate::code_indexer::query_codebase(idx, &clean_query, &*embedding_model, 3);
+                    korg_runtime::code_indexer::query_codebase(idx, &clean_query, &*embedding_model, 3);
                 for (sim, block) in matches {
                     prompt_context.push_str(&format!(
                         "\nSemantic Match [similarity={:.2}]: {} ({}:{}-{})\n```\n{}\n```\n",
@@ -1142,7 +1282,7 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
         );
 
         println!("\n{}🧠 Swarm is thinking...{}", gold, reset);
-        let result = crate::personas::run_persona(query_persona, &final_prompt, "shell-chat").await;
+        let result = korg_runtime::personas::run_persona(query_persona, &final_prompt, "shell-chat").await;
 
         println!("\n{}🤖 Swarm Output:{}", bold, reset);
         if let Some(text) = result.output.get("explanation").and_then(|v| v.as_str()) {
@@ -1587,7 +1727,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     let journal_path = temp_dir.join("journal.json");
     let snapshot_path = temp_dir.join("snapshot.json");
     let lock_path = temp_dir.join("lock.lock");
-    let mut journal = crate::registry::CapabilityJournal::new(
+    let mut journal = korg_registry::CapabilityJournal::new(
         journal_path.clone(),
         snapshot_path,
         10,
@@ -1604,7 +1744,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     println!("{bold}{pink}🚀 PHASE 1: AGENT INITIATES RUN (WRONG PATH){reset}");
     
     // Event 390: user_prompt
-    let ev390 = crate::registry::CapabilityEvent::AgentToolCall {
+    let ev390 = korg_registry::CapabilityEvent::AgentToolCall {
         source_agent: "agent:claude-code@0.2.29".to_string(),
         tool_name: "user_prompt".to_string(),
         args: serde_json::json!({ "prompt": "Fix subtraction bug and verify tests pass" }),
@@ -1614,7 +1754,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         duration_ms: 0,
         timestamp: chrono::Utc::now(),
     };
-    let meta390 = crate::registry::log::EventMetadata {
+    let meta390 = korg_registry::log::EventMetadata {
         event_id: Uuid::new_v4(),
         correlation_id: Uuid::nil(),
         causation_id: None,
@@ -1625,7 +1765,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         branch_id: None,
         speculative: false,
         retry_count: 0,
-        tier: crate::registry::log::EventTier::Telemetry,
+        tier: korg_registry::log::EventTier::Telemetry,
         span_id: None,
         tags: BTreeMap::new(),
         triggered_by: None,
@@ -1637,7 +1777,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     // Event 391: Read
-    let ev391 = crate::registry::CapabilityEvent::AgentToolCall {
+    let ev391 = korg_registry::CapabilityEvent::AgentToolCall {
         source_agent: "agent:claude-code@0.2.29".to_string(),
         tool_name: "Read".to_string(),
         args: serde_json::json!({ "file_path": "math_utils.py" }),
@@ -1649,7 +1789,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     };
     let parent_id = journal.events.last().unwrap().metadata.event_id;
     let root_id = journal.events.first().unwrap().metadata.event_id;
-    let meta391 = crate::registry::log::EventMetadata {
+    let meta391 = korg_registry::log::EventMetadata {
         event_id: Uuid::new_v4(),
         correlation_id: Uuid::nil(),
         causation_id: Some(parent_id),
@@ -1660,7 +1800,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         branch_id: None,
         speculative: false,
         retry_count: 0,
-        tier: crate::registry::log::EventTier::Telemetry,
+        tier: korg_registry::log::EventTier::Telemetry,
         span_id: None,
         tags: BTreeMap::new(),
         triggered_by: Some(390),
@@ -1674,7 +1814,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     // Event 392 (bad fix): Edit
     let wrong_fix_code = "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    return a + b\n";
     std::fs::write(&file_path, wrong_fix_code)?;
-    let ev392 = crate::registry::CapabilityEvent::AgentToolCall {
+    let ev392 = korg_registry::CapabilityEvent::AgentToolCall {
         source_agent: "agent:claude-code@0.2.29".to_string(),
         tool_name: "Edit".to_string(),
         args: serde_json::json!({ "file_path": "math_utils.py", "new_string": "return a + b" }),
@@ -1685,7 +1825,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         timestamp: chrono::Utc::now(),
     };
     let parent_id = journal.events.last().unwrap().metadata.event_id;
-    let meta392 = crate::registry::log::EventMetadata {
+    let meta392 = korg_registry::log::EventMetadata {
         event_id: Uuid::new_v4(),
         correlation_id: Uuid::nil(),
         causation_id: Some(parent_id),
@@ -1696,7 +1836,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         branch_id: None,
         speculative: false,
         retry_count: 0,
-        tier: crate::registry::log::EventTier::Telemetry,
+        tier: korg_registry::log::EventTier::Telemetry,
         span_id: None,
         tags: BTreeMap::new(),
         triggered_by: Some(391),
@@ -1708,7 +1848,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     // Event 393: Bash (pytest fails)
-    let ev393 = crate::registry::CapabilityEvent::AgentToolCall {
+    let ev393 = korg_registry::CapabilityEvent::AgentToolCall {
         source_agent: "agent:claude-code@0.2.29".to_string(),
         tool_name: "Bash".to_string(),
         args: serde_json::json!({ "command": "pytest" }),
@@ -1719,7 +1859,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         timestamp: chrono::Utc::now(),
     };
     let parent_id = journal.events.last().unwrap().metadata.event_id;
-    let meta393 = crate::registry::log::EventMetadata {
+    let meta393 = korg_registry::log::EventMetadata {
         event_id: Uuid::new_v4(),
         correlation_id: Uuid::nil(),
         causation_id: Some(parent_id),
@@ -1730,7 +1870,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         branch_id: None,
         speculative: false,
         retry_count: 0,
-        tier: crate::registry::log::EventTier::Telemetry,
+        tier: korg_registry::log::EventTier::Telemetry,
         span_id: None,
         tags: BTreeMap::new(),
         triggered_by: Some(392),
@@ -1745,7 +1885,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     println!("  Before rewind: events 390-393 (prompt, read, edit-wrong, test-failed)");
     for e in &journal.events {
         let event_type = match &e.event {
-            crate::registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
+            korg_registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
             _ => "Governance".to_string(),
         };
         println!("    ├── seq {} ({}) -> triggered_by: {:?}", e.seq_id, event_type, e.metadata.triggered_by);
@@ -1769,7 +1909,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     println!("  After rewind:  events 390-391 (prompt, read)");
     for e in &journal.events {
         let event_type = match &e.event {
-            crate::registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
+            korg_registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
             _ => "Governance".to_string(),
         };
         println!("    ├── seq {} ({}) -> triggered_by: {:?}", e.seq_id, event_type, e.metadata.triggered_by);
@@ -1781,7 +1921,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     // Event 392 (good fix): Edit
     let right_fix_code = "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    return a - b\n";
     std::fs::write(&file_path, right_fix_code)?;
-    let ev392_div = crate::registry::CapabilityEvent::AgentToolCall {
+    let ev392_div = korg_registry::CapabilityEvent::AgentToolCall {
         source_agent: "agent:claude-code@0.2.29".to_string(),
         tool_name: "Edit".to_string(),
         args: serde_json::json!({ "file_path": "math_utils.py", "new_string": "return a - b" }),
@@ -1792,7 +1932,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         timestamp: chrono::Utc::now(),
     };
     let parent_id = journal.events.last().unwrap().metadata.event_id;
-    let meta392_div = crate::registry::log::EventMetadata {
+    let meta392_div = korg_registry::log::EventMetadata {
         event_id: Uuid::new_v4(),
         correlation_id: Uuid::nil(),
         causation_id: Some(parent_id),
@@ -1803,7 +1943,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         branch_id: None,
         speculative: false,
         retry_count: 0,
-        tier: crate::registry::log::EventTier::Telemetry,
+        tier: korg_registry::log::EventTier::Telemetry,
         span_id: None,
         tags: BTreeMap::new(),
         triggered_by: Some(391),
@@ -1815,7 +1955,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     // Event 393 (div success): Bash (pytest passes)
-    let ev393_div = crate::registry::CapabilityEvent::AgentToolCall {
+    let ev393_div = korg_registry::CapabilityEvent::AgentToolCall {
         source_agent: "agent:claude-code@0.2.29".to_string(),
         tool_name: "Bash".to_string(),
         args: serde_json::json!({ "command": "pytest" }),
@@ -1826,7 +1966,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         timestamp: chrono::Utc::now(),
     };
     let parent_id = journal.events.last().unwrap().metadata.event_id;
-    let meta393_div = crate::registry::log::EventMetadata {
+    let meta393_div = korg_registry::log::EventMetadata {
         event_id: Uuid::new_v4(),
         correlation_id: Uuid::nil(),
         causation_id: Some(parent_id),
@@ -1837,7 +1977,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
         branch_id: None,
         speculative: false,
         retry_count: 0,
-        tier: crate::registry::log::EventTier::Telemetry,
+        tier: korg_registry::log::EventTier::Telemetry,
         span_id: None,
         tags: BTreeMap::new(),
         triggered_by: Some(392),
@@ -1855,7 +1995,7 @@ pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) ->
     println!("  After new run: events 390-393 (prompt, read, edit-right, test-passed)");
     for e in &journal.events {
         let event_type = match &e.event {
-            crate::registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
+            korg_registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
             _ => "Governance".to_string(),
         };
         println!("    ├── seq {} ({}) -> triggered_by: {:?}", e.seq_id, event_type, e.metadata.triggered_by);
@@ -1880,7 +2020,7 @@ mod tests {
         
         let journal_path = temp_dir.join("journal.json");
         let content = std::fs::read_to_string(&journal_path).unwrap();
-        let events: Vec<crate::registry::log::JournalEvent> = serde_json::from_str(&content).unwrap();
+        let events: Vec<korg_registry::log::JournalEvent> = serde_json::from_str(&content).unwrap();
         
         // Assert the ledger has exactly 4 events
         assert_eq!(events.len(), 4, "Should contain exactly 4 events");
@@ -1898,14 +2038,14 @@ mod tests {
         assert_eq!(events[3].metadata.triggered_by, Some(392));
         
         // Assert content is the correct one (divergent success edit and passed test)
-        if let crate::registry::CapabilityEvent::AgentToolCall { tool_name, args, .. } = &events[2].event {
+        if let korg_registry::CapabilityEvent::AgentToolCall { tool_name, args, .. } = &events[2].event {
             assert_eq!(tool_name, "Edit");
             assert!(args.to_string().contains("return a - b"), "Should contain the correct fix");
         } else {
             panic!("Event 2 should be AgentToolCall");
         }
         
-        if let crate::registry::CapabilityEvent::AgentToolCall { tool_name, result, .. } = &events[3].event {
+        if let korg_registry::CapabilityEvent::AgentToolCall { tool_name, result, .. } = &events[3].event {
             assert_eq!(tool_name, "Bash");
             assert!(result.to_string().contains("passed"), "Should contain passed tests");
         } else {

@@ -1,0 +1,16 @@
+[package]
+name = "korg-core"
+version = "0.1.0"
+edition = "2021"
+description = "Foundational types and traits for the korg cognitive runtime"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+anyhow             = { workspace = true }
+uuid               = { workspace = true }
+chrono             = { workspace = true }
+tracing            = { workspace = true }
+directories        = "5.0"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }

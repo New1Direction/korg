@@ -1,0 +1,18 @@
+[package]
+name = "korg-registry"
+version = "0.1.0"
+edition = "2021"
+description = "Capability journal, ledger, and plan execution for korg"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+korg-core  = { path = "../korg-core" }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+uuid       = { workspace = true }
+chrono     = { workspace = true }
+tracing    = { workspace = true }
+fs2        = "0.4"
+
+[dev-dependencies]
+sha2       = "0.10"

@@ -1,0 +1,29 @@
+[package]
+name = "korg-embeddings"
+version = "0.1.0"
+edition = "2021"
+description = "Semantic embedding backend for korg (candle ML stack)"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+
+# The load-bearing reason this is a separate crate from korg-llm:
+# candle pulls 400MB+ of ML libraries. Anyone who wants LLM routing
+# without local embeddings should not pay this cost.
+candle-core         = { version = "0.8", optional = true }
+candle-nn           = { version = "0.8", optional = true }
+candle-transformers = { version = "0.8", optional = true }
+tokenizers          = { version = "0.19", optional = true }
+hf-hub              = { version = "0.3", optional = true, features = ["tokio"] }
+
+[features]
+default = ["candle"]
+candle = [
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:tokenizers",
+    "dep:hf-hub",
+]

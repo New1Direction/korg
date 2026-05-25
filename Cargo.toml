@@ -1,3 +1,30 @@
+[workspace]
+members = [
+    ".",
+    "crates/korg-core",
+    "crates/korg-auth",
+    "crates/korg-llm",
+    "crates/korg-embeddings",
+    "crates/korg-registry",
+    "crates/korg-runtime",
+    "crates/korg-tui",
+    "crates/korg-server",
+]
+resolver = "2"
+
+# Shared version pins — workspace members reference these with `{ workspace = true }`.
+# Cargo features are always additive: enabling a feature adds functionality, never removes it.
+[workspace.dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow     = "1"
+tokio      = { version = "1", features = ["full"] }
+uuid       = { version = "1", features = ["v4", "v7", "serde"] }
+chrono     = { version = "0.4", features = ["serde"] }
+tracing    = "0.1"
+reqwest    = { version = "0.12", features = ["json", "stream"] }
+axum       = { version = "0.7", features = ["macros"] }
+
 [package]
 name = "korg"
 version = "0.1.0"
@@ -54,6 +81,14 @@ exclude = [
 ]
 
 [dependencies]
+korg-core       = { path = "crates/korg-core" }
+korg-auth       = { path = "crates/korg-auth" }
+korg-registry   = { path = "crates/korg-registry" }
+korg-llm        = { path = "crates/korg-llm" }
+korg-embeddings = { path = "crates/korg-embeddings" }
+korg-runtime    = { path = "crates/korg-runtime" }
+korg-tui        = { path = "crates/korg-tui" }
+korg-server     = { path = "crates/korg-server" }
 mimalloc = "0.1"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -84,14 +119,10 @@ tracing-appender = "0.2"
 futures = "0.3"
 fs2 = "0.4"
 libc = "0.2"
+oauth2 = "4.4"
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
 
-
-# Optional real embedding backend (Heavy-Tier semantic_entropy)
-candle-core = { version = "0.8", optional = true }
-candle-nn = { version = "0.8", optional = true }
-candle-transformers = { version = "0.8", optional = true }
-tokenizers = { version = "0.19", optional = true }
-hf-hub = { version = "0.3", optional = true, features = ["tokio"] }
 
 # Ratatui TUI for the live operator dashboard (production feature)
 ratatui = "0.24"
@@ -108,13 +139,7 @@ tree-sitter-python = "0.25.0"
 
 [features]
 default = ["candle"]
-candle = [
-    "dep:candle-core",
-    "dep:candle-nn",
-    "dep:candle-transformers",
-    "dep:tokenizers",
-    "dep:hf-hub"
-]
+candle = ["korg-embeddings/candle"]
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -1,0 +1,23 @@
+[package]
+name = "korg-tui"
+version = "0.1.0"
+edition = "2021"
+description = "Ratatui operator dashboard for korg"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+korg-core    = { path = "../korg-core" }
+korg-runtime = { path = "../korg-runtime" }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+tokio        = { workspace = true }
+uuid         = { workspace = true }
+tracing      = { workspace = true }
+ratatui      = "0.24"
+crossterm    = { version = "0.27", features = ["event-stream"] }
+syntect      = { version = "5.2", default-features = false, features = ["default-fancy"] }
+
+[features]
+default = ["cli"]
+cli = []
