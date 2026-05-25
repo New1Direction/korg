@@ -20,6 +20,7 @@ pub mod code_indexer;
 pub mod code_intel;
 pub mod dag;
 pub mod evaluator;
+pub mod execution;
 pub mod harness;
 pub mod leader;
 pub mod personas;
