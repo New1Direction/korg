@@ -329,8 +329,10 @@ pub async fn heal_node_with_context(
                     if line_num_ts > 0 && line_num_ts <= lines.len() {
                         let line_idx = line_num_ts - 1;
                         let line = lines[line_idx].clone();
-                        let leading =
-                            line.chars().take_while(|c| c.is_whitespace()).collect::<String>();
+                        let leading = line
+                            .chars()
+                            .take_while(|c| c.is_whitespace())
+                            .collect::<String>();
                         lines.insert(line_idx, format!("{}// @ts-ignore", leading));
                         let new_content = lines.join("\n") + "\n";
                         if fs::write(&file_abs, new_content).is_ok() {
@@ -348,10 +350,9 @@ pub async fn heal_node_with_context(
         }
 
         // 8. Rust unresolved crate (E0432)
-        let re_rust_crate_err = Regex::new(
-            r"(?m)error\[E0432\]: unresolved import `(?P<crate>[^`:]+)(?:::.*)?`",
-        )
-        .unwrap();
+        let re_rust_crate_err =
+            Regex::new(r"(?m)error\[E0432\]: unresolved import `(?P<crate>[^`:]+)(?:::.*)?`")
+                .unwrap();
         if let Some(caps) = re_rust_crate_err.captures(stderr_str) {
             let crate_name = caps.name("crate").unwrap().as_str().trim();
             if crate_name
@@ -382,11 +383,17 @@ pub async fn heal_node_with_context(
     }
     tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
     if let Some(ref tx) = logs_tx {
-        let _ = tx.send("  [HEAL] [Step 1/4: Diagnosis] Found missing dependency or syntax boundary mismatch".to_string());
+        let _ = tx.send(
+            "  [HEAL] [Step 1/4: Diagnosis] Found missing dependency or syntax boundary mismatch"
+                .to_string(),
+        );
     }
     tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
     if let Some(ref tx) = logs_tx {
-        let _ = tx.send("  [HEAL] [Step 2/4: Patching] Synthesizing localized code correction patch".to_string());
+        let _ = tx.send(
+            "  [HEAL] [Step 2/4: Patching] Synthesizing localized code correction patch"
+                .to_string(),
+        );
     }
     tokio::time::sleep(tokio::time::Duration::from_millis(40)).await;
     if let Some(ref tx) = logs_tx {
@@ -431,10 +438,14 @@ mod tests {
         std::fs::write(&file_path, "fn main() {\n    let x = 42\n}").unwrap();
         let compiler_stderr = "error: expected `;`, found `}`\n  --> src/main.rs:2:15";
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let healed =
-            heal_node_with_context("cargo check", Some(compiler_stderr), Some(dir.path()), Some(tx))
-                .await
-                .unwrap();
+        let healed = heal_node_with_context(
+            "cargo check",
+            Some(compiler_stderr),
+            Some(dir.path()),
+            Some(tx),
+        )
+        .await
+        .unwrap();
         assert!(healed);
         let corrected = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(corrected, "fn main() {\n    let x = 42;\n}\n");
@@ -448,10 +459,14 @@ mod tests {
         std::fs::write(&file_path, "fn main() {\n    let x = 42;\n}").unwrap();
         let compiler_stderr = "error: unused variable: `x`\n  --> src/main.rs:2:9";
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let healed =
-            heal_node_with_context("cargo check", Some(compiler_stderr), Some(dir.path()), Some(tx))
-                .await
-                .unwrap();
+        let healed = heal_node_with_context(
+            "cargo check",
+            Some(compiler_stderr),
+            Some(dir.path()),
+            Some(tx),
+        )
+        .await
+        .unwrap();
         assert!(healed);
         let corrected = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(corrected, "fn main() {\n    let _x = 42;\n}\n");
@@ -483,7 +498,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("src/main.ts");
         std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
-        std::fs::write(&file_path, "function greet(name) {\n  console.log(name);\n}").unwrap();
+        std::fs::write(
+            &file_path,
+            "function greet(name) {\n  console.log(name);\n}",
+        )
+        .unwrap();
         let compiler_stderr =
             "src/main.ts(1,16): error TS7006: Parameter 'name' implicitly has an 'any' type.";
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
@@ -501,7 +520,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("src/main.ts");
         std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
-        std::fs::write(&file_path, "import { foo } from './bar';\nconsole.log('hello');").unwrap();
+        std::fs::write(
+            &file_path,
+            "import { foo } from './bar';\nconsole.log('hello');",
+        )
+        .unwrap();
         let compiler_stderr =
             "src/main.ts(1,10): error TS6192: All imports in import declaration are unused.";
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
