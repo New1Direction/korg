@@ -94,6 +94,7 @@ class TestKorgStreamAdapter(unittest.TestCase):
         mock_post.assert_called_once()
         posted = mock_post.call_args[1]["json"]
         self.assertEqual(posted["tool_name"], "user_prompt")
+        self.assertEqual(posted["source_agent"], "human:claude-code-user")
 
     @patch("requests.post")
     def test_user_prompt_becomes_root(self, mock_post):
@@ -120,6 +121,7 @@ class TestKorgStreamAdapter(unittest.TestCase):
         mock_post.assert_called_once()
         posted_data = mock_post.call_args[1]["json"]
         self.assertEqual(posted_data["tool_name"], "user_prompt")
+        self.assertEqual(posted_data["source_agent"], "human:claude-code-user")
         self.assertEqual(posted_data["args"]["prompt"], "Verify all tests compile green")
         self.assertIsNone(posted_data["triggered_by"])
         
@@ -402,7 +404,9 @@ class TestKorgStreamAdapter(unittest.TestCase):
         self.assertEqual(mock_post.call_count, 2)
         calls = mock_post.call_args_list
         self.assertEqual(calls[0][1]["json"]["tool_name"], "user_prompt")
+        self.assertEqual(calls[0][1]["json"]["source_agent"], "human:claude-code-user")
         self.assertEqual(calls[1][1]["json"]["tool_name"], "user_prompt")
+        self.assertEqual(calls[1][1]["json"]["source_agent"], "human:claude-code-user")
 
     @patch("requests.post")
     def test_user_prompt_emitted_as_root(self, mock_post):
@@ -424,6 +428,7 @@ class TestKorgStreamAdapter(unittest.TestCase):
         mock_post.assert_called_once()
         posted_data = mock_post.call_args[1]["json"]
         self.assertEqual(posted_data["tool_name"], "user_prompt")
+        self.assertEqual(posted_data["source_agent"], "human:claude-code-user")
         self.assertIsNone(posted_data["triggered_by"])
 
     @patch("requests.post")
@@ -484,6 +489,7 @@ class TestKorgStreamAdapter(unittest.TestCase):
         
         # 1. user_prompt synthesized on system/init
         self.assertEqual(calls[0]["tool_name"], "user_prompt")
+        self.assertEqual(calls[0]["source_agent"], "human:claude-code-user")
         self.assertIsNone(calls[0]["triggered_by"])
         
         # 2. llm_inference from first assistant turn

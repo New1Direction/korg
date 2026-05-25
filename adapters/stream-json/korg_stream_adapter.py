@@ -16,6 +16,11 @@
 # 2. user event with content as plain text or content array without tool_use_id
 #    -> Emit user_prompt AgentToolCall.
 #    -> Set triggered_by = null (root event per spec §7.6).
+#    -> Note on v1.1 limitation: For non-interactive sessions started via the CLI (e.g. `claude -p "prompt"`),
+#       Claude Code does not emit a "user" stream event for the initial prompt. To preserve the causal
+#       walk root invariant, the adapter synthesizes a root "user_prompt" event upon system init.
+#       This is a known limitation of v1.1 passive stream auditing; in v1.2, the adapter will capture the
+#       original prompt directly from the CLI invocation context.
 #
 # 3. user event with content array containing a block with tool_use_id
 #    -> This represents a tool_result.
@@ -343,10 +348,11 @@ def parse_stream_line(line):
             "source_agent defaulting to claude-code@unknown, this may indicate a format change or upstream error.\n"
         )
         # Synthesize user prompt root event for fallback starting
+        # Note: Synthesized root prompt is a known v1.1 limitation for stream-only capture of non-interactive CLI sessions.
         mapped_prompt = {
-            "source_agent": "human:operator",
+            "source_agent": "human:claude-code-user",
             "tool_name": "user_prompt",
-            "args": {"prompt": f"Claude Code session {session_id} initialized without system init"},
+            "args": {"prompt": f"Claude Code session {session_id} initialized without system init (passive fallback)"},
             "result": "Success",
             "payload_refs": [],
             "success": True,
@@ -378,8 +384,9 @@ def parse_stream_line(line):
                 source_agent = "agent:claude-code@unknown"
                 
             # Synthesize user prompt root event for normal initialization
+            # Note: Synthesized root prompt is a known v1.1 limitation for stream-only capture of non-interactive CLI sessions.
             mapped_prompt = {
-                "source_agent": "human:operator",
+                "source_agent": "human:claude-code-user",
                 "tool_name": "user_prompt",
                 "args": {"prompt": f"Claude Code session {session_id} initialized via stream-json adapter"},
                 "result": "Success",
@@ -436,7 +443,7 @@ def parse_stream_line(line):
                 ])
                 
             mapped = {
-                "source_agent": "human:operator",
+                "source_agent": "human:claude-code-user",
                 "tool_name": "user_prompt",
                 "args": {"prompt": prompt_text},
                 "result": {"success": True},
