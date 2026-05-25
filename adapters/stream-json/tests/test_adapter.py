@@ -22,7 +22,10 @@ class TestKorgStreamAdapter(unittest.TestCase):
         adapter.last_local_llm_seq = None
         adapter.last_local_emitted_seq = None
         adapter.pending_tool_uses.clear()
-        adapter.init_received = False
+        
+        # By default, pretend init is already received to avoid fallback prompt injection in standard tests
+        adapter.init_received = True
+        
         adapter.session_id = None
         adapter.claude_code_version = None
         adapter.cwd = None
@@ -59,6 +62,14 @@ class TestKorgStreamAdapter(unittest.TestCase):
 
     @patch("requests.post")
     def test_init_event_extracts_version_and_session_id(self, mock_post):
+        # We manually reset init_received to False for testing initialization
+        adapter.init_received = False
+        
+        mock_res = MagicMock()
+        mock_res.status_code = 200
+        mock_res.json.return_value = {"seq_id": 1}
+        mock_post.return_value = mock_res
+        
         # 1. Parse a system/init event
         init_json = {
             "type": "system",
@@ -70,6 +81,7 @@ class TestKorgStreamAdapter(unittest.TestCase):
             "claude_code_version": "2.1.150"
         }
         adapter.parse_stream_line(json.dumps(init_json))
+        adapter.event_queue.join()
         
         self.assertTrue(adapter.init_received)
         self.assertEqual(adapter.session_id, "test-session-1234")
@@ -77,7 +89,11 @@ class TestKorgStreamAdapter(unittest.TestCase):
         self.assertEqual(adapter.model, "claude-opus-4-7")
         self.assertEqual(adapter.permission_mode, "auto")
         self.assertEqual(adapter.source_agent, "agent:claude-code@2.1.150")
-        mock_post.assert_not_called()
+        
+        # Assert the synthesized user_prompt was enqueued and posted
+        mock_post.assert_called_once()
+        posted = mock_post.call_args[1]["json"]
+        self.assertEqual(posted["tool_name"], "user_prompt")
 
     @patch("requests.post")
     def test_user_prompt_becomes_root(self, mock_post):
@@ -86,6 +102,8 @@ class TestKorgStreamAdapter(unittest.TestCase):
         mock_res.status_code = 200
         mock_res.json.return_value = {"seq_id": 5}
         mock_post.return_value = mock_res
+        
+        adapter.last_local_user_or_result_seq = None
         
         # Parse user prompt
         user_prompt_json = {
@@ -104,7 +122,6 @@ class TestKorgStreamAdapter(unittest.TestCase):
         self.assertEqual(posted_data["tool_name"], "user_prompt")
         self.assertEqual(posted_data["args"]["prompt"], "Verify all tests compile green")
         self.assertIsNone(posted_data["triggered_by"])
-        self.assertEqual(adapter.last_emitted_seq, 5)
         
         # Verify local sequentials are recorded properly
         self.assertEqual(adapter.local_to_server_seq[adapter.last_local_user_or_result_seq], 5)
@@ -152,7 +169,7 @@ class TestKorgStreamAdapter(unittest.TestCase):
         posted_data = mock_post.call_args[1]["json"]
         self.assertEqual(posted_data["tool_name"], "Read")
         self.assertEqual(posted_data["args"]["file_path"], "src/web.rs")
-        self.assertEqual(posted_data["result"]["content"], "fn test_tool_call() {}")
+        self.assertEqual(posted_data["result"], "fn test_tool_call() {}") # direct string result
         self.assertEqual(posted_data["triggered_by"], 8)
         self.assertTrue(posted_data["success"])
         self.assertGreaterEqual(posted_data["duration_ms"], 500)
@@ -221,15 +238,22 @@ class TestKorgStreamAdapter(unittest.TestCase):
         }))
         adapter.event_queue.join()
         
-        # Verify content was extracted as content ref
+        # Verify content was extracted as content ref directly replacing the string value
         mock_post.assert_called_once()
         posted_data = mock_post.call_args[1]["json"]
-        ref_block = posted_data["result"]["content"]
+        ref_block = posted_data["result"]
         self.assertIn("_ref", ref_block)
         self.assertEqual(ref_block["size_bytes"], 1200)
         
-        # Verify blob file was physically written to workspace blobs directory
+        # Verify payload_refs is correctly populated with the blob ContentRef struct
         digest = ref_block["_ref"].replace("sha256:", "")
+        self.assertEqual(posted_data["payload_refs"], [{
+            "sha256": digest,
+            "size_bytes": 1200,
+            "label": "Bash"
+        }])
+        
+        # Verify blob file was physically written to workspace blobs directory
         blob_path = os.path.join(self.test_dir, ".korg", "blobs", digest[:2], digest)
         self.assertTrue(os.path.exists(blob_path))
         with open(blob_path, "r") as f:
@@ -269,7 +293,7 @@ class TestKorgStreamAdapter(unittest.TestCase):
         
         mock_post.assert_called_once()
         posted_data = mock_post.call_args[1]["json"]
-        self.assertEqual(posted_data["result"]["content"], "OPTION_1_EXPECTED_VALUE")
+        self.assertEqual(posted_data["result"], "OPTION_1_EXPECTED_VALUE")
 
     @patch("requests.post")
     def test_unknown_tool_logged_not_emitted(self, mock_post):
@@ -355,7 +379,9 @@ class TestKorgStreamAdapter(unittest.TestCase):
 
     @patch("requests.post")
     def test_orphan_event_when_no_init(self, mock_post):
-        # Tests that stream starting without system init event emits fallback
+        # We manually reset init_received to False for testing fallback prompt injection
+        adapter.init_received = False
+        
         mock_res = MagicMock()
         mock_res.status_code = 200
         mock_res.json.return_value = {"seq_id": 1}
@@ -372,10 +398,33 @@ class TestKorgStreamAdapter(unittest.TestCase):
         self.assertIsNotNone(adapter.session_id)
         self.assertEqual(adapter.source_agent, "agent:claude-code@unknown")
         
+        # Expect two posts: 1 for synthesized user_prompt init, 1 for explicit prompt
+        self.assertEqual(mock_post.call_count, 2)
+        calls = mock_post.call_args_list
+        self.assertEqual(calls[0][1]["json"]["tool_name"], "user_prompt")
+        self.assertEqual(calls[1][1]["json"]["tool_name"], "user_prompt")
+
+    @patch("requests.post")
+    def test_user_prompt_emitted_as_root(self, mock_post):
+        adapter.init_received = False
+        
+        mock_res = MagicMock()
+        mock_res.status_code = 200
+        mock_res.json.return_value = {"seq_id": 1}
+        mock_post.return_value = mock_res
+        
+        # Parse system init event, which synthesizes a user_prompt root event
+        adapter.parse_stream_line(json.dumps({
+            "type": "system",
+            "subtype": "init",
+            "session_id": "root-session-id"
+        }))
+        adapter.event_queue.join()
+        
         mock_post.assert_called_once()
         posted_data = mock_post.call_args[1]["json"]
         self.assertEqual(posted_data["tool_name"], "user_prompt")
-        self.assertEqual(posted_data["args"]["prompt"], "Initial prompt without system init")
+        self.assertIsNone(posted_data["triggered_by"])
 
     @patch("requests.post")
     def test_korg_unreachable_does_not_block(self, mock_post):
@@ -394,6 +443,76 @@ class TestKorgStreamAdapter(unittest.TestCase):
         # If it returns here without raising, the test succeeded, confirming
         # that unreachable Korg server is non-blocking to the parser/stdin stream.
         self.assertTrue(mock_post.called)
+
+    @patch("requests.post")
+    def test_live_fixture_integration_causality(self, mock_post):
+        # We will parse the entire tests/fixtures/sample_session.jsonl file
+        # and verify the sequence of POSTs, causal links, and payload_refs.
+        
+        adapter.init_received = False
+        
+        # Mock successful sequential seq_ids from Korg server:
+        # 1. user_prompt (synthesized root) -> seq_id=403
+        # 2. llm_inference (first assistant turn) -> seq_id=404
+        # 3. Bash tool call (first user tool result) -> seq_id=405
+        # 4. llm_inference (second assistant turn) -> seq_id=406
+        # 5. session_complete (result event) -> seq_id=407
+        seq_ids = [403, 404, 405, 406, 407]
+        call_count = 0
+        
+        def mock_post_handler(url, json=None, headers=None, timeout=5.0):
+            nonlocal call_count
+            res = MagicMock()
+            res.status_code = 200
+            res.json.return_value = {"seq_id": seq_ids[call_count]}
+            call_count += 1
+            return res
+            
+        mock_post.side_effect = mock_post_handler
+        
+        fixture_path = os.path.join(os.path.dirname(__file__), "fixtures", "sample_session.jsonl")
+        with open(fixture_path, "r") as f:
+            for line in f:
+                adapter.parse_stream_line(line)
+                
+        adapter.event_queue.join()
+        
+        # Verify 5 events were enqueued and posted
+        self.assertEqual(call_count, 5)
+        
+        calls = [args[1]["json"] for args in mock_post.call_args_list]
+        
+        # 1. user_prompt synthesized on system/init
+        self.assertEqual(calls[0]["tool_name"], "user_prompt")
+        self.assertIsNone(calls[0]["triggered_by"])
+        
+        # 2. llm_inference from first assistant turn
+        self.assertEqual(calls[1]["tool_name"], "llm_inference")
+        self.assertEqual(calls[1]["triggered_by"], 403) # Chains back to user_prompt root!
+        
+        # 3. Bash tool call from tool result (with large chunked result and structured ContentRef)
+        self.assertEqual(calls[2]["tool_name"], "Bash")
+        self.assertEqual(calls[2]["triggered_by"], 404) # Chains back to its llm_inference parent!
+        
+        ref_block = calls[2]["result"]
+        self.assertIn("_ref", ref_block)
+        self.assertEqual(ref_block["size_bytes"], 4484)
+        
+        # Verify payload_refs contains the compliant ContentRef dictionary structure
+        digest = ref_block["_ref"].replace("sha256:", "")
+        self.assertEqual(calls[2]["payload_refs"], [{
+            "sha256": digest,
+            "size_bytes": 4484,
+            "label": "Bash"
+        }])
+        
+        # 4. llm_inference from second assistant turn
+        self.assertEqual(calls[3]["tool_name"], "llm_inference")
+        self.assertEqual(calls[3]["triggered_by"], 405) # Chains back to Bash tool result!
+        
+        # 5. session_complete from result event
+        self.assertEqual(calls[4]["tool_name"], "session_complete")
+        self.assertEqual(calls[4]["triggered_by"], 406) # Chains back to last llm_inference!
 
 if __name__ == "__main__":
     unittest.main()

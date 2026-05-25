@@ -22,9 +22,11 @@
 #    -> Pair with the buffered tool_use from pending_tool_uses[tool_use_id].
 #    -> Emit one AgentToolCall with:
 #       - args: from the buffered tool_use.input
-#       - result: {"content": content_block.content} (Option 1: Always use
+#       - result: direct string of the tool result content (Option 1: Always use
 #         user.message.content[].content as the single source of truth for all tools,
 #         preventing duplication of tool_use_result fields and remaining general).
+#       - If the result string is >1KB, the string value is replaced directly by the sentinel
+#         {"_ref": "sha256:<digest>", "size_bytes": N} without wrapping (spec §3).
 #       - tool_name: from the buffered tool_use.name
 #       - triggered_by: last_llm_seq (the llm_inference that returned it)
 #       - success: not is_error
@@ -267,7 +269,39 @@ def enqueue_korg_event(mapped_event):
     if "args" in mapped_event:
         mapped_event["args"] = process_content_refs(mapped_event["args"], cwd)
     if "result" in mapped_event:
-        mapped_event["result"] = process_content_refs(mapped_event["result"], cwd)
+        # If the result field itself is a string > 1KB, process_content_refs won't chunk the top-level
+        # directly because it only iterates lists and dicts. Let's handle top-level string/bytes result chunking:
+        result_val = mapped_event["result"]
+        if isinstance(result_val, str) and len(result_val.encode("utf-8")) > 1024:
+            digest, size = canonical_hash_and_store_blob(result_val, cwd)
+            mapped_event["result"] = {"_ref": f"sha256:{digest}", "size_bytes": size}
+        elif isinstance(result_val, bytes) and len(result_val) > 1024:
+            digest, size = canonical_hash_and_store_blob(result_val, cwd)
+            mapped_event["result"] = {"_ref": f"sha256:{digest}", "size_bytes": size}
+        else:
+            mapped_event["result"] = process_content_refs(result_val, cwd)
+        
+    # Populate payload_refs with all ContentRef dicts referenced in content refs
+    payload_refs = []
+    def extract_refs(val, key_label=""):
+        if isinstance(val, dict):
+            if "_ref" in val and isinstance(val["_ref"], str) and val["_ref"].startswith("sha256:"):
+                digest = val["_ref"].replace("sha256:", "")
+                payload_refs.append({
+                    "sha256": digest,
+                    "size_bytes": val.get("size_bytes", 0),
+                    "label": key_label or tool_name or "payload"
+                })
+            else:
+                for k, v in val.items():
+                    extract_refs(v, k)
+        elif isinstance(val, list):
+            for item in val:
+                extract_refs(item, key_label)
+                
+    extract_refs(mapped_event.get("args"))
+    extract_refs(mapped_event.get("result"))
+    mapped_event["payload_refs"] = payload_refs
         
     with queue_lock:
         if event_queue.full():
@@ -308,6 +342,17 @@ def parse_stream_line(line):
             "WARNING: stream began without system init event, "
             "source_agent defaulting to claude-code@unknown, this may indicate a format change or upstream error.\n"
         )
+        # Synthesize user prompt root event for fallback starting
+        mapped_prompt = {
+            "source_agent": "human:operator",
+            "tool_name": "user_prompt",
+            "args": {"prompt": f"Claude Code session {session_id} initialized without system init"},
+            "result": "Success",
+            "payload_refs": [],
+            "success": True,
+            "duration_ms": 0
+        }
+        enqueue_korg_event(mapped_prompt)
         
     if event_type == "system":
         subtype = event.get("subtype")
@@ -331,6 +376,18 @@ def parse_stream_line(line):
                 source_agent = f"agent:claude-code@{claude_code_version}"
             else:
                 source_agent = "agent:claude-code@unknown"
+                
+            # Synthesize user prompt root event for normal initialization
+            mapped_prompt = {
+                "source_agent": "human:operator",
+                "tool_name": "user_prompt",
+                "args": {"prompt": f"Claude Code session {session_id} initialized via stream-json adapter"},
+                "result": "Success",
+                "payload_refs": [],
+                "success": True,
+                "duration_ms": 0
+            }
+            enqueue_korg_event(mapped_prompt)
                 
     elif event_type == "user":
         message = event.get("message", {})
@@ -360,7 +417,7 @@ def parse_stream_line(line):
                     "source_agent": source_agent,
                     "tool_name": tool_use.get("name"),
                     "args": tool_use.get("input", {}),
-                    "result": {"content": result_content},
+                    "result": result_content, # direct string, replaced directly with sentinel if >1KB
                     "payload_refs": [],
                     "success": not tool_result_block.get("is_error", False),
                     "duration_ms": duration_ms
