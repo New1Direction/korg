@@ -249,6 +249,9 @@ enum Commands {
         #[arg(short, long)]
         seq: u64,
     },
+
+    /// Run the premium Claude Code cooperative session replay and speculative rewind demo
+    Demo,
 }
 
 fn print_welcome_banner() {
@@ -424,19 +427,27 @@ async fn main() -> Result<()> {
     crate::telemetry::init_tracing();
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "korg starting");
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+
+    // Redirect optional positional prompt if it matches a subcommand name to prevent Clap's greedy matching
+    if let Some(ref p) = cli.prompt {
+        if p == "demo" {
+            cli.command = Some(Commands::Demo);
+            cli.prompt = None;
+        }
+    }
 
     if cli.preview {
         crate::registry::IS_PREVIEW_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    if let Some(prompt) = cli.prompt {
+    if let Some(prompt) = &cli.prompt {
         if cli.web {
             println!(
                 "Launching web dashboard with live campaign for prompt: {}",
                 prompt
             );
-            crate::web::run_web_with_campaign(prompt, None, Some(parse_cognition_mode(&cli.mode)))
+            crate::web::run_web_with_campaign(prompt.to_string(), None, Some(parse_cognition_mode(&cli.mode)))
                 .await?;
         } else if cli.goal {
             // Goal mode: use the full Heavy-Tier swarm campaign
@@ -448,7 +459,7 @@ async fn main() -> Result<()> {
 
             println!("\n{bold}{cyan}=== ⚡ RUNNING SWARM CAMPAIGN IN GOAL MODE ⚡ ==={reset}\n");
             println!("{slate}├──{reset} Prompt: {bold}{pink}{}{reset}", prompt);
-            let mut leader = LeaderOrchestrator::new(prompt, None);
+            let mut leader = LeaderOrchestrator::new(prompt.to_string(), None);
             leader.goal_mode = true;
             leader.set_cognition_mode("autonomous").await;
             println!(
@@ -758,6 +769,13 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        Commands::Demo => {
+            if let Err(e) = run_demo_internal(None).await {
+                eprintln!("\x1b[38;2;255;0;180m❌ Demo failed: {}\x1b[0m", e);
+                return Err(e);
+            }
+        }
     }
 
     Ok(())
@@ -792,9 +810,9 @@ pub async fn run_developer_shell(_mode: String) -> Result<()> {
     let mut context_buffer = String::new();
 
     // Check if index exists, otherwise asynchronously build it or suggest running /index
-    let index_path = ".korg/index.json";
-    let mut index = if std::path::Path::new(index_path).exists() {
-        match crate::code_indexer::load_index(index_path) {
+    let index_path = crate::paths::project_root().join(".korg/index.json");
+    let mut index = if index_path.exists() {
+        match crate::code_indexer::load_index(&index_path) {
             Ok(idx) => {
                 println!(
                     "{}• Loaded codebase semantic index ({} blocks){} ",
@@ -1541,9 +1559,368 @@ fn scan_and_publish_diagnostics<W: std::io::Write>(
     Ok(())
 }
 
+pub async fn run_demo_internal(temp_dir_override: Option<std::path::PathBuf>) -> Result<std::path::PathBuf> {
+    use std::collections::BTreeMap;
+    use uuid::Uuid;
+
+    let bold = "\x1b[1m";
+    let cyan = "\x1b[38;2;0;240;255m";
+    let pink = "\x1b[38;2;255;0;180m";
+    let green = "\x1b[38;2;0;255;128m";
+    let yellow = "\x1b[38;2;255;215;0m";
+    let red = "\x1b[38;2;255;50;50m";
+    let slate = "\x1b[38;2;120;125;140m";
+    let reset = "\x1b[0m";
+
+    println!("\n{bold}{cyan}⚡ STARTING KORG COGNITIVE TIME-TRAVEL DEMO ⚡{reset}");
+    println!("{slate}────────────────────────────────────────────────────────────────────────────────{reset}");
+
+    let temp_dir = match temp_dir_override {
+        Some(path) => path,
+        None => std::env::temp_dir().join(format!("korg_demo_{}", Uuid::new_v4())),
+    };
+    std::fs::create_dir_all(&temp_dir)?;
+
+    println!("{slate}[korg]{reset} Initializing sandboxed demo environment...");
+    
+    // Create journal
+    let journal_path = temp_dir.join("journal.json");
+    let snapshot_path = temp_dir.join("snapshot.json");
+    let lock_path = temp_dir.join("lock.lock");
+    let mut journal = crate::registry::CapabilityJournal::new(
+        journal_path.clone(),
+        snapshot_path,
+        10,
+        lock_path,
+    );
+
+    // Setup math_utils.py
+    let file_path = temp_dir.join("math_utils.py");
+    let buggy_code = "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    # Intended bug\n    return a + b\n";
+    std::fs::write(&file_path, buggy_code)?;
+    println!("{slate}[korg]{reset} Created temporary workspace with {bold}math_utils.py{reset} (subtraction bug present).\n");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    println!("{bold}{pink}🚀 PHASE 1: AGENT INITIATES RUN (WRONG PATH){reset}");
+    
+    // Event 390: user_prompt
+    let ev390 = crate::registry::CapabilityEvent::AgentToolCall {
+        source_agent: "agent:claude-code@0.2.29".to_string(),
+        tool_name: "user_prompt".to_string(),
+        args: serde_json::json!({ "prompt": "Fix subtraction bug and verify tests pass" }),
+        result: serde_json::json!({ "status": "started" }),
+        payload_refs: vec![],
+        success: true,
+        duration_ms: 0,
+        timestamp: chrono::Utc::now(),
+    };
+    let meta390 = crate::registry::log::EventMetadata {
+        event_id: Uuid::new_v4(),
+        correlation_id: Uuid::nil(),
+        causation_id: None,
+        root_event_id: Uuid::new_v4(),
+        actor_id: "korg:api".to_string(),
+        campaign_id: Uuid::nil(),
+        emitted_at: journal.clock.tick(chrono::Utc::now().timestamp_millis()),
+        branch_id: None,
+        speculative: false,
+        retry_count: 0,
+        tier: crate::registry::log::EventTier::Telemetry,
+        span_id: None,
+        tags: BTreeMap::new(),
+        triggered_by: None,
+    };
+    journal.append_with_metadata(ev390, meta390);
+    journal.last_seq_id = 390; // force sequence IDs for clean demo tracing
+    journal.events.last_mut().unwrap().seq_id = 390;
+    println!("  {bold}{slate}[seq 390]{reset} {bold}actor:{reset} {cyan}agent:claude-code@0.2.29{reset} | {bold}tool:{reset} {yellow}user_prompt{reset} | prompt: \"Fix subtraction bug and verify tests pass\"");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Event 391: Read
+    let ev391 = crate::registry::CapabilityEvent::AgentToolCall {
+        source_agent: "agent:claude-code@0.2.29".to_string(),
+        tool_name: "Read".to_string(),
+        args: serde_json::json!({ "file_path": "math_utils.py" }),
+        result: serde_json::json!({ "content": buggy_code, "lines": 7 }),
+        payload_refs: vec![],
+        success: true,
+        duration_ms: 50,
+        timestamp: chrono::Utc::now(),
+    };
+    let parent_id = journal.events.last().unwrap().metadata.event_id;
+    let root_id = journal.events.first().unwrap().metadata.event_id;
+    let meta391 = crate::registry::log::EventMetadata {
+        event_id: Uuid::new_v4(),
+        correlation_id: Uuid::nil(),
+        causation_id: Some(parent_id),
+        root_event_id: root_id,
+        actor_id: "korg:api".to_string(),
+        campaign_id: Uuid::nil(),
+        emitted_at: journal.clock.tick(chrono::Utc::now().timestamp_millis()),
+        branch_id: None,
+        speculative: false,
+        retry_count: 0,
+        tier: crate::registry::log::EventTier::Telemetry,
+        span_id: None,
+        tags: BTreeMap::new(),
+        triggered_by: Some(390),
+    };
+    journal.append_with_metadata(ev391, meta391);
+    journal.last_seq_id = 391;
+    journal.events.last_mut().unwrap().seq_id = 391;
+    println!("  {bold}{slate}[seq 391]{reset} {bold}actor:{reset} {cyan}agent:claude-code@0.2.29{reset} | {bold}tool:{reset} {yellow}Read{reset}        | file: math_utils.py");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Event 392 (bad fix): Edit
+    let wrong_fix_code = "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    return a + b\n";
+    std::fs::write(&file_path, wrong_fix_code)?;
+    let ev392 = crate::registry::CapabilityEvent::AgentToolCall {
+        source_agent: "agent:claude-code@0.2.29".to_string(),
+        tool_name: "Edit".to_string(),
+        args: serde_json::json!({ "file_path": "math_utils.py", "new_string": "return a + b" }),
+        result: serde_json::json!({ "status": "updated", "message": "Updated subtraction" }),
+        payload_refs: vec![],
+        success: true,
+        duration_ms: 80,
+        timestamp: chrono::Utc::now(),
+    };
+    let parent_id = journal.events.last().unwrap().metadata.event_id;
+    let meta392 = crate::registry::log::EventMetadata {
+        event_id: Uuid::new_v4(),
+        correlation_id: Uuid::nil(),
+        causation_id: Some(parent_id),
+        root_event_id: root_id,
+        actor_id: "korg:api".to_string(),
+        campaign_id: Uuid::nil(),
+        emitted_at: journal.clock.tick(chrono::Utc::now().timestamp_millis()),
+        branch_id: None,
+        speculative: false,
+        retry_count: 0,
+        tier: crate::registry::log::EventTier::Telemetry,
+        span_id: None,
+        tags: BTreeMap::new(),
+        triggered_by: Some(391),
+    };
+    journal.append_with_metadata(ev392, meta392);
+    journal.last_seq_id = 392;
+    journal.events.last_mut().unwrap().seq_id = 392;
+    println!("  {bold}{slate}[seq 392]{reset} {bold}actor:{reset} {cyan}agent:claude-code@0.2.29{reset} | {bold}tool:{reset} {yellow}Edit{reset}        | result: \"Modified return a + b (wrong fix)\"");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Event 393: Bash (pytest fails)
+    let ev393 = crate::registry::CapabilityEvent::AgentToolCall {
+        source_agent: "agent:claude-code@0.2.29".to_string(),
+        tool_name: "Bash".to_string(),
+        args: serde_json::json!({ "command": "pytest" }),
+        result: serde_json::json!({ "tests_failed": 2, "status": "failed" }),
+        payload_refs: vec![],
+        success: false,
+        duration_ms: 800,
+        timestamp: chrono::Utc::now(),
+    };
+    let parent_id = journal.events.last().unwrap().metadata.event_id;
+    let meta393 = crate::registry::log::EventMetadata {
+        event_id: Uuid::new_v4(),
+        correlation_id: Uuid::nil(),
+        causation_id: Some(parent_id),
+        root_event_id: root_id,
+        actor_id: "korg:api".to_string(),
+        campaign_id: Uuid::nil(),
+        emitted_at: journal.clock.tick(chrono::Utc::now().timestamp_millis()),
+        branch_id: None,
+        speculative: false,
+        retry_count: 0,
+        tier: crate::registry::log::EventTier::Telemetry,
+        span_id: None,
+        tags: BTreeMap::new(),
+        triggered_by: Some(392),
+    };
+    journal.append_with_metadata(ev393, meta393);
+    journal.last_seq_id = 393;
+    journal.events.last_mut().unwrap().seq_id = 393;
+    println!("  {bold}{slate}[seq 393]{reset} {bold}actor:{reset} {cyan}agent:claude-code@0.2.29{reset} | {bold}tool:{reset} {yellow}Bash{reset}        | command: \"pytest\" -> {bold}{red}❌ FAILED (2 tests failed){reset}\n");
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    println!("{bold}{slate}📊 LEDGER STATE (BEFORE REWIND):{reset}");
+    println!("  Before rewind: events 390-393 (prompt, read, edit-wrong, test-failed)");
+    for e in &journal.events {
+        let event_type = match &e.event {
+            crate::registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
+            _ => "Governance".to_string(),
+        };
+        println!("    ├── seq {} ({}) -> triggered_by: {:?}", e.seq_id, event_type, e.metadata.triggered_by);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    println!("\n{bold}{yellow}⏳ PHASE 2: INITIATING REVERSIBLE REWIND TO SEQ 391{reset}");
+    println!("  {slate}[korg]{reset} Truncating journal ledger to sequence ID 391...");
+    journal.rewind(391).map_err(|e| anyhow::anyhow!(e))?;
+    
+    println!("  {slate}[korg]{reset} Restoring workspace snapshot via git read-tree (O(1))...");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    
+    // Simulate workspace snapshot restore by writing buggy code back!
+    std::fs::write(&file_path, buggy_code)?;
+    println!("  {slate}[korg]{reset} Reset math_utils.py file state back to sequence 391 bug state.");
+    println!("  {slate}[korg]{reset} Rebuilding 3 read-model projections...");
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    println!("\n{bold}{slate}📊 LEDGER STATE (AFTER REWIND):{reset}");
+    println!("  After rewind:  events 390-391 (prompt, read)");
+    for e in &journal.events {
+        let event_type = match &e.event {
+            crate::registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
+            _ => "Governance".to_string(),
+        };
+        println!("    ├── seq {} ({}) -> triggered_by: {:?}", e.seq_id, event_type, e.metadata.triggered_by);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    println!("\n{bold}{green}🚀 PHASE 3: AGENT DIVERGES DOWN CORRECT PATH (SPECULATIVE REPLAY){reset}");
+    
+    // Event 392 (good fix): Edit
+    let right_fix_code = "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    return a - b\n";
+    std::fs::write(&file_path, right_fix_code)?;
+    let ev392_div = crate::registry::CapabilityEvent::AgentToolCall {
+        source_agent: "agent:claude-code@0.2.29".to_string(),
+        tool_name: "Edit".to_string(),
+        args: serde_json::json!({ "file_path": "math_utils.py", "new_string": "return a - b" }),
+        result: serde_json::json!({ "status": "updated", "message": "Fixed subtraction" }),
+        payload_refs: vec![],
+        success: true,
+        duration_ms: 80,
+        timestamp: chrono::Utc::now(),
+    };
+    let parent_id = journal.events.last().unwrap().metadata.event_id;
+    let meta392_div = crate::registry::log::EventMetadata {
+        event_id: Uuid::new_v4(),
+        correlation_id: Uuid::nil(),
+        causation_id: Some(parent_id),
+        root_event_id: root_id,
+        actor_id: "korg:api".to_string(),
+        campaign_id: Uuid::nil(),
+        emitted_at: journal.clock.tick(chrono::Utc::now().timestamp_millis()),
+        branch_id: None,
+        speculative: false,
+        retry_count: 0,
+        tier: crate::registry::log::EventTier::Telemetry,
+        span_id: None,
+        tags: BTreeMap::new(),
+        triggered_by: Some(391),
+    };
+    journal.append_with_metadata(ev392_div, meta392_div);
+    journal.last_seq_id = 392;
+    journal.events.last_mut().unwrap().seq_id = 392;
+    println!("  {bold}{slate}[seq 392]{reset} {bold}actor:{reset} {cyan}agent:claude-code@0.2.29{reset} | {bold}tool:{reset} {yellow}Edit{reset}        | result: \"Modified return a - b (correct fix)\"");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Event 393 (div success): Bash (pytest passes)
+    let ev393_div = crate::registry::CapabilityEvent::AgentToolCall {
+        source_agent: "agent:claude-code@0.2.29".to_string(),
+        tool_name: "Bash".to_string(),
+        args: serde_json::json!({ "command": "pytest" }),
+        result: serde_json::json!({ "tests_passed": 2, "status": "passed" }),
+        payload_refs: vec![],
+        success: true,
+        duration_ms: 800,
+        timestamp: chrono::Utc::now(),
+    };
+    let parent_id = journal.events.last().unwrap().metadata.event_id;
+    let meta393_div = crate::registry::log::EventMetadata {
+        event_id: Uuid::new_v4(),
+        correlation_id: Uuid::nil(),
+        causation_id: Some(parent_id),
+        root_event_id: root_id,
+        actor_id: "korg:api".to_string(),
+        campaign_id: Uuid::nil(),
+        emitted_at: journal.clock.tick(chrono::Utc::now().timestamp_millis()),
+        branch_id: None,
+        speculative: false,
+        retry_count: 0,
+        tier: crate::registry::log::EventTier::Telemetry,
+        span_id: None,
+        tags: BTreeMap::new(),
+        triggered_by: Some(392),
+    };
+    journal.append_with_metadata(ev393_div, meta393_div);
+    journal.last_seq_id = 393;
+    journal.events.last_mut().unwrap().seq_id = 393;
+    println!("  {bold}{slate}[seq 393]{reset} {bold}actor:{reset} {cyan}agent:claude-code@0.2.29{reset} | {bold}tool:{reset} {yellow}Bash{reset}        | command: \"pytest\" -> {bold}{green}✓ PASSED (2 passed){reset}\n");
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    // Persist journal on disk
+    journal.flush().map_err(|e| anyhow::anyhow!(e))?;
+
+    println!("{bold}{slate}📊 LEDGER STATE (AFTER DIVERGENT RUN):{reset}");
+    println!("  After new run: events 390-393 (prompt, read, edit-right, test-passed)");
+    for e in &journal.events {
+        let event_type = match &e.event {
+            crate::registry::CapabilityEvent::AgentToolCall { tool_name, .. } => tool_name.clone(),
+            _ => "Governance".to_string(),
+        };
+        println!("    ├── seq {} ({}) -> triggered_by: {:?}", e.seq_id, event_type, e.metadata.triggered_by);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    println!("\n{bold}{green}✓ DEMO COMPLETE: Time-travel execution succeeded!{reset}");
+    println!("  Ledger truncated, workspace rolled back, and a different future was successfully committed.\n");
+
+    Ok(temp_dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_korg_demo_ledger_invariants() {
+        let temp_dir = std::env::temp_dir().join(format!("korg_demo_test_{}", uuid::Uuid::new_v4()));
+        let res = run_demo_internal(Some(temp_dir.clone())).await;
+        assert!(res.is_ok(), "Demo run should succeed");
+        
+        let journal_path = temp_dir.join("journal.json");
+        let content = std::fs::read_to_string(&journal_path).unwrap();
+        let events: Vec<crate::registry::log::JournalEvent> = serde_json::from_str(&content).unwrap();
+        
+        // Assert the ledger has exactly 4 events
+        assert_eq!(events.len(), 4, "Should contain exactly 4 events");
+        
+        // Assert sequence IDs
+        assert_eq!(events[0].seq_id, 390);
+        assert_eq!(events[1].seq_id, 391);
+        assert_eq!(events[2].seq_id, 392);
+        assert_eq!(events[3].seq_id, 393);
+        
+        // Assert triggered_by causal chain
+        assert_eq!(events[0].metadata.triggered_by, None);
+        assert_eq!(events[1].metadata.triggered_by, Some(390));
+        assert_eq!(events[2].metadata.triggered_by, Some(391));
+        assert_eq!(events[3].metadata.triggered_by, Some(392));
+        
+        // Assert content is the correct one (divergent success edit and passed test)
+        if let crate::registry::CapabilityEvent::AgentToolCall { tool_name, args, .. } = &events[2].event {
+            assert_eq!(tool_name, "Edit");
+            assert!(args.to_string().contains("return a - b"), "Should contain the correct fix");
+        } else {
+            panic!("Event 2 should be AgentToolCall");
+        }
+        
+        if let crate::registry::CapabilityEvent::AgentToolCall { tool_name, result, .. } = &events[3].event {
+            assert_eq!(tool_name, "Bash");
+            assert!(result.to_string().contains("passed"), "Should contain passed tests");
+        } else {
+            panic!("Event 3 should be AgentToolCall");
+        }
+        
+        // Assert file state is corrected on disk
+        let file_path = temp_dir.join("math_utils.py");
+        let file_content = std::fs::read_to_string(&file_path).unwrap();
+        assert!(file_content.contains("return a - b"), "File should contain correct subtraction code");
+        assert!(!file_content.contains("def subtract(a, b):\n    # Intended bug\n    return a + b"), "File should not contain wrong subtraction code");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 
     #[test]
     fn test_secret_scanner_openai() {

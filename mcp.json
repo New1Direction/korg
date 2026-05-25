@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "korg": {
+      "command": "python3",
+      "args": ["/Users/clubpenguin/Documents/Korg/mcp_server.py"],
+      "env": {
+        "KORG_URL": "http://localhost:8080"
+      }
+    }
+  }
+}

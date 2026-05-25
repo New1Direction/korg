@@ -806,6 +806,7 @@ mod tests {
             tier: event.tier(),
             span_id: None,
             tags: std::collections::BTreeMap::new(),
+            triggered_by: None,
         }
     }
 
@@ -1173,6 +1174,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
         };
         let envelope1 = JournalEvent {
+            schema_version: "1.0".to_string(),
             seq_id: 1,
             metadata: mock_metadata(plan_id, 1, &ev1),
             event: ev1,
@@ -1190,6 +1192,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
         };
         let envelope2 = JournalEvent {
+            schema_version: "1.0".to_string(),
             seq_id: 2,
             metadata: mock_metadata(plan_id, 2, &ev2),
             event: ev2,
@@ -1208,6 +1211,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
         };
         let envelope3 = JournalEvent {
+            schema_version: "1.0".to_string(),
             seq_id: 3,
             metadata: mock_metadata(plan_id, 3, &ev3),
             event: ev3,
@@ -1227,6 +1231,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
         };
         let envelope4 = JournalEvent {
+            schema_version: "1.0".to_string(),
             seq_id: 4,
             metadata: mock_metadata(plan_id, 4, &ev4),
             event: ev4,
@@ -1242,6 +1247,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
         };
         let envelope5 = JournalEvent {
+            schema_version: "1.0".to_string(),
             seq_id: 5,
             metadata: mock_metadata(plan_id, 5, &ev5),
             event: ev5,
@@ -1395,11 +1401,13 @@ mod tests {
         };
         let events = vec![
             JournalEvent {
+                schema_version: "1.0".to_string(),
                 seq_id: 1,
                 metadata: mock_metadata(plan_id, 1, &ev1),
                 event: ev1,
             },
             JournalEvent {
+                schema_version: "1.0".to_string(),
                 seq_id: 2,
                 metadata: mock_metadata(plan_id, 2, &ev2),
                 event: ev2,
@@ -1824,5 +1832,116 @@ mod tests {
             CapabilityState::Disabled
         );
         assert!(resolver.is_leased_to_other("node_b", Some(uuid::Uuid::new_v4())));
+    }
+
+    #[test]
+    fn test_blob_atomicity_and_resolution() {
+        use super::log::ContentRef;
+        use sha2::{Sha256, Digest};
+
+        let temp_dir = std::env::temp_dir().join(format!("korg_blob_test_{}", uuid::Uuid::new_v4()));
+        let blobs_dir = temp_dir.join("blobs");
+        let journal_path = temp_dir.join("capability_journal.json");
+        let snapshot_path = temp_dir.join("capability_snapshots.json");
+        let lock_path = temp_dir.join("capability_journal.lock");
+
+        std::fs::create_dir_all(&blobs_dir).unwrap();
+
+        // 1. SUCCESS PATH
+        // Create a >1KB payload (2048 bytes of 'A')
+        let payload = "A".repeat(2048);
+
+        // Compute SHA256 digest
+        let mut hasher = Sha256::new();
+        hasher.update(payload.as_bytes());
+        let hash_bytes = hasher.finalize();
+        let sha256_hex = format!("{:x}", hash_bytes);
+
+        // Write to blobs directory (blob-first atomicity)
+        let prefix = &sha256_hex[..2];
+        let target_dir = blobs_dir.join(prefix);
+        std::fs::create_dir_all(&target_dir).unwrap();
+        let target_file = target_dir.join(&sha256_hex);
+        std::fs::write(&target_file, &payload).unwrap();
+
+        assert!(target_file.exists(), "Blob must exist before event is written to journal");
+
+        let mut journal = CapabilityJournal::new(
+            journal_path.clone(),
+            snapshot_path.clone(),
+            10,
+            lock_path.clone(),
+        );
+
+        let plan_id = uuid::Uuid::new_v4();
+        let ev1 = CapabilityEvent::AgentToolCall {
+            source_agent: "agent:korgex@dev".to_string(),
+            tool_name: "Edit".to_string(),
+            args: serde_json::json!({}),
+            result: serde_json::json!({}),
+            payload_refs: vec![ContentRef {
+                sha256: sha256_hex.clone(),
+                size_bytes: 2048,
+                label: "stdout".to_string(),
+            }],
+            success: true,
+            duration_ms: 100,
+            timestamp: chrono::Utc::now(),
+        };
+
+        let metadata1 = mock_metadata(plan_id, 1, &ev1);
+        journal.append_with_metadata(ev1, metadata1);
+
+        // Reload and verify load and resolve succeeds
+        let mut journal2 = CapabilityJournal::new(
+            journal_path.clone(),
+            snapshot_path.clone(),
+            10,
+            lock_path.clone(),
+        );
+        assert!(journal2.load().is_ok());
+        assert!(journal2.verify_integrity(&blobs_dir).is_ok());
+
+        // Resolve blob content
+        let loaded_ref = match &journal2.events[0].event {
+            CapabilityEvent::AgentToolCall { payload_refs, .. } => &payload_refs[0],
+            _ => panic!("Expected AgentToolCall event"),
+        };
+        let resolved_file = blobs_dir.join(&loaded_ref.sha256[..2]).join(&loaded_ref.sha256);
+        let resolved_content = std::fs::read_to_string(resolved_file).unwrap();
+        assert_eq!(resolved_content, payload);
+
+        // 2. FAILURE PATH
+        // Create an event referencing a non-existent blob (simulate failure to write blob first)
+        let fake_sha256 = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string();
+        let ev2 = CapabilityEvent::AgentToolCall {
+            source_agent: "agent:korgex@dev".to_string(),
+            tool_name: "Edit".to_string(),
+            args: serde_json::json!({}),
+            result: serde_json::json!({}),
+            payload_refs: vec![ContentRef {
+                sha256: fake_sha256.clone(),
+                size_bytes: 512,
+                label: "stderr".to_string(),
+            }],
+            success: false,
+            duration_ms: 50,
+            timestamp: chrono::Utc::now(),
+        };
+
+        let metadata2 = mock_metadata(plan_id, 2, &ev2);
+        journal2.append_with_metadata(ev2, metadata2);
+
+        // Verify loaded ledger fails integrity check loudly due to missing blob file (spec §7.3)
+        let mut journal3 = CapabilityJournal::new(
+            journal_path,
+            snapshot_path,
+            10,
+            lock_path,
+        );
+        assert!(journal3.load().is_ok());
+        let integrity_res = journal3.verify_integrity(&blobs_dir);
+        assert!(integrity_res.is_err());
+        assert!(integrity_res.unwrap_err().contains("Ledger integrity failure: missing blob"));
     }
 }
