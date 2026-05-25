@@ -288,8 +288,13 @@ impl LeaderOrchestrator {
                 if failure_seq > 0 {
                     let candidates = crate::recovery::rewind_candidates(&journal, failure_seq);
                     if !candidates.is_empty() {
-                        if let Err(e) = tx.try_send(crate::tui_bridge::TuiUpdate::RewindAvailable(candidates)) {
-                            tracing::warn!("rewind prompt could not be delivered to TUI; channel full ({})", e);
+                        if let Err(e) =
+                            tx.try_send(crate::tui_bridge::TuiUpdate::RewindAvailable(candidates))
+                        {
+                            tracing::warn!(
+                                "rewind prompt could not be delivered to TUI; channel full ({})",
+                                e
+                            );
                         }
                     }
                 }
@@ -336,7 +341,10 @@ impl LeaderOrchestrator {
         let mut journal = korg_registry::log::CapabilityJournal::default_journal();
         match journal.rewind(seq_id) {
             Ok(()) => {
-                println!("[Leader] Rewound journal to seq {} — clean state restored", seq_id);
+                println!(
+                    "[Leader] Rewound journal to seq {} — clean state restored",
+                    seq_id
+                );
                 if let Some(tx) = &self.tui_tx {
                     let _ = tx.try_send(crate::tui_bridge::TuiUpdate::Trace(format!(
                         "[Korg] Rewound to seq {} — clean state restored, campaign will restart",
@@ -1685,9 +1693,8 @@ impl LeaderOrchestrator {
                     };
                     let rotator_hits =
                         korg_llm::ROTATOR_HITS.load(std::sync::atomic::Ordering::Relaxed) as u32;
-                    let heals_resolved = korg_llm::HEALS_RESOLVED
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                        as u32;
+                    let heals_resolved =
+                        korg_llm::HEALS_RESOLVED.load(std::sync::atomic::Ordering::Relaxed) as u32;
 
                     let _ = tx.try_send(crate::tui_bridge::TuiUpdate::ScaleTelemetry {
                         total_tokens,
@@ -3716,9 +3723,10 @@ mod tests {
         })];
 
         // Create the worktree path manually so the test passes
-        let worktree_dir = korg_core::paths::worktree_dir("benjamin", "pkg-benjamin", "pkg-benjamin")
-            .display()
-            .to_string();
+        let worktree_dir =
+            korg_core::paths::worktree_dir("benjamin", "pkg-benjamin", "pkg-benjamin")
+                .display()
+                .to_string();
         let _ = std::fs::create_dir_all(&worktree_dir);
 
         // Run cargo init to make it a valid compiling crate

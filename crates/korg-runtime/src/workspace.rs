@@ -490,12 +490,14 @@ impl WorkspaceManager {
 
 /// Compute the workspace directory path from its ID and spec.
 fn workspace_path(id: &WorkspaceId, spec: &WorkspaceSpec) -> PathBuf {
-    korg_core::paths::cache_dir().join("workspaces").join(format!(
-        "{}-{}-{}",
-        spec.persona_id,
-        spec.routing_id,
-        id.as_uuid()
-    ))
+    korg_core::paths::cache_dir()
+        .join("workspaces")
+        .join(format!(
+            "{}-{}-{}",
+            spec.persona_id,
+            spec.routing_id,
+            id.as_uuid()
+        ))
 }
 
 /// Attempt to register a git worktree at `path` on `branch`.

@@ -11,8 +11,6 @@
 #![allow(unused_variables)]
 #![allow(unused_assignments)]
 
-pub mod tui_bridge;
-pub mod recovery;
 pub mod acp;
 pub mod agent;
 pub mod arena;
@@ -26,10 +24,12 @@ pub mod harness;
 pub mod leader;
 pub mod personas;
 pub mod provenance;
+pub mod recovery;
 pub mod runtime;
 pub mod session;
 pub mod skills;
 pub mod tools;
+pub mod tui_bridge;
 pub mod vision_policy;
 pub mod workers;
 pub mod workspace;

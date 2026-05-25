@@ -2,8 +2,8 @@
 //!
 //! Handles factual reconciliation and concept synthesis in Yvaeh Mode.
 
-use korg_embeddings::{CandleEmbeddingModel, EmbeddingModel, FakeEmbeddingModel};
 use anyhow::Result;
+use korg_embeddings::{CandleEmbeddingModel, EmbeddingModel, FakeEmbeddingModel};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -334,8 +334,7 @@ pub async fn run_reconcile(topic: Option<String>) -> Result<()> {
 
     for i in 0..n {
         for j in (i + 1)..n {
-            let sim =
-                korg_embeddings::cosine_similarity(&note_embeddings[i], &note_embeddings[j]);
+            let sim = korg_embeddings::cosine_similarity(&note_embeddings[i], &note_embeddings[j]);
             if sim >= 0.72 {
                 println!(
                     "[Yvaeh reconcile] Contradiction detected! Cosine similarity: {:.3}",

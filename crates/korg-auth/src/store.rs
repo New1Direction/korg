@@ -1,14 +1,14 @@
-use std::path::PathBuf;
-use std::io::Seek;
-use std::fs::{OpenOptions, File};
-use std::io::{Read, Write};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use fs2::FileExt;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io::Seek;
+use std::io::{Read, Write};
+use std::path::PathBuf;
 
-use aes_gcm::{Aes256Gcm, Key, Nonce};
 use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
 use pbkdf2::pbkdf2_hmac;
 use sha2::Sha256;
 
@@ -48,7 +48,8 @@ fn encrypt_payload(plain_text: &str) -> Result<Vec<u8>, anyhow::Error> {
     let cipher = get_aes_cipher();
     let nonce_bytes = rand::random::<[u8; 12]>();
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let cipher_text = cipher.encrypt(nonce, plain_text.as_bytes())
+    let cipher_text = cipher
+        .encrypt(nonce, plain_text.as_bytes())
         .map_err(|e| anyhow::anyhow!("Encryption failed: {:?}", e))?;
     let mut payload = nonce_bytes.to_vec();
     payload.extend(cipher_text);
@@ -62,8 +63,12 @@ fn decrypt_payload(payload: &[u8]) -> Result<String, anyhow::Error> {
     }
     let (nonce_bytes, ciphertext) = payload.split_at(12);
     let nonce = Nonce::from_slice(nonce_bytes);
-    let decrypted_bytes = cipher.decrypt(nonce, ciphertext)
-        .map_err(|e| anyhow::anyhow!("Decryption failed (tampering or invalid master key): {:?}", e))?;
+    let decrypted_bytes = cipher.decrypt(nonce, ciphertext).map_err(|e| {
+        anyhow::anyhow!(
+            "Decryption failed (tampering or invalid master key): {:?}",
+            e
+        )
+    })?;
     Ok(String::from_utf8(decrypted_bytes)?)
 }
 

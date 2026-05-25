@@ -15,23 +15,23 @@ pub(crate) mod validator;
 
 pub(crate) use checkpoint::{CheckpointMetadata, ExecutionCheckpoint};
 pub use log::{
-    CapabilityEvent, CapabilityJournal, CapabilitySnapshot, ContentRef, HlcTimestamp,
-    JournalEvent, IS_PREVIEW_MODE,
+    CapabilityEvent, CapabilityJournal, CapabilitySnapshot, ContentRef, HlcTimestamp, JournalEvent,
+    IS_PREVIEW_MODE,
 };
 pub use plan::TransitionState;
 pub use projection::ProjectionEngine;
 pub(crate) use projection::{CampaignProjection, CampaignState, CampaignStatus, Projection};
 pub use types::{
-    CapabilityNode, CapabilityState, Category, CognitionMode,
-    ProjectionMap, TransitionRequest, TransitionResponse,
+    CapabilityNode, CapabilityState, Category, CognitionMode, ProjectionMap, TransitionRequest,
+    TransitionResponse,
 };
 
-use std::collections::HashMap;
 use crate::executor::CapabilityExecutor;
 use crate::plan::{MutationStep, SafetyCheck, TransitionExecution, TransitionPlan};
 use crate::planner::CapabilityPlanner;
 use crate::types::{CapabilityEffect, CapabilityLease, EffectNode};
 use crate::validator::CapabilityValidator;
+use std::collections::HashMap;
 
 pub struct CapabilityResolver {
     pub nodes: HashMap<String, CapabilityNode>,
@@ -79,7 +79,11 @@ impl CapabilityResolver {
 
     /// Check if the user's subscription tier has access to a specific tool or capability node.
     /// Standard tier users cannot access high-blast-radius actions (e.g., "Bash" or "docker_sandbox").
-    pub fn authorize_tool_use(&self, tier: korg_core::SubscriptionTier, tool_name: &str) -> Result<(), String> {
+    pub fn authorize_tool_use(
+        &self,
+        tier: korg_core::SubscriptionTier,
+        tool_name: &str,
+    ) -> Result<(), String> {
         match tier {
             korg_core::SubscriptionTier::Standard => {
                 let tool_lower = tool_name.to_lowercase();
@@ -1869,9 +1873,10 @@ mod tests {
     #[test]
     fn test_blob_atomicity_and_resolution() {
         use crate::log::ContentRef;
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
 
-        let temp_dir = std::env::temp_dir().join(format!("korg_blob_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("korg_blob_test_{}", uuid::Uuid::new_v4()));
         let blobs_dir = temp_dir.join("blobs");
         let journal_path = temp_dir.join("capability_journal.json");
         let snapshot_path = temp_dir.join("capability_snapshots.json");
@@ -1896,7 +1901,10 @@ mod tests {
         let target_file = target_dir.join(&sha256_hex);
         std::fs::write(&target_file, &payload).unwrap();
 
-        assert!(target_file.exists(), "Blob must exist before event is written to journal");
+        assert!(
+            target_file.exists(),
+            "Blob must exist before event is written to journal"
+        );
 
         let mut journal = CapabilityJournal::new(
             journal_path.clone(),
@@ -1939,13 +1947,16 @@ mod tests {
             CapabilityEvent::AgentToolCall { payload_refs, .. } => &payload_refs[0],
             _ => panic!("Expected AgentToolCall event"),
         };
-        let resolved_file = blobs_dir.join(&loaded_ref.sha256[..2]).join(&loaded_ref.sha256);
+        let resolved_file = blobs_dir
+            .join(&loaded_ref.sha256[..2])
+            .join(&loaded_ref.sha256);
         let resolved_content = std::fs::read_to_string(resolved_file).unwrap();
         assert_eq!(resolved_content, payload);
 
         // 2. FAILURE PATH
         // Create an event referencing a non-existent blob (simulate failure to write blob first)
-        let fake_sha256 = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string();
+        let fake_sha256 =
+            "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string();
         let ev2 = CapabilityEvent::AgentToolCall {
             source_agent: "agent:korgex@dev".to_string(),
             tool_name: "Edit".to_string(),
@@ -1965,15 +1976,12 @@ mod tests {
         journal2.append_with_metadata(ev2, metadata2);
 
         // Verify loaded ledger fails integrity check loudly due to missing blob file (spec §7.3)
-        let mut journal3 = CapabilityJournal::new(
-            journal_path,
-            snapshot_path,
-            10,
-            lock_path,
-        );
+        let mut journal3 = CapabilityJournal::new(journal_path, snapshot_path, 10, lock_path);
         assert!(journal3.load().is_ok());
         let integrity_res = journal3.verify_integrity(&blobs_dir);
         assert!(integrity_res.is_err());
-        assert!(integrity_res.unwrap_err().contains("Ledger integrity failure: missing blob"));
+        assert!(integrity_res
+            .unwrap_err()
+            .contains("Ledger integrity failure: missing blob"));
     }
 }

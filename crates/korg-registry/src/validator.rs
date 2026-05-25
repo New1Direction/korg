@@ -6,7 +6,9 @@ pub(crate) struct CapabilityValidator;
 
 impl CapabilityValidator {
     /// Verify static DAG safety checks for cycle detection
-    pub(crate) fn compile_and_verify(nodes: &HashMap<String, CapabilityNode>) -> Result<(), String> {
+    pub(crate) fn compile_and_verify(
+        nodes: &HashMap<String, CapabilityNode>,
+    ) -> Result<(), String> {
         Self::verify_no_cycles(nodes)?;
         Self::verify_dangling_references(nodes)?;
         Ok(())

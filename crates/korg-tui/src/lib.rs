@@ -3,9 +3,9 @@
 //! Entry point: `korg tui`
 //! Also usable via `korg campaign --tui` and `korg leader --demo --tui`
 
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use korg_runtime::acp::AcpMessage;
 use korg_runtime::leader::LeaderOrchestrator;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -25,8 +25,8 @@ use syntect::parsing::SyntaxSet;
 
 // Wire types defined in korg-runtime so the orchestration layer can reference
 // them without depending on this module.
-pub use korg_runtime::tui_bridge::{ContractResponse, TuiUpdate};
 pub use korg_runtime::recovery::{RewindCandidate, RewindScope};
+pub use korg_runtime::tui_bridge::{ContractResponse, TuiUpdate};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TuiTab {
@@ -1640,9 +1640,14 @@ async fn run_tui_event_loop(
                                 }
                             }
                             KeyCode::Enter => {
-                                if let Some(candidate) = app.rewind_candidates.get(app.rewind_cursor) {
+                                if let Some(candidate) =
+                                    app.rewind_candidates.get(app.rewind_cursor)
+                                {
                                     let seq_id = candidate.seq_id;
-                                    app.log(format!("Rewind to seq {} confirmed by operator", seq_id));
+                                    app.log(format!(
+                                        "Rewind to seq {} confirmed by operator",
+                                        seq_id
+                                    ));
                                     if let Some(ref tx) = app.feedback_tx {
                                         let _ = tx.try_send(ContractResponse::Rewind(seq_id));
                                     }
@@ -3780,7 +3785,10 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 Style::default().fg(Color::Rgb(160, 165, 175))
             };
             lines.push(Line::from(Span::styled(
-                format!("{}[{}]  seq {}  — {}", prefix, scope_label, candidate.seq_id, candidate.rationale),
+                format!(
+                    "{}[{}]  seq {}  — {}",
+                    prefix, scope_label, candidate.seq_id, candidate.rationale
+                ),
                 style,
             )));
             if i < app.rewind_candidates.len() - 1 {
