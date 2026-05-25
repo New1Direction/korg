@@ -9,7 +9,7 @@
 
 use ax_sse::{Event, Sse};
 use axum::{
-    extract::State,
+    extract::{State, Query},
     response::{Html, IntoResponse},
     routing::{get, post},
     Json, Router,
@@ -558,8 +558,8 @@ async fn semantic_search_handler(
     State(_state): State<Arc<AppState>>,
     Json(payload): Json<SemanticSearchRequest>,
 ) -> impl IntoResponse {
-    let index_path = ".korg/index.json";
-    if !std::path::Path::new(index_path).exists() {
+    let index_path = crate::paths::project_root().join(".korg/index.json");
+    if !index_path.exists() {
         return (
             axum::http::StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Index file not found. Please run indexer." })),
@@ -567,7 +567,7 @@ async fn semantic_search_handler(
             .into_response();
     }
 
-    let index = match crate::code_indexer::load_index(index_path) {
+    let index = match crate::code_indexer::load_index(&index_path) {
         Ok(idx) => idx,
         Err(e) => {
             return (
@@ -604,24 +604,49 @@ async fn semantic_search_handler(
     (axum::http::StatusCode::OK, Json(results)).into_response()
 }
 
+#[derive(serde::Deserialize)]
+struct JournalQuery {
+    triggered_by: Option<u64>,
+}
+
 /// GET `/api/journal`
 ///
 /// Returns the last 100 capability kernel events as JSONL (one event per line).
 /// Suitable for streaming to log shippers, dashboards, or debugging sessions.
-async fn journal_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn journal_handler(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<JournalQuery>,
+) -> impl IntoResponse {
     let resolver = state.capability_resolver.lock().await;
-    let jsonl = resolver.journal.to_json_lines(100);
+    let jsonl = resolver.journal.to_json_lines_filtered(params.triggered_by, 100);
     let total = resolver.journal.len();
     drop(resolver);
 
-    (
-        [
-            ("content-type", "application/x-ndjson"),
-            ("x-korg-journal-total", ""),
-        ],
-        format!("// total events: {}\n{}", total, jsonl),
-    )
-        .into_response()
+    match jsonl {
+        Some(content) => (
+            axum::http::StatusCode::OK,
+            [
+                ("content-type", "application/x-ndjson"),
+                ("x-korg-journal-trigger-found", "true"),
+            ],
+            format!("// total events: {}\n{}", total, content),
+        )
+            .into_response(),
+        None => {
+            let triggered_id = params.triggered_by.unwrap_or(0);
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                [
+                    ("content-type", "application/json"),
+                    ("x-korg-journal-trigger-found", "false"),
+                ],
+                Json(serde_json::json!({
+                    "error": format!("Trigger sequence ID {} not found in ledger index.", triggered_id)
+                })),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// POST `/api/agent/tool-call`
@@ -679,7 +704,7 @@ async fn agent_tool_call_handler(
     use uuid::Uuid;
 
     let event = CapabilityEvent::AgentToolCall {
-        source_agent: req.source_agent,
+        source_agent: req.source_agent.clone(),
         tool_name: req.tool_name,
         args: req.args,
         result: req.result,
@@ -738,7 +763,7 @@ async fn agent_tool_call_handler(
         correlation_id: Uuid::nil(), // AgentToolCall has no internal plan_id
         causation_id,
         root_event_id,
-        actor_id: "korg:api".to_string(), // ingestion endpoint identity
+        actor_id: "korg:api".to_string(), // actor_id represents the recorder identity (spec §4)
         campaign_id: Uuid::nil(),
         emitted_at,
         branch_id: None,
@@ -1512,3 +1537,73 @@ const LANDING_HTML: &str = r##"<!DOCTYPE html>
 
 </body>
 </html>"##;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::{CapabilityResolver, CapabilityJournal};
+    use crate::web::AppState;
+    use std::sync::Arc;
+    use tokio::sync::Mutex as TokioMutex;
+    use std::sync::Mutex as StdMutex;
+    use axum::extract::State;
+    use axum::Json;
+    use crate::web::AgentToolCallRequest;
+
+    #[tokio::test]
+    async fn test_agent_tool_call_actor_id_always_korg_api() {
+        let (broadcaster_tx, _) = tokio::sync::broadcast::channel(16);
+        let (feedback_tx, _) = tokio::sync::mpsc::channel(16);
+        
+        let temp_dir = std::env::temp_dir().join(format!("korg_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        
+        let journal = CapabilityJournal::new(
+            temp_dir.join("journal.json"),
+            temp_dir.join("snapshot.json"),
+            10,
+            temp_dir.join("lock.lock"),
+        );
+        let resolver = CapabilityResolver::new(std::collections::HashMap::new(), journal);
+        let capability_resolver_container = Arc::new(TokioMutex::new(resolver));
+        
+        let app_state = Arc::new(AppState {
+            broadcaster: broadcaster_tx,
+            feedback_tx: TokioMutex::new(Some(feedback_tx)),
+            capability_resolver: capability_resolver_container.clone(),
+            runtime_coordinator: Arc::new(StdMutex::new(None)),
+        });
+
+        let req = AgentToolCallRequest {
+            source_agent: "agent:claude-code@0.2.29".to_string(),
+            tool_name: "Read".to_string(),
+            args: serde_json::json!({ "file_path": "math_utils.py" }),
+            result: serde_json::json!({ "content": "hello" }),
+            payload_refs: vec![],
+            success: true,
+            duration_ms: 100,
+            triggered_by: None,
+        };
+
+        // Call the handler directly!
+        let _response = agent_tool_call_handler(
+            State(app_state),
+            Json(req),
+        ).await;
+
+        // Verify the event was added and metadata.actor_id == "korg:api"
+        let resolver_lock = capability_resolver_container.lock().await;
+        let events = &resolver_lock.journal.events;
+        assert!(!events.is_empty(), "Events should not be empty");
+        let last_event = &events[events.len() - 1];
+        
+        // Assert actor_id is "korg:api"
+        assert_eq!(last_event.metadata.actor_id, "korg:api");
+        
+        // Assert triggered_by is None (preserved correctly)
+        assert_eq!(last_event.metadata.triggered_by, None);
+        
+        // Clean up temp dir
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}

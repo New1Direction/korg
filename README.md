@@ -1,7 +1,7 @@
 # korg
 
-**The first deterministic cognitive runtime.**
-*Every decision your AI agent makes is logged, causally ordered, and reversible — like Git, but for cognition.*
+**A causally-ordered, rewindable event-ledger for autonomous AI agents.**
+*Every decision your AI agent makes is logged, structured, and reversible — like Git, but for cognition.*
 
 [![Crates.io](https://img.shields.io/crates/v/korg.svg?style=flat-square&color=fc8d62)](https://crates.io/crates/korg)
 [![docs.rs](https://img.shields.io/docsrs/korg?style=flat-square)](https://docs.rs/korg)
@@ -25,6 +25,14 @@
 
 ## What Korg Does
 
+> [!NOTE]
+> **Universal Ingestion Integration Mode:**
+> Korg v1 is an MCP-callable audit sink. Any MCP-compatible coding agent (Claude Code, Codex, etc.) can call korg's tools to record its session as a causally-linked, replayable, rewindable ledger. The agent must be instructed to log its actions — typically via system prompt or MCP server configuration. Fully passive auditing without agent cooperation is on the roadmap for future versions.
+
+> [!WARNING]
+> **Trust Boundary & Deployment Scope:**
+> Korg v1 is designed strictly for local, single-user workspaces. Multi-tenant and networked deployments require cryptographic authentication and permission bounds that are not yet shipped. Running the server on an untrusted or public network exposes workspace read/write access.
+
 Korg is a **cognitive hypervisor** — a runtime layer that sits beneath your AI agents and governs every decision they make.
 
 It doesn't replace your LLM. It governs what the LLM does.
@@ -44,24 +52,59 @@ Every agent action is:
 
 ---
 
-## The Demo
+## Try the Time-Travel Demo
+
+You can run the built-in sandbox demo to see cognitive time-travel in action. The demo sets up a temporary workspace with a buggy Python script, lets a simulated coding agent make a wrong edit, catches the test failure, rewinds the workspace and ledger to before the edit, and speculatively commits the correct fix:
 
 ```bash
-# Run an autonomous agent campaign
-korg run "Fix the authentication bug in src/auth.rs"
+cargo run -- demo
+```
 
-# Every decision is logged with a causal timestamp
-# Watch the ktrans ledger stream in real time...
+You will see the complete, colorized time-travel sequence:
 
-# Agent goes down a wrong path? Rewind it.
-korg rewind --seq 4
-# Workspace snaps back instantly (Git Merkle O(1) restore)
+```
+⚡ STARTING KORG COGNITIVE TIME-TRAVEL DEMO ⚡
+────────────────────────────────────────────────────────────────────────────────
+[korg] Initializing sandboxed demo environment...
+[korg] Created temporary workspace with math_utils.py (subtraction bug present).
 
-# Fork from that point with a different strategy
-korg fork --from 4 --goal "Try a stateless JWT approach"
+🚀 PHASE 1: AGENT INITIATES RUN (WRONG PATH)
+  [seq 390] actor: agent:claude-code@0.2.29 | tool: user_prompt | prompt: "Fix subtraction bug and verify tests pass"
+  [seq 391] actor: agent:claude-code@0.2.29 | tool: Read        | file: math_utils.py
+  [seq 392] actor: agent:claude-code@0.2.29 | tool: Edit        | result: "Modified return a + b (wrong fix)"
+  [seq 393] actor: agent:claude-code@0.2.29 | tool: Bash        | command: "pytest" -> ❌ FAILED (2 tests failed)
 
-# Both branches run. Best result wins. Full audit trail.
-korg merge --winner branch-2
+📊 LEDGER STATE (BEFORE REWIND):
+  Before rewind: events 390-393 (prompt, read, edit-wrong, test-failed)
+    ├── seq 390 (user_prompt) -> triggered_by: None
+    ├── seq 391 (Read) -> triggered_by: Some(390)
+    ├── seq 392 (Edit) -> triggered_by: Some(391)
+    ├── seq 393 (Bash) -> triggered_by: Some(392)
+
+⏳ PHASE 2: INITIATING REVERSIBLE REWIND TO SEQ 391
+  [korg] Truncating journal ledger to sequence ID 391...
+  [korg] Restoring workspace snapshot via git read-tree (O(1))...
+  [korg] Reset math_utils.py file state back to sequence 391 bug state.
+  [korg] Rebuilding 3 read-model projections...
+
+📊 LEDGER STATE (AFTER REWIND):
+  After rewind:  events 390-391 (prompt, read)
+    ├── seq 390 (user_prompt) -> triggered_by: None
+    ├── seq 391 (Read) -> triggered_by: Some(390)
+
+🚀 PHASE 3: AGENT DIVERGES DOWN CORRECT PATH (SPECULATIVE REPLAY)
+  [seq 392] actor: agent:claude-code@0.2.29 | tool: Edit        | result: "Modified return a - b (correct fix)"
+  [seq 393] actor: agent:claude-code@0.2.29 | tool: Bash        | command: "pytest" -> ✓ PASSED (2 passed)
+
+📊 LEDGER STATE (AFTER DIVERGENT RUN):
+  After new run: events 390-393 (prompt, read, edit-right, test-passed)
+    ├── seq 390 (user_prompt) -> triggered_by: None
+    ├── seq 391 (Read) -> triggered_by: Some(390)
+    ├── seq 392 (Edit) -> triggered_by: Some(391)
+    ├── seq 393 (Bash) -> triggered_by: Some(392)
+
+✓ DEMO COMPLETE: Time-travel execution succeeded!
+  Ledger truncated, workspace rolled back, and a different future was successfully committed.
 ```
 
 > *No other AI agent runtime lets you do this.*
@@ -220,6 +263,10 @@ Korg treats AI cognition the same way a hypervisor treats compute and Git treats
 
 → **[Read the full technical write-up](https://github.com/New1Direction/korg/blob/main/ARCHITECTURE.md)** *(coming soon)*
 
+### Real-World Audit Ledger Example
+You can inspect a real-world cognitive audit ledger produced by Korg. This NDJSON file records a live session where Claude Code was prompted to call Korg's MCP tools to refactor a function and rename all call sites, capturing the full HLC causal graph and `actor_id` recorder metadata:
+* **[Claude Code Session Causal Ledger (NDJSON)](examples/claude_code_session_ledger.json)**
+
 The short version:
 
 1. **CapabilityResolver** — the single authority for all runtime state. All reads and writes flow through it. No secondary state stores.
@@ -232,7 +279,7 @@ The short version:
 
 ## Status
 
-Korg is in active development. Current test coverage: **130 tests, 0 failures**.
+Korg is in active development. Current test coverage: **133 tests, 0 failures**.
 
 - [x] Append-only cognitive ledger with HLC ordering
 - [x] Deterministic replay and projection rebuilds

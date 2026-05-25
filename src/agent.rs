@@ -1311,15 +1311,15 @@ async fn execute_semantic_search(args: &serde_json::Value) -> ToolResult {
     };
     let top_n = args.get("top_n").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
 
-    let index_path = ".korg/index.json";
-    if !std::path::Path::new(index_path).exists() {
+    let index_path = crate::paths::project_root().join(".korg/index.json");
+    if !index_path.exists() {
         return ToolResult {
             success: false,
             output: "Codebase semantic index not found. The user must build it first (e.g. using '/index' in shell or via a build step).".to_string(),
         };
     }
 
-    let index = match crate::code_indexer::load_index(index_path) {
+    let index = match crate::code_indexer::load_index(&index_path) {
         Ok(idx) => idx,
         Err(e) => {
             return ToolResult {
@@ -1920,7 +1920,10 @@ mod tests {
     async fn test_execute_semantic_search() {
         let args = serde_json::json!({"query": "agent", "top_n": 2});
         let result = execute_semantic_search(&args).await;
-        let index_exists = std::path::Path::new(".korg/index.json").exists();
+        
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let index_exists = manifest_dir.join(".korg/index.json").exists();
+
         assert_eq!(result.success, index_exists);
         if index_exists {
             assert!(!result.output.is_empty());

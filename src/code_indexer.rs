@@ -289,7 +289,7 @@ pub fn save_index(index: &CodebaseIndex, path: &str) -> Result<()> {
 }
 
 /// Load a previously saved codebase semantic index
-pub fn load_index(path: &str) -> Result<CodebaseIndex> {
+pub fn load_index<P: AsRef<Path>>(path: P) -> Result<CodebaseIndex> {
     let content = fs::read_to_string(path).context("Failed to read codebase index file")?;
     let index =
         serde_json::from_str(&content).context("Failed to deserialize codebase index JSON")?;
