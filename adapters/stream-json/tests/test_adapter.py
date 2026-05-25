@@ -1,0 +1,399 @@
+import unittest
+from unittest.mock import patch, MagicMock
+import json
+import time
+import tempfile
+import shutil
+import os
+import sys
+
+# Append the parent directory to sys.path so we can import the adapter
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+import korg_stream_adapter as adapter
+
+class TestKorgStreamAdapter(unittest.TestCase):
+    def setUp(self):
+        # Reset global causality and session state before each test
+        adapter.last_emitted_seq = None
+        adapter.local_seq_counter = 0
+        adapter.local_to_server_seq.clear()
+        adapter.last_local_user_or_result_seq = None
+        adapter.last_local_llm_seq = None
+        adapter.last_local_emitted_seq = None
+        adapter.pending_tool_uses.clear()
+        adapter.init_received = False
+        adapter.session_id = None
+        adapter.claude_code_version = None
+        adapter.cwd = None
+        adapter.model = None
+        adapter.permission_mode = None
+        adapter.source_agent = "agent:claude-code@unknown"
+        
+        # Clear queue
+        while not adapter.event_queue.empty():
+            try:
+                adapter.event_queue.get_nowait()
+                adapter.event_queue.task_done()
+            except Exception:
+                pass
+                
+        # Create temp dir for workspace mock
+        self.test_dir = tempfile.mkdtemp()
+        adapter.cwd = self.test_dir
+        
+        # Clean unknown_events.log if it exists
+        if os.path.exists("unknown_events.log"):
+            try:
+                os.remove("unknown_events.log")
+            except Exception:
+                pass
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir)
+        if os.path.exists("unknown_events.log"):
+            try:
+                os.remove("unknown_events.log")
+            except Exception:
+                pass
+
+    @patch("requests.post")
+    def test_init_event_extracts_version_and_session_id(self, mock_post):
+        # 1. Parse a system/init event
+        init_json = {
+            "type": "system",
+            "subtype": "init",
+            "cwd": self.test_dir,
+            "session_id": "test-session-1234",
+            "model": "claude-opus-4-7",
+            "permissionMode": "auto",
+            "claude_code_version": "2.1.150"
+        }
+        adapter.parse_stream_line(json.dumps(init_json))
+        
+        self.assertTrue(adapter.init_received)
+        self.assertEqual(adapter.session_id, "test-session-1234")
+        self.assertEqual(adapter.cwd, self.test_dir)
+        self.assertEqual(adapter.model, "claude-opus-4-7")
+        self.assertEqual(adapter.permission_mode, "auto")
+        self.assertEqual(adapter.source_agent, "agent:claude-code@2.1.150")
+        mock_post.assert_not_called()
+
+    @patch("requests.post")
+    def test_user_prompt_becomes_root(self, mock_post):
+        # Mock successful Korg response returning seq_id=5
+        mock_res = MagicMock()
+        mock_res.status_code = 200
+        mock_res.json.return_value = {"seq_id": 5}
+        mock_post.return_value = mock_res
+        
+        # Parse user prompt
+        user_prompt_json = {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": "Verify all tests compile green"
+            }
+        }
+        adapter.parse_stream_line(json.dumps(user_prompt_json))
+        adapter.event_queue.join()
+        
+        # Verify it was enqueued and posted as user_prompt with triggered_by=None
+        mock_post.assert_called_once()
+        posted_data = mock_post.call_args[1]["json"]
+        self.assertEqual(posted_data["tool_name"], "user_prompt")
+        self.assertEqual(posted_data["args"]["prompt"], "Verify all tests compile green")
+        self.assertIsNone(posted_data["triggered_by"])
+        self.assertEqual(adapter.last_emitted_seq, 5)
+        
+        # Verify local sequentials are recorded properly
+        self.assertEqual(adapter.local_to_server_seq[adapter.last_local_user_or_result_seq], 5)
+
+    @patch("requests.post")
+    def test_tool_use_paired_with_tool_result(self, mock_post):
+        # Set up mock response
+        mock_res = MagicMock()
+        mock_res.status_code = 200
+        mock_res.json.return_value = {"seq_id": 10}
+        mock_post.return_value = mock_res
+        
+        # Set parent causality pointers on local sequence layer
+        adapter.last_local_llm_seq = 4
+        adapter.local_to_server_seq[4] = 8
+        
+        # Buffer tool use
+        tool_use = {
+            "id": "toolu_1234",
+            "name": "Read",
+            "input": {"file_path": "src/web.rs"}
+        }
+        adapter.pending_tool_uses["toolu_1234"] = (tool_use, time.monotonic() - 0.5) # start 500ms ago
+        
+        # Parse tool result user event
+        user_result_json = {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "tool_use_id": "toolu_1234",
+                        "type": "tool_result",
+                        "content": "fn test_tool_call() {}",
+                        "is_error": False
+                    }
+                ]
+            }
+        }
+        adapter.parse_stream_line(json.dumps(user_result_json))
+        adapter.event_queue.join()
+        
+        # Verify call was paired and emitted
+        mock_post.assert_called_once()
+        posted_data = mock_post.call_args[1]["json"]
+        self.assertEqual(posted_data["tool_name"], "Read")
+        self.assertEqual(posted_data["args"]["file_path"], "src/web.rs")
+        self.assertEqual(posted_data["result"]["content"], "fn test_tool_call() {}")
+        self.assertEqual(posted_data["triggered_by"], 8)
+        self.assertTrue(posted_data["success"])
+        self.assertGreaterEqual(posted_data["duration_ms"], 500)
+
+    @patch("requests.post")
+    def test_parallel_tools_share_triggered_by(self, mock_post):
+        mock_res = MagicMock()
+        mock_res.status_code = 200
+        mock_res.json.return_value = {"seq_id": 12}
+        mock_post.return_value = mock_res
+        
+        # Set parent causality pointers on local sequence layer
+        adapter.last_local_llm_seq = 5
+        adapter.local_to_server_seq[5] = 10
+        
+        # Buffer two tool uses from the same assistant run
+        adapter.pending_tool_uses["toolu_A"] = ({"id": "toolu_A", "name": "Read", "input": {"file_path": "a.txt"}}, time.monotonic())
+        adapter.pending_tool_uses["toolu_B"] = ({"id": "toolu_B", "name": "Write", "input": {"file_path": "b.txt"}}, time.monotonic())
+        
+        # Complete tool result A
+        adapter.parse_stream_line(json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": [{"tool_use_id": "toolu_A", "type": "tool_result", "content": "res A", "is_error": False}]}
+        }))
+        adapter.event_queue.join()
+        
+        # Complete tool result B
+        adapter.parse_stream_line(json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": [{"tool_use_id": "toolu_B", "type": "tool_result", "content": "res B", "is_error": False}]}
+        }))
+        adapter.event_queue.join()
+        
+        # Assert both share parent triggered_by = 10
+        calls = mock_post.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][1]["json"]["triggered_by"], 10)
+        self.assertEqual(calls[1][1]["json"]["triggered_by"], 10)
+
+    @patch("requests.post")
+    def test_large_result_content_refs(self, mock_post):
+        mock_res = MagicMock()
+        mock_res.status_code = 200
+        mock_res.json.return_value = {"seq_id": 15}
+        mock_post.return_value = mock_res
+        
+        # Prepare tool use
+        adapter.pending_tool_uses["toolu_large"] = ({"id": "toolu_large", "name": "Bash", "input": {"command": "test"}}, time.monotonic())
+        
+        # Generate result string larger than 1024 bytes (1.2KB)
+        large_content = "A" * 1200
+        
+        adapter.parse_stream_line(json.dumps({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "tool_use_id": "toolu_large",
+                        "type": "tool_result",
+                        "content": large_content,
+                        "is_error": False
+                    }
+                ]
+            }
+        }))
+        adapter.event_queue.join()
+        
+        # Verify content was extracted as content ref
+        mock_post.assert_called_once()
+        posted_data = mock_post.call_args[1]["json"]
+        ref_block = posted_data["result"]["content"]
+        self.assertIn("_ref", ref_block)
+        self.assertEqual(ref_block["size_bytes"], 1200)
+        
+        # Verify blob file was physically written to workspace blobs directory
+        digest = ref_block["_ref"].replace("sha256:", "")
+        blob_path = os.path.join(self.test_dir, ".korg", "blobs", digest[:2], digest)
+        self.assertTrue(os.path.exists(blob_path))
+        with open(blob_path, "r") as f:
+            self.assertEqual(f.read(), large_content)
+
+    @patch("requests.post")
+    def test_bash_result_uses_content_field_not_tool_use_result(self, mock_post):
+        # Tests Option 1 (using user.message.content[].content instead of tool_use_result)
+        mock_res = MagicMock()
+        mock_res.status_code = 200
+        mock_res.json.return_value = {"seq_id": 20}
+        mock_post.return_value = mock_res
+        
+        adapter.pending_tool_uses["toolu_bash"] = ({"id": "toolu_bash", "name": "Bash", "input": {"command": "ls"}}, time.monotonic())
+        
+        # Emitted user event with both content (Option 1 source) and tool_use_result (Option 2 source)
+        adapter.parse_stream_line(json.dumps({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "tool_use_id": "toolu_bash",
+                        "type": "tool_result",
+                        "content": "OPTION_1_EXPECTED_VALUE",
+                        "is_error": False
+                    }
+                ]
+            },
+            "tool_use_result": {
+                "stdout": "OPTION_2_DISCARDED_VALUE",
+                "stderr": "",
+                "interrupted": False
+            }
+        }))
+        adapter.event_queue.join()
+        
+        mock_post.assert_called_once()
+        posted_data = mock_post.call_args[1]["json"]
+        self.assertEqual(posted_data["result"]["content"], "OPTION_1_EXPECTED_VALUE")
+
+    @patch("requests.post")
+    def test_unknown_tool_logged_not_emitted(self, mock_post):
+        # Buffer tool use of unsupported tool
+        unknown_assistant_json = {
+            "type": "assistant",
+            "message": {
+                "model": "claude-opus",
+                "id": "msg_unsupported",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_unknown",
+                        "name": "CronCreate",  # unsupported in v1.1 handler allowlist
+                        "input": {"cron_expression": "*/5 * * * *"}
+                    }
+                ]
+            }
+        }
+        adapter.parse_stream_line(json.dumps(unknown_assistant_json))
+        adapter.event_queue.join()
+        
+        # Verify it was NOT buffered inside pending_tool_uses
+        self.assertNotIn("toolu_unknown", adapter.pending_tool_uses)
+        
+        # Verify it was written to unknown_events.log
+        self.assertTrue(os.path.exists("unknown_events.log"))
+        with open("unknown_events.log", "r") as f:
+            logged_lines = f.readlines()
+            self.assertEqual(len(logged_lines), 1)
+            self.assertIn("CronCreate", logged_lines[0])
+
+    @patch("requests.post")
+    def test_session_complete_emitted_on_result_event(self, mock_post):
+        mock_res = MagicMock()
+        mock_res.status_code = 200
+        mock_res.json.return_value = {"seq_id": 35}
+        mock_post.return_value = mock_res
+        
+        # Set local causal pointers
+        adapter.last_local_emitted_seq = 6
+        adapter.local_to_server_seq[6] = 30
+        
+        adapter.cwd = "/workspace"
+        adapter.model = "opus"
+        adapter.permission_mode = "auto"
+        
+        result_json = {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "duration_ms": 5000,
+            "result": "Listed contents cleanly",
+            "terminal_reason": "completed",
+            "stop_reason": "end_turn",
+            "permission_denials": ["denied-bash"],
+            "total_cost_usd": 0.05,
+            "num_turns": 4
+        }
+        
+        adapter.parse_stream_line(json.dumps(result_json))
+        adapter.event_queue.join()
+        
+        # Assert session_complete enqueued and posted with strict allowlist
+        mock_post.assert_called_once()
+        posted_data = mock_post.call_args[1]["json"]
+        self.assertEqual(posted_data["tool_name"], "session_complete")
+        self.assertEqual(posted_data["triggered_by"], 30)
+        self.assertEqual(posted_data["args"]["cwd"], "/workspace")
+        self.assertEqual(posted_data["args"]["model"], "opus")
+        
+        res_payload = posted_data["result"]
+        self.assertEqual(res_payload["subtype"], "success")
+        self.assertEqual(res_payload["duration_ms"], 5000)
+        self.assertEqual(res_payload["total_cost_usd"], 0.05)
+        self.assertEqual(res_payload["summary"], "Listed contents cleanly")
+        self.assertEqual(res_payload["permission_denials"], ["denied-bash"])
+        self.assertEqual(res_payload["num_turns"], 4)
+        
+        # Assert pruned properties do not exist
+        self.assertNotIn("usage", res_payload)
+        self.assertNotIn("modelUsage", res_payload)
+
+    @patch("requests.post")
+    def test_orphan_event_when_no_init(self, mock_post):
+        # Tests that stream starting without system init event emits fallback
+        mock_res = MagicMock()
+        mock_res.status_code = 200
+        mock_res.json.return_value = {"seq_id": 1}
+        mock_post.return_value = mock_res
+        
+        # Parse user event directly without init
+        adapter.parse_stream_line(json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": "Initial prompt without system init"}
+        }))
+        adapter.event_queue.join()
+        
+        self.assertTrue(adapter.init_received)
+        self.assertIsNotNone(adapter.session_id)
+        self.assertEqual(adapter.source_agent, "agent:claude-code@unknown")
+        
+        mock_post.assert_called_once()
+        posted_data = mock_post.call_args[1]["json"]
+        self.assertEqual(posted_data["tool_name"], "user_prompt")
+        self.assertEqual(posted_data["args"]["prompt"], "Initial prompt without system init")
+
+    @patch("requests.post")
+    def test_korg_unreachable_does_not_block(self, mock_post):
+        # Mock requests failure throwing exception
+        mock_post.side_effect = Exception("Connection refused")
+        
+        # Parse user event
+        adapter.parse_stream_line(json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": "Fire-and-forget prompt when server is dead"}
+        }))
+        
+        # Wait for queue to flush
+        adapter.event_queue.join()
+        
+        # If it returns here without raising, the test succeeded, confirming
+        # that unreachable Korg server is non-blocking to the parser/stdin stream.
+        self.assertTrue(mock_post.called)
+
+if __name__ == "__main__":
+    unittest.main()
