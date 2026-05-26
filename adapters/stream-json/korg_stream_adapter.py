@@ -200,6 +200,18 @@ def log_unknown_event(event):
     except Exception as e:
         sys.stderr.write(f"ERROR: Failed to write to unknown_events.log: {e}\n")
 
+def _stable_default(obj):
+    """json.dumps default-hook that always returns a deterministic string.
+
+    Falling back to str(obj) (the old behaviour) yields '<__main__.Foo object
+    at 0x...>' for custom types, which changes every run and breaks the
+    spec §3/§7.2 invariant that two agents hashing the same logical content
+    produce the same SHA-256. A type-name placeholder is deterministic and
+    loud enough that pipelines can flag it.
+    """
+    return f"<unhashable-type:{type(obj).__name__}>"
+
+
 def canonical_hash_and_store_blob(value, project_cwd):
     """
     Computes deterministic SHA-256 digest and writes to blob store.
@@ -213,7 +225,16 @@ def canonical_hash_and_store_blob(value, project_cwd):
     elif isinstance(value, bytes):
         raw_bytes = value
     else:
-        serialized = str(value)
+        try:
+            serialized = json.dumps(
+                value, separators=(',', ':'), sort_keys=True, default=_stable_default
+            )
+        except (TypeError, ValueError) as exc:
+            sys.stderr.write(
+                f"WARNING: blob value of type {type(value).__name__} is not JSON-serialisable "
+                f"({exc}); substituting deterministic placeholder.\n"
+            )
+            serialized = _stable_default(value)
         raw_bytes = serialized.encode("utf-8")
 
     sha256 = hashlib.sha256(raw_bytes).hexdigest()
@@ -238,6 +259,11 @@ def process_content_refs(obj, project_cwd):
     Recursively scans arguments or results and replaces any field values
     larger than 1024 bytes with a content ref sentinel.
     """
+    # Defense in depth: if a stream skipped system/init we may be called with
+    # project_cwd=None. canonical_hash_and_store_blob already falls back to
+    # os.getcwd(), but normalising here keeps the contract self-contained.
+    if project_cwd is None:
+        project_cwd = os.getcwd()
     if isinstance(obj, dict):
         new_dict = {}
         for k, v in obj.items():
@@ -321,7 +347,15 @@ def enqueue_korg_event(mapped_event, ptuid=None):
         if tool_name == "user_prompt":
             mapped_event["local_triggered_by"] = None
         elif tool_name == "llm_inference":
-            mapped_event["local_triggered_by"] = last_local_user_or_result_seq
+            # Per spec §2a: round-N's llm_inference chains to round-(N-1)'s
+            # llm_inference, not the most recent user/tool_result. For round 1
+            # there's no prior llm_inference so we fall back to the root
+            # user_prompt seq, satisfying the "every event has a root" invariant.
+            mapped_event["local_triggered_by"] = (
+                last_local_llm_seq
+                if last_local_llm_seq is not None
+                else last_local_user_or_result_seq
+            )
         elif tool_name == "session_complete":
             mapped_event["local_triggered_by"] = last_local_emitted_seq
         else:
@@ -373,8 +407,15 @@ def enqueue_korg_event(mapped_event, ptuid=None):
     with queue_lock:
         if event_queue.full():
             try:
-                event_queue.get_nowait()
-                sys.stderr.write("WARNING: Queue full, dropping oldest event\n")
+                dropped = event_queue.get_nowait()
+                dropped_seq = dropped.get("local_seq_id", "?")
+                # Surface the dropped seq so consumers reading stderr can
+                # reconstruct the causal-chain gap. Previously the warning
+                # said nothing about which event was lost.
+                sys.stderr.write(
+                    f"WARNING: korg-adapter queue full (capacity 256); "
+                    f"dropped local_seq={dropped_seq}. Causal chain has a gap here.\n"
+                )
             except queue.Empty:
                 pass
         event_queue.put_nowait(mapped_event)

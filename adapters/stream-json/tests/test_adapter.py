@@ -523,9 +523,12 @@ class TestKorgStreamAdapter(unittest.TestCase):
             "label": "Bash"
         }])
 
-        # 4. llm_inference from second assistant turn
+        # 4. llm_inference from second assistant turn — per spec §2a, an
+        # llm_inference chains to the previous llm_inference, NOT the most
+        # recent user/tool_result. So round-2's parent is round-1's llm_inference (404),
+        # even though the Bash tool result at 405 was emitted in between.
         self.assertEqual(calls[3]["tool_name"], "llm_inference")
-        self.assertEqual(calls[3]["triggered_by"], 405) # Chains back to Bash tool result!
+        self.assertEqual(calls[3]["triggered_by"], 404)
 
         # 5. session_complete from result event
         self.assertEqual(calls[4]["tool_name"], "session_complete")
@@ -601,10 +604,12 @@ class TestKorgStreamAdapter(unittest.TestCase):
         self.assertEqual(calls[5]["source_agent"], "agent:claude-code/main@2.1.150")
         self.assertEqual(calls[5]["triggered_by"], 101)  # main last_llm_seq (set at event 2)
 
-        # 7. Main-spine llm_inference (final text turn)
+        # 7. Main-spine llm_inference (final text turn) — chains to the
+        # previous main llm_inference per spec §2a, not the Agent tool_result
+        # at 105 that was emitted in between.
         self.assertEqual(calls[6]["tool_name"], "llm_inference")
         self.assertEqual(calls[6]["source_agent"], "agent:claude-code/main@2.1.150")
-        self.assertEqual(calls[6]["triggered_by"], 105)  # main last_user_or_result_seq (updated by Agent result)
+        self.assertEqual(calls[6]["triggered_by"], 101)
 
         # 8. session_complete
         self.assertEqual(calls[7]["tool_name"], "session_complete")
