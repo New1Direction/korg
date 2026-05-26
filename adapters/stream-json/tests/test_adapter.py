@@ -610,5 +610,100 @@ class TestKorgStreamAdapter(unittest.TestCase):
         self.assertEqual(calls[7]["tool_name"], "session_complete")
         self.assertEqual(calls[7]["triggered_by"], 106)  # main last_emitted_seq
 
+    @patch("requests.post")
+    def test_subagent_cross_spine_uses_spawning_llm_seq_not_latest(self, mock_post):
+        """Regression for audit High #10.
+
+        If a main-spine llm_inference fires between buffering a Task tool_use
+        and the sub-agent's first user_prompt arriving, the cross-spine link
+        must still point at the SPAWNING llm_inference, not the latest one.
+
+        Synthetic event order:
+          1. system/init                        — main user_prompt synthesized → seq=100
+          2. main assistant chunk (Task tool)   — main llm_inference        → seq=101  (SPAWNING)
+          3. main assistant chunk (text only)   — main llm_inference        → seq=102  (LATEST main)
+          4. sub-agent user_prompt              — must link to 101, not 102
+
+        Without the fix (last_local_llm_seq path), step 4 would link to 102.
+        """
+        adapter.init_received = False  # let synthesized user_prompt run
+
+        seq_ids = iter([100, 101, 102, 103])
+
+        def mock_post_handler(url, json=None, headers=None, timeout=5.0):
+            res = MagicMock()
+            res.status_code = 200
+            res.json.return_value = {"seq_id": next(seq_ids)}
+            return res
+
+        mock_post.side_effect = mock_post_handler
+
+        # 1. System init — synthesizes a root user_prompt
+        adapter.parse_stream_line(json.dumps({
+            "type": "system",
+            "subtype": "init",
+            "session_id": "regression-cross-spine",
+            "claude_code_version": "2.1.150",
+            "cwd": adapter.cwd,
+            "model": "claude-opus-4-7",
+            "permissionMode": "default",
+            "tools": ["Task"],
+        }))
+
+        # 2. Main assistant (chunk 1, msg_A): contains the Task tool_use that
+        #    spawns the sub-agent. This llm_inference is what the sub-agent's
+        #    user_prompt should link to.
+        adapter.parse_stream_line(json.dumps({
+            "type": "assistant",
+            "message": {
+                "id": "msg_A",
+                "content": [
+                    {"type": "tool_use", "id": "toolu_TASK", "name": "Task",
+                     "input": {"prompt": "child task"}},
+                ],
+            },
+        }))
+
+        # 3. Main assistant (msg_B): an unrelated later llm_inference. This is
+        #    the scenario the audit warns about — any additional main-spine
+        #    llm_inference between buffering and the sub-agent user_prompt
+        #    would shift last_local_llm_seq forward.
+        adapter.parse_stream_line(json.dumps({
+            "type": "assistant",
+            "message": {
+                "id": "msg_B",
+                "content": [{"type": "text", "text": "interleaved thought"}],
+            },
+        }))
+
+        # 4. Sub-agent user_prompt with ptuid pointing at msg_A's Task tool_use.
+        adapter.parse_stream_line(json.dumps({
+            "type": "user",
+            "parent_tool_use_id": "toolu_TASK",
+            "message": {
+                "content": [{"type": "text", "text": "sub-agent kickoff"}],
+            },
+        }))
+
+        adapter.event_queue.join()
+        calls = [args[1]["json"] for args in mock_post.call_args_list]
+
+        # Sanity: 4 events emitted (root user_prompt + 2 main llm_inferences + sub user_prompt).
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(calls[0]["tool_name"], "user_prompt")  # root, seq=100
+        self.assertEqual(calls[1]["tool_name"], "llm_inference")  # msg_A, seq=101 (SPAWNING)
+        self.assertEqual(calls[2]["tool_name"], "llm_inference")  # msg_B, seq=102 (LATEST)
+
+        # The fix: sub-agent user_prompt links to 101, NOT 102. Without the
+        # fix, this would be 102 and the causal chain would be wrong.
+        self.assertEqual(calls[3]["tool_name"], "user_prompt")
+        self.assertEqual(calls[3]["source_agent"], "agent:claude-code/sub-toolu_TA@2.1.150")
+        self.assertEqual(
+            calls[3]["triggered_by"], 101,
+            "sub-agent user_prompt must link to the SPAWNING main llm_inference (101), "
+            "not the most recent main llm_inference (102)"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -285,8 +285,25 @@ def enqueue_korg_event(mapped_event, ptuid=None):
             "last_emitted_seq": None,
         })
         if tool_name == "user_prompt":
-            # Cross-spine: sub-agent root triggered by main spine's last llm_inference
-            mapped_event["local_triggered_by"] = last_local_llm_seq
+            # Cross-spine: sub-agent root triggered by the main-spine llm_inference
+            # that contained the spawning Task tool_use. Look it up via the
+            # ptuid (= tool_use id). Falling back to last_local_llm_seq is
+            # order-fragile — if any other main-spine llm_inference fires
+            # between buffering and this user_prompt, the global is stale.
+            spawn_entry = pending_tool_uses.get(ptuid)
+            spawning_seq = spawn_entry[2] if spawn_entry and len(spawn_entry) >= 3 else None
+            if spawning_seq is None:
+                # Defensive fallback. Hits when the parent tool_use wasn't
+                # buffered (unknown tool, or sub-agent event arrived before
+                # the spawning assistant chunk). Better than None — at least
+                # it chains to *some* main-spine event.
+                spawning_seq = last_local_llm_seq
+                if ptuid not in pending_tool_uses:
+                    sys.stderr.write(
+                        f"WARNING: sub-agent user_prompt with ptuid={ptuid[:12]}... "
+                        f"has no buffered parent tool_use; falling back to last_local_llm_seq\n"
+                    )
+            mapped_event["local_triggered_by"] = spawning_seq
         elif tool_name == "llm_inference":
             mapped_event["local_triggered_by"] = state["last_user_or_result_seq"]
         elif tool_name == "session_complete":
@@ -476,7 +493,10 @@ def parse_stream_line(line):
             # 3/3b. Pair buffered tool_use with this tool_result
             tool_use_id = tool_result_block.get("tool_use_id")
             if tool_use_id in pending_tool_uses:
-                tool_use, start_time = pending_tool_uses.pop(tool_use_id)
+                entry = pending_tool_uses.pop(tool_use_id)
+                tool_use, start_time = entry[0], entry[1]
+                # entry[2] is spawning_llm_seq, only consumed by the cross-spine
+                # user_prompt path; not needed here for the tool_result emit.
                 duration_ms = int((time.monotonic() - start_time) * 1000)
 
                 # Option 1: use user.message.content[].content as result string
@@ -574,7 +594,12 @@ def parse_stream_line(line):
             }
             enqueue_korg_event(mapped_inference, ptuid=ptuid)
 
-        # Buffer tool_uses (may arrive in a later streaming chunk for the same message.id)
+        # Buffer tool_uses (may arrive in a later streaming chunk for the same
+        # message.id). Capture last_local_llm_seq alongside so a future
+        # cross-spine lookup (sub-agent user_prompt with ptuid=this tool_use's
+        # id) can resolve the SPAWNING llm_inference seq regardless of how
+        # last_local_llm_seq evolved after this buffer call.
+        spawning_llm_seq = last_local_llm_seq
         for tool_use in tool_uses:
             tname = tool_use.get("name")
             tid = tool_use.get("id")
@@ -582,7 +607,7 @@ def parse_stream_line(line):
                 continue  # already buffered from an earlier streaming chunk
             is_known = tname in known_tools or (tname == "Agent" and "Task" in known_tools)
             if is_known:
-                pending_tool_uses[tid] = (tool_use, time.monotonic())
+                pending_tool_uses[tid] = (tool_use, time.monotonic(), spawning_llm_seq)
             else:
                 log_unknown_event(event)
 
