@@ -1226,19 +1226,36 @@ def _resource_blob_read(sha256: str, query: dict[str, str]) -> tuple[Any, str]:
             },
         )
 
-    # §8.4.1: wrap per content type
-    try:
-        text = raw_bytes.decode("utf-8")
+    # §8.4.1: wrap per content type. Trust an explicit text/* or
+    # application/json from the upstream. For octet-stream or missing types
+    # (often "I don't know"), attempt JSON parse — but NOT a bare UTF-8
+    # decode, since random binary frequently decodes as valid UTF-8 (e.g. a
+    # base64 payload) and would otherwise be misclassified as text.
+    ct_lower = content_type.lower() if isinstance(content_type, str) else ""
+    if ct_lower.startswith("application/json"):
         try:
+            return raw_bytes.decode("utf-8"), "application/json"
+        except UnicodeDecodeError:
+            return raw_bytes, content_type
+    if ct_lower.startswith("text/"):
+        try:
+            return raw_bytes.decode("utf-8"), content_type
+        except UnicodeDecodeError:
+            return raw_bytes, content_type
+
+    # Unknown / octet-stream upstream — sniff JSON specifically. We do NOT
+    # fall back to "valid UTF-8 = text" because that's the misclassification
+    # the audit flagged.
+    if ct_lower in ("", "application/octet-stream"):
+        try:
+            text = raw_bytes.decode("utf-8")
             json.loads(text)
             return text, "application/json"
-        except json.JSONDecodeError:
-            return text, content_type if content_type.startswith("text/") else "text/plain"
-    except UnicodeDecodeError:
-        pass
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            pass
 
-    # Binary — return raw bytes; handle_resources_read packs as MCP blob content
-    return raw_bytes, content_type
+    # Binary — return raw bytes; handle_resources_read packs as MCP blob content.
+    return raw_bytes, content_type or "application/octet-stream"
 
 
 def _dispatch_variable_resource(
