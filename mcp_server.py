@@ -993,6 +993,12 @@ _subscription_lock = threading.Lock()
 # seq_id → root_seq_id lookup (§8.5.2). Built at startup + extended per tick.
 # Guarded by _seq_to_root_lock.
 _seq_to_root: dict[int, int] = {}
+# Events whose parent (triggered_by) was outside the bootstrap window when we
+# saw them. parent_seq -> [child_seq, ...]. When the parent's root is finally
+# resolved (or the parent itself arrives), walk these children to fill in their
+# roots. Without this, the previous fallback `_seq_to_root.get(tb, seq)` would
+# silently route orphans into the wrong session.
+_pending_root_resolve: dict[int, list[int]] = {}
 _seq_to_root_lock = threading.Lock()
 
 # Highest seq_id the poller has processed. Events with seq > this are "new".
@@ -1014,7 +1020,15 @@ def _send_notification(msg: dict) -> None:
 
 
 def _update_seq_to_root(events: list[dict]) -> None:
-    """Extend the seq_id→root_seq_id table. Events must be processed oldest-first."""
+    """Extend the seq_id→root_seq_id table. Events must be processed oldest-first.
+
+    Events whose parent isn't yet in the table (e.g. parent fell outside the
+    bootstrap fetch window) get parked in _pending_root_resolve. When the
+    parent's root is later resolved we walk the pending list and assign the
+    same root to every descendant. Critically, we never write a wrong root —
+    the old fallback `_seq_to_root.get(tb, seq)` made orphans into self-roots,
+    which silently misrouted them into their own faux-session.
+    """
     sorted_evs = sorted(events, key=lambda e: e.get("seq_id", 0))
     with _seq_to_root_lock:
         for e in sorted_evs:
@@ -1024,8 +1038,28 @@ def _update_seq_to_root(events: list[dict]) -> None:
             tb = e.get("metadata", {}).get("triggered_by")
             if tb is None:
                 _seq_to_root[seq] = seq
+                _resolve_pending_children(seq, seq)
             else:
-                _seq_to_root[seq] = _seq_to_root.get(tb, seq)
+                root = _seq_to_root.get(tb)
+                if root is not None:
+                    _seq_to_root[seq] = root
+                    _resolve_pending_children(seq, root)
+                else:
+                    # Parent unknown — defer until it shows up.
+                    _pending_root_resolve.setdefault(tb, []).append(seq)
+
+
+def _resolve_pending_children(parent_seq: int, root_seq: int) -> None:
+    """Caller must hold _seq_to_root_lock. Drains _pending_root_resolve[parent_seq]
+    and recursively resolves grandchildren too."""
+    stack = [(parent_seq, root_seq)]
+    while stack:
+        anc, root = stack.pop()
+        children = _pending_root_resolve.pop(anc, [])
+        for child in children:
+            _seq_to_root[child] = root
+            # Grandchildren may have been parked waiting on this child.
+            stack.append((child, root))
 
 
 def _compile_predicate(uri: str) -> Callable[[dict], bool]:
