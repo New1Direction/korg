@@ -390,48 +390,55 @@ impl CapabilityJournal {
             .open(&self.lock_path)
             .map_err(|e| e.to_string())?;
 
-        if lock_file.lock_shared().is_ok() {
-            if self.journal_path.exists() {
-                if let Ok(mut f) = std::fs::File::open(&self.journal_path) {
-                    let mut content = String::new();
-                    if f.read_to_string(&mut content).is_ok() {
-                        if let Ok(parsed) = serde_json::from_str(&content) {
-                            self.events = parsed;
-                        }
+        // Propagate lock failure. A previous version used .is_ok() and
+        // proceeded either way, which meant load() returned silently with
+        // empty in-memory state when another process held the lock — same
+        // shape of "API claims success, disk wasn't read" as the speculative
+        // flush bug. Refuse to claim success unless we actually held the lock.
+        lock_file
+            .lock_shared()
+            .map_err(|e| format!("ledger shared lock failed: {e}"))?;
+
+        if self.journal_path.exists() {
+            if let Ok(mut f) = std::fs::File::open(&self.journal_path) {
+                let mut content = String::new();
+                if f.read_to_string(&mut content).is_ok() {
+                    if let Ok(parsed) = serde_json::from_str(&content) {
+                        self.events = parsed;
                     }
                 }
             }
-            if self.snapshot_path.exists() {
-                if let Ok(mut f) = std::fs::File::open(&self.snapshot_path) {
-                    let mut content = String::new();
-                    if f.read_to_string(&mut content).is_ok() {
-                        if let Ok(parsed) = serde_json::from_str(&content) {
-                            self.snapshots = parsed;
-                        }
-                    }
-                }
-            }
-
-            // Reconstruct monotonic sequence ID and HLC clock from loaded log history
-            self.last_seq_id = self.events.iter().map(|e| e.seq_id).max().unwrap_or(0);
-            self.clock = self
-                .events
-                .iter()
-                .map(|e| e.metadata.emitted_at)
-                .max()
-                .unwrap_or_default();
-
-            self.rebuild_triggered_by_index();
-
-            let elapsed = start_time.elapsed().as_millis();
-            eprintln!(
-                "journal load: {} events in {}ms",
-                self.events.len(),
-                elapsed
-            );
-
-            let _ = lock_file.unlock();
         }
+        if self.snapshot_path.exists() {
+            if let Ok(mut f) = std::fs::File::open(&self.snapshot_path) {
+                let mut content = String::new();
+                if f.read_to_string(&mut content).is_ok() {
+                    if let Ok(parsed) = serde_json::from_str(&content) {
+                        self.snapshots = parsed;
+                    }
+                }
+            }
+        }
+
+        // Reconstruct monotonic sequence ID and HLC clock from loaded log history
+        self.last_seq_id = self.events.iter().map(|e| e.seq_id).max().unwrap_or(0);
+        self.clock = self
+            .events
+            .iter()
+            .map(|e| e.metadata.emitted_at)
+            .max()
+            .unwrap_or_default();
+
+        self.rebuild_triggered_by_index();
+
+        let elapsed = start_time.elapsed().as_millis();
+        eprintln!(
+            "journal load: {} events in {}ms",
+            self.events.len(),
+            elapsed
+        );
+
+        let _ = lock_file.unlock();
         Ok(())
     }
 
@@ -575,29 +582,34 @@ impl CapabilityJournal {
             .open(&self.lock_path)
             .map_err(|e| e.to_string())?;
 
-        if lock_file.lock_exclusive().is_ok() {
-            // Write events atomically
-            let tmp_journal = self.journal_path.with_extension("tmp");
-            if let Ok(serialized) = serde_json::to_string_pretty(&self.events) {
-                if let Ok(mut f) = std::fs::File::create(&tmp_journal) {
-                    let _ = f.write_all(serialized.as_bytes());
-                    let _ = f.sync_all();
-                    let _ = std::fs::rename(&tmp_journal, &self.journal_path);
-                }
-            }
+        // Lock failure used to be swallowed via .is_ok() — flush would return
+        // Ok without ever touching disk. Propagate it instead so callers know
+        // their write didn't land.
+        lock_file
+            .lock_exclusive()
+            .map_err(|e| format!("ledger exclusive lock failed: {e}"))?;
 
-            // Write snapshots atomically
-            let tmp_snapshot = self.snapshot_path.with_extension("tmp");
-            if let Ok(serialized) = serde_json::to_string_pretty(&self.snapshots) {
-                if let Ok(mut f) = std::fs::File::create(&tmp_snapshot) {
-                    let _ = f.write_all(serialized.as_bytes());
-                    let _ = f.sync_all();
-                    let _ = std::fs::rename(&tmp_snapshot, &self.snapshot_path);
-                }
+        // Write events atomically
+        let tmp_journal = self.journal_path.with_extension("tmp");
+        if let Ok(serialized) = serde_json::to_string_pretty(&self.events) {
+            if let Ok(mut f) = std::fs::File::create(&tmp_journal) {
+                let _ = f.write_all(serialized.as_bytes());
+                let _ = f.sync_all();
+                let _ = std::fs::rename(&tmp_journal, &self.journal_path);
             }
-
-            let _ = lock_file.unlock();
         }
+
+        // Write snapshots atomically
+        let tmp_snapshot = self.snapshot_path.with_extension("tmp");
+        if let Ok(serialized) = serde_json::to_string_pretty(&self.snapshots) {
+            if let Ok(mut f) = std::fs::File::create(&tmp_snapshot) {
+                let _ = f.write_all(serialized.as_bytes());
+                let _ = f.sync_all();
+                let _ = std::fs::rename(&tmp_snapshot, &self.snapshot_path);
+            }
+        }
+
+        let _ = lock_file.unlock();
         Ok(())
     }
 

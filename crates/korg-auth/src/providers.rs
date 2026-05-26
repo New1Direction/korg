@@ -10,6 +10,46 @@ use std::sync::Arc;
 // can reference it without a circular dependency.
 pub use korg_core::SubscriptionTier;
 
+/// Validate a base_url before it's interpolated into OAuth callback URIs.
+/// Returns Err with a human-readable reason if the URL is unsafe.
+///
+/// Accepts: `https://<host>[:port]` or `http://localhost[:port]` /
+/// `http://127.0.0.1[:port]` (the latter two for local dev only).
+/// Rejects anything with a path/query/fragment, or with `..` traversal.
+pub(crate) fn validate_base_url(base_url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(base_url)
+        .map_err(|e| format!("base_url is not a valid URL: {e}"))?;
+
+    let scheme = parsed.scheme();
+    let host = parsed.host_str().unwrap_or("");
+    let is_loopback = matches!(host, "localhost" | "127.0.0.1" | "::1");
+
+    match scheme {
+        "https" => {}
+        "http" if is_loopback => {} // dev exemption
+        "http" => {
+            return Err(format!(
+                "base_url scheme http is only allowed for localhost/127.0.0.1, got host '{host}'"
+            ))
+        }
+        other => return Err(format!("base_url scheme '{other}' not allowed; need https")),
+    }
+
+    if parsed.path() != "" && parsed.path() != "/" {
+        return Err(format!(
+            "base_url must be an origin only (no path), got path '{}'",
+            parsed.path()
+        ));
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("base_url must not contain query or fragment".to_string());
+    }
+    if base_url.contains("..") {
+        return Err("base_url contains '..' traversal".to_string());
+    }
+    Ok(())
+}
+
 // Private helper — only called from verify_codex_subscription.
 fn tier_from_str(s: &str) -> SubscriptionTier {
     match s {
@@ -113,6 +153,15 @@ pub struct AuthProviders {
 
 impl AuthProviders {
     pub fn new(config: &crate::AuthConfig) -> Self {
+        // Validate the OAuth callback origin before any provider gets to splice
+        // it into a RedirectUrl. A misconfigured or attacker-controlled env var
+        // could otherwise route the OAuth callback to an arbitrary host.
+        if let Err(reason) = validate_base_url(&config.base_url) {
+            panic!(
+                "korg-auth: refusing to construct OAuth providers with invalid base_url '{}': {}",
+                config.base_url, reason
+            );
+        }
         let codex_provider = Arc::new(CodexProvider::new(config));
         let anthropic_provider = Arc::new(AnthropicProvider::new(config));
 
@@ -198,5 +247,53 @@ impl AuthProviders {
             }
             Err(_) => SubscriptionTier::Standard,
         }
+    }
+}
+
+#[cfg(test)]
+mod base_url_tests {
+    use super::validate_base_url;
+
+    #[test]
+    fn accepts_https() {
+        assert!(validate_base_url("https://korg.example.com").is_ok());
+        assert!(validate_base_url("https://korg.example.com:8443").is_ok());
+    }
+
+    #[test]
+    fn accepts_localhost_http_for_dev() {
+        assert!(validate_base_url("http://localhost:8080").is_ok());
+        assert!(validate_base_url("http://127.0.0.1:8080").is_ok());
+    }
+
+    #[test]
+    fn rejects_http_for_non_loopback() {
+        assert!(validate_base_url("http://evil.example.com").is_err());
+        assert!(validate_base_url("http://10.0.0.5").is_err());
+    }
+
+    #[test]
+    fn rejects_non_http_schemes() {
+        assert!(validate_base_url("javascript:alert(1)").is_err());
+        assert!(validate_base_url("file:///etc/passwd").is_err());
+        assert!(validate_base_url("ftp://example.com").is_err());
+    }
+
+    #[test]
+    fn rejects_paths_queries_fragments() {
+        assert!(validate_base_url("https://korg.example.com/extra/path").is_err());
+        assert!(validate_base_url("https://korg.example.com?x=1").is_err());
+        assert!(validate_base_url("https://korg.example.com#frag").is_err());
+    }
+
+    #[test]
+    fn rejects_traversal() {
+        assert!(validate_base_url("https://korg.example.com/..").is_err());
+    }
+
+    #[test]
+    fn rejects_garbage() {
+        assert!(validate_base_url("not a url").is_err());
+        assert!(validate_base_url("").is_err());
     }
 }
