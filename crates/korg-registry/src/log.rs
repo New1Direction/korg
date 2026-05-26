@@ -442,7 +442,16 @@ impl CapabilityJournal {
         Ok(())
     }
 
-    /// Append event with full custom metadata control
+    /// Append event with full custom metadata control.
+    ///
+    /// **Concurrency invariant:** the `&mut self` receiver makes this function
+    /// atomic from the borrow-checker's perspective — two threads cannot hold
+    /// `&mut self` simultaneously. The production wiring wraps each
+    /// `CapabilityJournal` in `Arc<tokio::sync::Mutex<CapabilityResolver>>` so
+    /// the increment-then-assign pair below runs under the same lock. If a
+    /// future refactor exposes interior mutability (e.g., `&self` with a
+    /// `Cell<u64>`), the seq_id assignment must move to `AtomicU64::fetch_add`
+    /// to keep this invariant.
     pub fn append_with_metadata(&mut self, event: CapabilityEvent, metadata: EventMetadata) {
         self.last_seq_id += 1;
         // Merge clock to maintain local HLC monotonicity

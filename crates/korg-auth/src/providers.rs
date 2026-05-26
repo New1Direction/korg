@@ -17,8 +17,8 @@ pub use korg_core::SubscriptionTier;
 /// `http://127.0.0.1[:port]` (the latter two for local dev only).
 /// Rejects anything with a path/query/fragment, or with `..` traversal.
 pub(crate) fn validate_base_url(base_url: &str) -> Result<(), String> {
-    let parsed = url::Url::parse(base_url)
-        .map_err(|e| format!("base_url is not a valid URL: {e}"))?;
+    let parsed =
+        url::Url::parse(base_url).map_err(|e| format!("base_url is not a valid URL: {e}"))?;
 
     let scheme = parsed.scheme();
     let host = parsed.host_str().unwrap_or("");
@@ -138,6 +138,12 @@ impl OAuthProvider for AnthropicProvider {
     }
 }
 
+/// Maximum age for a stored PKCE verifier. After this, the entry is purged
+/// on the next read or sweep and the OAuth flow must be restarted. Five
+/// minutes is the OAuth-2 RFC 6749 recommendation for the authorization code
+/// lifetime — past this the upstream IdP rejects the exchange anyway.
+const PKCE_ENTRY_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
 pub struct AuthProviders {
     pub codex_client: BasicClient,
     pub anthropic_client: BasicClient,
@@ -147,8 +153,10 @@ pub struct AuthProviders {
     pub(crate) anthropic_provider: Arc<AnthropicProvider>,
     // Not pub: holds live PKCE verifiers keyed by OAuth state parameter.
     // Exposing this would let external callers read or corrupt in-flight
-    // auth exchanges.
-    pub(crate) pending_pkce: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    // auth exchanges. Each entry carries an insertion timestamp so abandoned
+    // flows don't accumulate forever (PKCE_ENTRY_TTL bounds the lifetime).
+    pub(crate) pending_pkce:
+        std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>,
 }
 
 impl AuthProviders {
@@ -185,12 +193,22 @@ impl AuthProviders {
 
     pub fn save_pending_pkce(&self, state: String, verifier: String) {
         let mut map = self.pending_pkce.lock().unwrap();
-        map.insert(state, verifier);
+        // Opportunistic sweep — keeps the map bounded even if take is never
+        // called (abandoned flow). Cheap because flows-in-progress are
+        // typically O(handful).
+        let now = std::time::Instant::now();
+        map.retain(|_, (_, ts)| now.duration_since(*ts) < PKCE_ENTRY_TTL);
+        map.insert(state, (verifier, now));
     }
 
     pub fn take_pending_pkce(&self, state: &str) -> Option<String> {
         let mut map = self.pending_pkce.lock().unwrap();
-        map.remove(state)
+        let (verifier, ts) = map.remove(state)?;
+        if std::time::Instant::now().duration_since(ts) >= PKCE_ENTRY_TTL {
+            // Expired — treat as if it was never there.
+            return None;
+        }
+        Some(verifier)
     }
 
     /// Generates PKCE challenge and CSRF state parameters.

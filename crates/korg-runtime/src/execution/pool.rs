@@ -266,7 +266,13 @@ impl SandboxPool {
                 pool_dir: pool_dir_clone,
                 shared_cache_path: shared_cache_clone,
             };
-            manager.replenish_all().await.ok();
+            // Surface replenish failures at WARN — the previous .ok() swallowed
+            // them silently, letting the pool drift smaller than max_size with
+            // no visibility. acquire() will still fall back to a fresh sandbox
+            // on the next call, but ops can now see the underlying problem.
+            if let Err(e) = manager.replenish_all().await {
+                warn!("  [POOL] background replenish failed: {e}");
+            }
         });
         Ok(sandbox)
     }

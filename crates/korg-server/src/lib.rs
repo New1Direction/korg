@@ -1885,8 +1885,11 @@ where
             .and_then(|h| h.to_str().ok());
 
         let user_id = if let Some(auth_val) = auth_header {
-            if auth_val.starts_with("Bearer ") {
-                auth_val["Bearer ".len()..].trim().to_string()
+            // Prefer strip_prefix over starts_with + slice — same effect, but
+            // expresses the intent more directly and is impossible to
+            // accidentally turn into a panic if someone refactors the constant.
+            if let Some(token) = auth_val.strip_prefix("Bearer ") {
+                token.trim().to_string()
             } else {
                 auth_val.trim().to_string()
             }
@@ -2087,8 +2090,27 @@ async fn anthropic_messages_proxy_handler(
     let status = axum::http::StatusCode::from_u16(response.status().as_u16())
         .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
 
+    // Only forward a vetted allowlist of upstream headers. The previous code
+    // blindly copied every header, which meant a compromised upstream (or
+    // header-smuggling MITM) could set Set-Cookie / Location in our origin.
+    const FORWARDED_HEADERS: &[&str] = &[
+        "content-type",
+        "content-length",
+        "content-encoding",
+        "cache-control",
+        "etag",
+        "last-modified",
+        "request-id",
+        "x-request-id",
+        "anthropic-request-id",
+        "retry-after",
+    ];
     let mut headers = axum::http::HeaderMap::new();
     for (k, v) in response.headers().iter() {
+        let k_lower = k.as_str().to_ascii_lowercase();
+        if !FORWARDED_HEADERS.contains(&k_lower.as_str()) {
+            continue;
+        }
         if let Ok(name) = axum::http::HeaderName::from_bytes(k.as_str().as_bytes()) {
             headers.insert(name, v.clone());
         }
