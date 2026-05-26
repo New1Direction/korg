@@ -1925,26 +1925,33 @@ where
         match app_state.auth.store.load_session(&user_id) {
             Some(session) => Ok(AuthenticatedUser { user_id, session }),
             None => {
-                if user_id == "claude-code-user" || user_id.starts_with("mock-") {
-                    let mock_session = korg_auth::store::UserSession {
-                        user_id: user_id.clone(),
-                        codex_access_token: "mock-codex-token".to_string(),
-                        subscription_tier: korg_core::SubscriptionTier::Premium,
-                        anthropic_access_token: "mock-anthropic-token".to_string(),
-                        refresh_token: Some("mock-refresh-token".to_string()),
-                        expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
-                    };
-                    let _ = app_state.auth.store.save_session(mock_session.clone());
-                    Ok(AuthenticatedUser {
-                        user_id,
-                        session: mock_session,
-                    })
-                } else {
-                    Err((
-                        axum::http::StatusCode::UNAUTHORIZED,
-                        "Active session not found. Please log in first.",
-                    ))
+                // Mock-auth fallback for local dev/CI. Two gates so neither alone is sufficient:
+                //  1. `cfg(debug_assertions)` — code does not compile into release builds at all.
+                //  2. `KORG_ALLOW_MOCK_AUTH` env var — even debug builds must opt in explicitly.
+                // Also: the mock session is NOT persisted to the auth store — it's request-scoped only.
+                #[cfg(debug_assertions)]
+                {
+                    let mock_allowed = std::env::var("KORG_ALLOW_MOCK_AUTH").is_ok()
+                        && (user_id == "claude-code-user" || user_id.starts_with("mock-"));
+                    if mock_allowed {
+                        let mock_session = korg_auth::store::UserSession {
+                            user_id: user_id.clone(),
+                            codex_access_token: "mock-codex-token".to_string(),
+                            subscription_tier: korg_core::SubscriptionTier::Premium,
+                            anthropic_access_token: "mock-anthropic-token".to_string(),
+                            refresh_token: Some("mock-refresh-token".to_string()),
+                            expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+                        };
+                        return Ok(AuthenticatedUser {
+                            user_id,
+                            session: mock_session,
+                        });
+                    }
                 }
+                Err((
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "Active session not found. Please log in first.",
+                ))
             }
         }
     }
@@ -2154,6 +2161,22 @@ mod tests {
     use std::sync::Mutex as StdMutex;
     use tokio::sync::Mutex as TokioMutex;
 
+    /// Set KORG_MASTER_KEY once for the whole test binary so the auth store's
+    /// production-mode `expect()` doesn't panic in tests. Anything that touches
+    /// JsonTokenStore must call this first.
+    fn ensure_test_master_key() {
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            if std::env::var("KORG_MASTER_KEY").is_err() {
+                std::env::set_var(
+                    "KORG_MASTER_KEY",
+                    "test-master-key-for-unit-tests-only-not-secret",
+                );
+            }
+        });
+    }
+
     #[tokio::test]
     async fn test_agent_tool_call_actor_id_always_korg_api() {
         let (broadcaster_tx, _) = tokio::sync::broadcast::channel(16);
@@ -2243,6 +2266,7 @@ mod tests {
 
     #[test]
     fn test_absolute_expiry_persistence() {
+        ensure_test_master_key();
         let temp_dir =
             std::env::temp_dir().join(format!("korg_test_store_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -2281,6 +2305,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stale_token_auto_refresh() {
+        ensure_test_master_key();
         let temp_dir =
             std::env::temp_dir().join(format!("korg_test_refresh_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -2374,6 +2399,7 @@ mod tests {
 
     #[test]
     fn test_secure_token_store_encryption() {
+        ensure_test_master_key();
         let temp_dir =
             std::env::temp_dir().join(format!("korg_test_encrypt_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();

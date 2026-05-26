@@ -257,7 +257,17 @@ impl SpeculativeScheduler {
                 let task = tokio::spawn(async move {
                     let mut node = {
                         let guard = dag_clone.lock().unwrap();
-                        guard.nodes.get(&node_id).cloned().unwrap()
+                        let Some(n) = guard.nodes.get(&node_id).cloned() else {
+                            drop(guard);
+                            if let Some(ref tx) = logs_tx_clone {
+                                let _ = tx.send(format!(
+                                    "  [!] Skipping {}: node missing from DAG (concurrent mutation)",
+                                    node_id
+                                ));
+                            }
+                            return false;
+                        };
+                        n
                     };
 
                     node.status = NodeStatus::Running;

@@ -549,11 +549,26 @@ impl CapabilityJournal {
         Ok(())
     }
 
-    /// Flush history to disk atomically with exclusive advisory locking
+    /// Flush history to disk atomically with exclusive advisory locking.
+    ///
+    /// **Important:** when `is_speculative` is true (preview/dry-run mode),
+    /// this is a deliberate no-op — no disk writes occur and `Ok(())` is
+    /// returned even though nothing was persisted. Callers that *must*
+    /// persist regardless of the speculative flag should call
+    /// [`Self::force_flush`] instead.
     pub fn flush(&self) -> Result<(), String> {
         if self.is_speculative {
-            return Ok(()); // Bypasses all disk writes completely during dry-run speculative preview mode
+            return Ok(()); // intentional: preview mode never writes to disk
         }
+        self.force_flush()
+    }
+
+    /// Flush history to disk regardless of the `is_speculative` flag.
+    ///
+    /// Use this when persistence is required even from speculative contexts
+    /// (e.g. test teardown that needs to checkpoint state, or an explicit
+    /// "commit my preview" action). Normal callers should use [`Self::flush`].
+    pub fn force_flush(&self) -> Result<(), String> {
         let lock_file = OpenOptions::new()
             .write(true)
             .create(true)

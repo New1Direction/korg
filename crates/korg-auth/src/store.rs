@@ -34,8 +34,11 @@ pub struct JsonTokenStore {
 }
 
 fn get_aes_cipher() -> Aes256Gcm {
-    let master_password = std::env::var("KORG_MASTER_KEY")
-        .unwrap_or_else(|_| "korg-fallback-secure-master-password-constant".to_string());
+    let master_password = std::env::var("KORG_MASTER_KEY").expect(
+        "KORG_MASTER_KEY must be set before the auth store is used. \
+         Generate one with `openssl rand -hex 32` and export it in the environment. \
+         Refusing to encrypt with a hardcoded fallback key.",
+    );
 
     let mut key = [0u8; 32];
     let salt = b"korg-auth-salt-constant";
