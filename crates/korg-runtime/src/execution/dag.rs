@@ -80,7 +80,13 @@ impl ExecutionDag {
         for node in self.nodes.values() {
             for dep in &node.dependencies {
                 if self.nodes.contains_key(dep) {
-                    *in_deg.get_mut(&node.id).unwrap() += 1;
+                    // in_deg was seeded with every node id in the loop above,
+                    // so this lookup can't fail today. The if-let is
+                    // belt-and-braces — a refactor that moves the seeding
+                    // can't accidentally turn this into a panic.
+                    if let Some(d) = in_deg.get_mut(&node.id) {
+                        *d += 1;
+                    }
                 }
             }
         }

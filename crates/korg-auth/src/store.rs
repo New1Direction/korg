@@ -188,9 +188,17 @@ impl JsonTokenStore {
         }
 
         if write_mode {
-            file.lock_exclusive()?;
+            file.lock_exclusive().map_err(|e| {
+                anyhow::anyhow!(
+                    "auth.json exclusive lock failed at {:?}: {e} \
+                     (another process is likely writing the credentials file)",
+                    self.path
+                )
+            })?;
         } else {
-            file.lock_shared()?;
+            file.lock_shared().map_err(|e| {
+                anyhow::anyhow!("auth.json shared lock failed at {:?}: {e}", self.path)
+            })?;
         }
 
         let result = op(&mut file);

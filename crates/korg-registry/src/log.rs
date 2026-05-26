@@ -403,8 +403,12 @@ impl CapabilityJournal {
             if let Ok(mut f) = std::fs::File::open(&self.journal_path) {
                 let mut content = String::new();
                 if f.read_to_string(&mut content).is_ok() {
-                    if let Ok(parsed) = serde_json::from_str(&content) {
-                        self.events = parsed;
+                    match serde_json::from_str(&content) {
+                        Ok(parsed) => self.events = parsed,
+                        Err(e) => eprintln!(
+                            "warning: journal at {:?} has malformed JSON: {e}; starting with empty in-memory event list",
+                            self.journal_path
+                        ),
                     }
                 }
             }
@@ -413,8 +417,12 @@ impl CapabilityJournal {
             if let Ok(mut f) = std::fs::File::open(&self.snapshot_path) {
                 let mut content = String::new();
                 if f.read_to_string(&mut content).is_ok() {
-                    if let Ok(parsed) = serde_json::from_str(&content) {
-                        self.snapshots = parsed;
+                    match serde_json::from_str(&content) {
+                        Ok(parsed) => self.snapshots = parsed,
+                        Err(e) => eprintln!(
+                            "warning: snapshot at {:?} has malformed JSON: {e}; starting with empty in-memory snapshot list",
+                            self.snapshot_path
+                        ),
                     }
                 }
             }
@@ -548,6 +556,17 @@ impl CapabilityJournal {
     pub fn rewind(&mut self, target_seq_id: u64) -> Result<(), String> {
         if target_seq_id > self.last_seq_id {
             return Err(format!("Cannot rewind to sequence ID {} which is greater than the current last sequence ID {}", target_seq_id, self.last_seq_id));
+        }
+        // Confirm the target seq_id was actually emitted. Rewinding to a hole
+        // (a seq_id that was never observed — e.g. zero, or one of a
+        // never-occupied range) previously succeeded silently and left causal
+        // readers expecting an event there in an inconsistent state.
+        // We allow target_seq_id=0 as the "rewind to empty" sentinel.
+        if target_seq_id != 0 && !self.events.iter().any(|e| e.seq_id == target_seq_id) {
+            return Err(format!(
+                "Cannot rewind to sequence ID {} — no event with that seq_id exists",
+                target_seq_id
+            ));
         }
 
         self.events.retain(|e| e.seq_id <= target_seq_id);

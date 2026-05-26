@@ -68,7 +68,15 @@ pub async fn heal_node_with_context(
                 }
                 if let Ok(content) = fs::read_to_string(&file_abs) {
                     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-                    if line_num > 0 && line_num <= lines.len() {
+                    if line_num == 0 || line_num > lines.len() {
+                        if let Some(ref tx) = logs_tx {
+                            let _ = tx.send(format!(
+                                "  [HEAL] line {} from compiler output is out of bounds (file has {} lines); skipping",
+                                line_num,
+                                lines.len()
+                            ));
+                        }
+                    } else if line_num > 0 && line_num <= lines.len() {
                         let line_idx = line_num - 1;
                         let mut new_line = lines[line_idx].clone();
                         new_line.push(';');
@@ -111,7 +119,15 @@ pub async fn heal_node_with_context(
             if file_abs.exists() {
                 if let Ok(content) = fs::read_to_string(&file_abs) {
                     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-                    if line_num > 0 && line_num <= lines.len() {
+                    if line_num == 0 || line_num > lines.len() {
+                        if let Some(ref tx) = logs_tx {
+                            let _ = tx.send(format!(
+                                "  [HEAL] line {} from compiler output is out of bounds (file has {} lines); skipping",
+                                line_num,
+                                lines.len()
+                            ));
+                        }
+                    } else if line_num > 0 && line_num <= lines.len() {
                         let line_idx = line_num - 1;
                         let line = lines[line_idx].clone();
                         let target_var = format!("let {}", var_name);
@@ -157,7 +173,15 @@ pub async fn heal_node_with_context(
             if file_abs.exists() {
                 if let Ok(content) = fs::read_to_string(&file_abs) {
                     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-                    if line_num > 0 && line_num <= lines.len() {
+                    if line_num == 0 || line_num > lines.len() {
+                        if let Some(ref tx) = logs_tx {
+                            let _ = tx.send(format!(
+                                "  [HEAL] line {} from compiler output is out of bounds (file has {} lines); skipping",
+                                line_num,
+                                lines.len()
+                            ));
+                        }
+                    } else if line_num > 0 && line_num <= lines.len() {
                         let line_idx = line_num - 1;
                         let line = lines[line_idx].clone();
                         lines[line_idx] = format!("// {}", line);
@@ -300,7 +324,15 @@ pub async fn heal_node_with_context(
             if file_abs.exists() {
                 if let Ok(content) = fs::read_to_string(&file_abs) {
                     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-                    if line_num > 0 && line_num <= lines.len() {
+                    if line_num == 0 || line_num > lines.len() {
+                        if let Some(ref tx) = logs_tx {
+                            let _ = tx.send(format!(
+                                "  [HEAL] line {} from compiler output is out of bounds (file has {} lines); skipping",
+                                line_num,
+                                lines.len()
+                            ));
+                        }
+                    } else if line_num > 0 && line_num <= lines.len() {
                         let line_idx = line_num - 1;
                         let line = lines[line_idx].clone();
                         let re_param =
