@@ -90,7 +90,16 @@ async fn read_lsp_response(stdout: ChildStdout) -> (Result<String>, ChildStdout)
             if line.to_lowercase().starts_with("content-length:") {
                 let parts: Vec<&str> = line.split(':').collect();
                 if parts.len() >= 2 {
-                    content_length = parts[1].trim().parse().unwrap_or(0);
+                    let raw = parts[1].trim();
+                    match raw.parse::<usize>() {
+                        Ok(n) => content_length = n,
+                        Err(e) => {
+                            // Previously silently became 0 and the function
+                            // returned a generic "invalid Content-Length"
+                            // below. Log so the LSP misbehavior is visible.
+                            tracing::warn!("LSP Content-Length parse failed (raw={raw:?}): {e}");
+                        }
+                    }
                 }
             }
             line.clear();

@@ -151,7 +151,13 @@ queue_lock = threading.Lock()
 korg_base_url = os.environ.get("KORG_BASE_URL", "http://localhost:8080")
 
 def korg_writer_worker():
-    """Background worker draining the queue and issuing serial POST requests."""
+    """Background worker draining the queue and issuing serial POST requests.
+
+    On a 5s timeout / network error / non-2xx response, we retry once with a
+    1s pause before giving up. Previously a single transient blip dropped
+    the event silently — a single retry catches the common short outage
+    without blocking the writer long enough to overflow the queue.
+    """
     global last_emitted_seq
     while True:
         event = event_queue.get()
@@ -169,22 +175,32 @@ def korg_writer_worker():
         else:
             event["triggered_by"] = None
 
-        # Issue synchronous serial POST request
         url = f"{korg_base_url.rstrip('/')}/api/agent/tool-call"
-        try:
-            headers = {"Content-Type": "application/json"}
-            res = requests.post(url, json=event, headers=headers, timeout=5.0)
-            if res.status_code == 200:
-                data = res.json()
-                seq_id = data.get("seq_id")
-                if seq_id is not None:
-                    last_emitted_seq = seq_id
-                    if local_seq_id is not None:
-                        local_to_server_seq[local_seq_id] = seq_id
-            else:
-                sys.stderr.write(f"WARNING: Korg server returned {res.status_code}: {res.text}\n")
-        except Exception as e:
-            sys.stderr.write(f"WARNING: Failed to POST event to Korg: {e}\n")
+        headers = {"Content-Type": "application/json"}
+        max_attempts = 2
+        retry_delay_secs = 1.0
+        for attempt in range(1, max_attempts + 1):
+            try:
+                res = requests.post(url, json=event, headers=headers, timeout=5.0)
+                if res.status_code == 200:
+                    data = res.json()
+                    seq_id = data.get("seq_id")
+                    if seq_id is not None:
+                        last_emitted_seq = seq_id
+                        if local_seq_id is not None:
+                            local_to_server_seq[local_seq_id] = seq_id
+                    break  # success
+                sys.stderr.write(
+                    f"WARNING: Korg server returned {res.status_code} "
+                    f"(attempt {attempt}/{max_attempts}): {res.text}\n"
+                )
+            except Exception as e:
+                sys.stderr.write(
+                    f"WARNING: Failed to POST event to Korg "
+                    f"(attempt {attempt}/{max_attempts}): {e}\n"
+                )
+            if attempt < max_attempts:
+                time.sleep(retry_delay_secs)
 
         event_queue.task_done()
 
@@ -197,6 +213,22 @@ def log_unknown_event(event):
     try:
         with open("unknown_events.log", "a", encoding="utf-8") as f:
             f.write(json.dumps(event) + "\n")
+    except Exception as e:
+        sys.stderr.write(f"ERROR: Failed to write to unknown_events.log: {e}\n")
+
+
+def log_unknown_tool(tool_name, tool_id):
+    """Compact unknown-tool log — name + id only, not the entire assistant event.
+
+    Logging the full assistant event is several KB per occurrence and obscures
+    the actually-useful signal (which tool name we didn't recognise).
+    """
+    try:
+        with open("unknown_events.log", "a", encoding="utf-8") as f:
+            f.write(
+                json.dumps({"unknown_tool": tool_name, "tool_use_id": tool_id})
+                + "\n"
+            )
     except Exception as e:
         sys.stderr.write(f"ERROR: Failed to write to unknown_events.log: {e}\n")
 
@@ -650,7 +682,7 @@ def parse_stream_line(line):
             if is_known:
                 pending_tool_uses[tid] = (tool_use, time.monotonic(), spawning_llm_seq)
             else:
-                log_unknown_event(event)
+                log_unknown_tool(tname, tid)
 
     elif event_type == "result":
         # 6. Terminal result event -> session_complete

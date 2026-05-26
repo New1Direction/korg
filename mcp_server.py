@@ -292,14 +292,19 @@ def _session_event_ids(all_events: list[dict], root_seq: int) -> set[int]:
         if tb is not None:
             children.setdefault(tb, []).append(e["seq_id"])
 
-    visited: set[int] = set()
+    # Check visited *before* enqueuing so duplicate children entries (which
+    # can appear when the same event is observed in multiple polls during a
+    # cascading root re-assignment) don't balloon the queue. The post-dequeue
+    # check is kept as defense in depth.
+    visited: set[int] = {root_seq}
     queue = [root_seq]
     while queue:
         seq = queue.pop(0)
-        if seq in visited:
-            continue
-        visited.add(seq)
-        queue.extend(children.get(seq, []))
+        for child in children.get(seq, []):
+            if child in visited:
+                continue
+            visited.add(child)
+            queue.append(child)
     return visited
 
 
@@ -1177,7 +1182,12 @@ def _poller_loop() -> None:
             logger.exception("poller: unexpected error fetching journal")
             continue
 
-        _update_seq_to_root(events)
+        # Skip the seq_to_root update on empty / all-stale batches. The
+        # function is idempotent on already-known events, but reprocessing
+        # them on every tick is wasted work and obscures the warn-once log
+        # we get on real changes.
+        if events:
+            _update_seq_to_root(events)
 
         new_events = [e for e in events if e.get("seq_id", 0) > _last_seen_seq]
         if not new_events:
