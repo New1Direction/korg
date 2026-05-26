@@ -47,7 +47,17 @@ pub async fn heal_node_with_context(
         .unwrap();
         if let Some(caps) = re_semicolon.captures(stderr_str) {
             let file_rel = caps.name("file").unwrap().as_str().trim();
-            let line_num: usize = caps.name("line").unwrap().as_str().parse().unwrap_or(0);
+            let line_num: usize = match caps.name("line").unwrap().as_str().parse() {
+                Ok(n) => n,
+                Err(e) => {
+                    if let Some(ref tx) = logs_tx {
+                        let _ = tx.send(format!(
+                            "  [HEAL] could not parse line number from compiler output: {e}"
+                        ));
+                    }
+                    0
+                }
+            };
             let file_abs = path.join(file_rel);
             if file_abs.exists() {
                 if let Some(ref tx) = logs_tx {
@@ -85,7 +95,17 @@ pub async fn heal_node_with_context(
         .unwrap();
         if let Some(caps) = re_unused_var.captures(stderr_str) {
             let file_rel = caps.name("file").unwrap().as_str().trim();
-            let line_num: usize = caps.name("line").unwrap().as_str().parse().unwrap_or(0);
+            let line_num: usize = match caps.name("line").unwrap().as_str().parse() {
+                Ok(n) => n,
+                Err(e) => {
+                    if let Some(ref tx) = logs_tx {
+                        let _ = tx.send(format!(
+                            "  [HEAL] could not parse line number from compiler output: {e}"
+                        ));
+                    }
+                    0
+                }
+            };
             let var_name = caps.name("var").unwrap().as_str();
             let file_abs = path.join(file_rel);
             if file_abs.exists() {
@@ -122,7 +142,17 @@ pub async fn heal_node_with_context(
         .unwrap();
         if let Some(caps) = re_unused_import.captures(stderr_str) {
             let file_rel = caps.name("file").unwrap().as_str().trim();
-            let line_num: usize = caps.name("line").unwrap().as_str().parse().unwrap_or(0);
+            let line_num: usize = match caps.name("line").unwrap().as_str().parse() {
+                Ok(n) => n,
+                Err(e) => {
+                    if let Some(ref tx) = logs_tx {
+                        let _ = tx.send(format!(
+                            "  [HEAL] could not parse line number from compiler output: {e}"
+                        ));
+                    }
+                    0
+                }
+            };
             let file_abs = path.join(file_rel);
             if file_abs.exists() {
                 if let Ok(content) = fs::read_to_string(&file_abs) {

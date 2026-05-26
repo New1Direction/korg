@@ -167,11 +167,25 @@ impl JsonTokenStore {
             std::fs::create_dir_all(parent)?;
         }
 
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(write_mode)
-            .create(write_mode)
-            .open(&self.path)?;
+        let mut opts = OpenOptions::new();
+        opts.read(true).write(write_mode).create(write_mode);
+        // Restrict permissions to owner read/write on Unix. Without this the
+        // OS umask decides, which typically yields 0644 — letting any local
+        // user read the (encrypted) credentials.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = opts.open(&self.path)?;
+        // If the file already existed before this call, OpenOptions::mode is
+        // a no-op (it only applies on create). Fix up perms explicitly so
+        // pre-existing files migrate to 0600 on the next save.
+        #[cfg(unix)]
+        if write_mode {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
+        }
 
         if write_mode {
             file.lock_exclusive()?;
