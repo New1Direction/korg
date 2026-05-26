@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -48,13 +48,41 @@ impl Sandbox {
             stdin.write_all(payload.as_bytes()).await?;
             stdin.flush().await?;
         }
+        // Take stdout into the BufReader so the borrow chain doesn't depend on
+        // the MutexGuard's lifetime — a future refactor that splits stdin and
+        // stdout into separately-locked phases couldn't dangle the reader.
+        // Whichever way the read goes, the recovered ChildStdout is put back
+        // so the LSP pipe survives for the next call.
         let stdout = child
             .stdout
-            .as_mut()
+            .take()
             .ok_or_else(|| anyhow!("LSP stdout not available"))?;
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        let mut content_length = 0;
+        let (result, stdout) = read_lsp_response(stdout).await;
+        child.stdout = Some(stdout);
+        result
+    }
+
+    pub async fn shutdown(&mut self) {
+        self.status = SandboxStatus::Released;
+        if let Some(proc) = self.lsp_process.take() {
+            let mut child = proc.lock().await;
+            child.kill().await.ok();
+        }
+        if let Some(proc) = self.compiler_process.take() {
+            let mut child = proc.lock().await;
+            child.kill().await.ok();
+        }
+    }
+}
+
+/// Read a single JSON-RPC response off the LSP's stdout. Takes ownership of
+/// `stdout` and always returns it so the caller can put it back on the Child
+/// even when the read errors out.
+async fn read_lsp_response(stdout: ChildStdout) -> (Result<String>, ChildStdout) {
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let mut content_length: usize = 0;
+    let result: Result<String> = async {
         while reader.read_line(&mut line).await? > 0 {
             if line == "\r\n" {
                 break;
@@ -74,18 +102,8 @@ impl Sandbox {
         reader.read_exact(&mut buf).await?;
         Ok(String::from_utf8(buf)?)
     }
-
-    pub async fn shutdown(&mut self) {
-        self.status = SandboxStatus::Released;
-        if let Some(proc) = self.lsp_process.take() {
-            let mut child = proc.lock().await;
-            child.kill().await.ok();
-        }
-        if let Some(proc) = self.compiler_process.take() {
-            let mut child = proc.lock().await;
-            child.kill().await.ok();
-        }
-    }
+    .await;
+    (result, reader.into_inner())
 }
 
 pub struct SandboxPool {
