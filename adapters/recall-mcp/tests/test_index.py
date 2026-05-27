@@ -1,0 +1,151 @@
+"""Tests for the EventIndex — file reading, incremental load, multi-source."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from korg_recall_mcp.index import EventIndex
+
+
+def _write_event(path: Path, seq: int, tool_name: str, args: dict, **extra) -> None:
+    record = {
+        "seq": seq,
+        "source_agent": extra.get("source_agent", "agent:claude-code#x"),
+        "tool_name": tool_name,
+        "args": args,
+        "result": extra.get("result", {}),
+        "success": True,
+        "duration_ms": 0,
+    }
+    if "triggered_by" in extra:
+        record["triggered_by"] = extra["triggered_by"]
+    with path.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def test_index_reads_basic_jsonl(tmp_path):
+    f = tmp_path / "ledger.jsonl"
+    _write_event(f, 1, "user_prompt", {"prompt": "hi"})
+    _write_event(f, 2, "llm_inference", {}, result={"text": "hello"})
+
+    idx = EventIndex.from_paths(f)
+    added = idx.refresh()
+    assert added == 2
+    assert len(idx) == 2
+    assert idx.events[0].tool_name == "user_prompt"
+    assert idx.events[0].embed_text == "hi"
+
+
+def test_index_incremental_refresh(tmp_path):
+    f = tmp_path / "ledger.jsonl"
+    _write_event(f, 1, "user_prompt", {"prompt": "first"})
+
+    idx = EventIndex.from_paths(f)
+    assert idx.refresh() == 1
+    assert idx.refresh() == 0  # no new lines → no new events
+
+    _write_event(f, 2, "user_prompt", {"prompt": "second"})
+    assert idx.refresh() == 1
+    assert len(idx) == 2
+
+
+def test_index_skips_malformed_lines(tmp_path):
+    f = tmp_path / "ledger.jsonl"
+    with f.open("w") as fh:
+        fh.write(json.dumps({"seq": 1, "tool_name": "user_prompt", "args": {"prompt": "ok"}}) + "\n")
+        fh.write("not json\n")
+        fh.write("\n")
+        fh.write(json.dumps({"seq": 2, "tool_name": "user_prompt", "args": {"prompt": "fine"}}) + "\n")
+
+    idx = EventIndex.from_paths(f)
+    idx.refresh()
+    assert len(idx) == 2
+    assert idx.events[0].args["prompt"] == "ok"
+    assert idx.events[1].args["prompt"] == "fine"
+
+
+def test_index_skips_events_with_no_embed_text(tmp_path):
+    f = tmp_path / "ledger.jsonl"
+    # llm_inference with no text → empty embed_text → skipped
+    _write_event(f, 1, "llm_inference", {}, result={"completion_tokens": 1})
+    # user_prompt with empty prompt → empty embed_text → skipped
+    _write_event(f, 2, "user_prompt", {"prompt": ""})
+    # user_prompt with a real prompt → kept
+    _write_event(f, 3, "user_prompt", {"prompt": "real one"})
+
+    idx = EventIndex.from_paths(f)
+    idx.refresh()
+    assert len(idx) == 1
+    assert idx.events[0].args["prompt"] == "real one"
+
+
+def test_index_partial_line_held_back(tmp_path):
+    f = tmp_path / "ledger.jsonl"
+    _write_event(f, 1, "user_prompt", {"prompt": "complete"})
+    # Append a partial line with no trailing \n
+    with f.open("a") as fh:
+        fh.write('{"seq":2,"tool_name":"user_prompt","args":{"prompt":"partial')
+
+    idx = EventIndex.from_paths(f)
+    n = idx.refresh()
+    assert n == 1  # only the complete line
+
+    # Finish the partial line
+    with f.open("a") as fh:
+        fh.write('"}}\n')
+
+    n2 = idx.refresh()
+    assert n2 == 1
+    assert len(idx) == 2
+
+
+def test_index_reads_from_directory(tmp_path):
+    f1 = tmp_path / "session-a.jsonl"
+    f2 = tmp_path / "session-b.jsonl"
+    _write_event(f1, 1, "user_prompt", {"prompt": "from a"})
+    _write_event(f2, 1, "user_prompt", {"prompt": "from b"})
+
+    idx = EventIndex.from_dir(tmp_path)
+    idx.refresh()
+    prompts = sorted(e.args["prompt"] for e in idx.events)
+    assert prompts == ["from a", "from b"]
+
+
+def test_index_picks_up_new_file_in_directory(tmp_path):
+    f1 = tmp_path / "session-a.jsonl"
+    _write_event(f1, 1, "user_prompt", {"prompt": "from a"})
+
+    # Point the index at the *directory* so it re-globs each refresh.
+    idx = EventIndex(ledger_paths=[tmp_path])
+    idx.refresh()
+    assert len(idx) == 1
+
+    f2 = tmp_path / "session-b.jsonl"
+    _write_event(f2, 1, "user_prompt", {"prompt": "from b"})
+    n = idx.refresh()
+    assert n == 1
+    assert len(idx) == 2
+
+
+def test_index_handles_missing_paths(tmp_path):
+    idx = EventIndex.from_paths(tmp_path / "does-not-exist.jsonl")
+    # Should not crash
+    assert idx.refresh() == 0
+    assert len(idx) == 0
+
+
+def test_index_preserves_triggered_by_and_success(tmp_path):
+    f = tmp_path / "ledger.jsonl"
+    _write_event(f, 1, "user_prompt", {"prompt": "go"})
+    _write_event(
+        f, 2, "Bash", {"command": "false"},
+        result={"output": "exit 1"},
+        triggered_by=1,
+    )
+    idx = EventIndex.from_paths(f)
+    idx.refresh()
+    bash_event = [e for e in idx.events if e.tool_name == "Bash"][0]
+    assert bash_event.triggered_by == 1
