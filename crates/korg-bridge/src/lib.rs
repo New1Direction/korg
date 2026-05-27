@@ -119,7 +119,21 @@ impl Bridge {
     }
 
     /// Emit an `llm_inference` event. Returns the assigned `seq_id`.
-    #[pyo3(signature = (model, prompt_tokens, completion_tokens, duration_ms, triggered_by, source_agent = "agent:korgex@0.3.0"))]
+    ///
+    /// v0.3.2: `assistant_text` is optional. When provided, the model's
+    /// reply text lands on the event's `result` field so downstream
+    /// consumers (search, audit, replay) can find it. Token counts stay in
+    /// the same places as before. Callers responsible for content-addressing
+    /// large replies — the bridge writes whatever text it's given.
+    #[pyo3(signature = (
+        model,
+        prompt_tokens,
+        completion_tokens,
+        duration_ms,
+        triggered_by,
+        source_agent = "agent:korgex@0.3.0",
+        assistant_text = None,
+    ))]
     fn record_llm_call(
         &self,
         model: &str,
@@ -128,14 +142,24 @@ impl Bridge {
         duration_ms: u64,
         triggered_by: Option<u64>,
         source_agent: &str,
+        assistant_text: Option<&str>,
     ) -> PyResult<u64> {
         let args = serde_json::json!({
             "model": model,
             "prompt_tokens": prompt_tokens,
         });
-        let result = serde_json::json!({
-            "completion_tokens": completion_tokens,
-        });
+        // result carries completion_tokens + (since v0.3.2) optional text.
+        // Keep the field name "text" — short, obvious, and matches what a
+        // future content-addressed variant would also use as a key.
+        let mut result_map = serde_json::Map::new();
+        result_map.insert(
+            "completion_tokens".to_string(),
+            serde_json::Value::from(completion_tokens),
+        );
+        if let Some(text) = assistant_text {
+            result_map.insert("text".to_string(), serde_json::Value::String(text.to_string()));
+        }
+        let result = serde_json::Value::Object(result_map);
         self.append(
             source_agent,
             "llm_inference",

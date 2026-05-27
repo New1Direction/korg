@@ -27,7 +27,36 @@ def _read_events(journal_path: Path) -> list[dict]:
 
 
 def test_module_version_present():
-    assert korg_bridge.__version__ == "0.3.1"
+    assert korg_bridge.__version__ == "0.3.2"
+
+
+def test_record_llm_call_assistant_text_optional(tmp_journal):
+    """v0.3.2: assistant_text=None preserves the old shape; non-None lands
+    on result.text so downstream search/audit can find it."""
+    bridge = korg_bridge.Bridge(str(tmp_journal))
+    # 1. Without assistant_text — same shape as v0.3.1
+    seq_a = bridge.record_llm_call(
+        model="claude-opus-4-7",
+        prompt_tokens=10,
+        completion_tokens=5,
+        duration_ms=100,
+        triggered_by=None,
+    )
+    # 2. With assistant_text — text lands on result
+    seq_b = bridge.record_llm_call(
+        model="claude-opus-4-7",
+        prompt_tokens=12,
+        completion_tokens=8,
+        duration_ms=120,
+        triggered_by=seq_a,
+        assistant_text="here is what the model said",
+    )
+    events = _read_events(tmp_journal)
+    assert events[0]["event"]["result"] == {"completion_tokens": 5}
+    assert events[1]["event"]["result"] == {
+        "completion_tokens": 8,
+        "text": "here is what the model said",
+    }
 
 
 def test_repr_initial_state(tmp_journal):
