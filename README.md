@@ -3,12 +3,9 @@
 **A causally-ordered, rewindable event-ledger for autonomous AI agents.**
 *Every decision your AI agent makes is logged, structured, and reversible — like Git, but for cognition.*
 
-[![Crates.io](https://img.shields.io/crates/v/korg.svg?style=flat-square&color=fc8d62)](https://crates.io/crates/korg)
-[![docs.rs](https://img.shields.io/docsrs/korg?style=flat-square)](https://docs.rs/korg)
-[![CI](https://img.shields.io/github/actions/workflow/status/New1Direction/korg/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/New1Direction/korg/actions)
-[![Downloads](https://img.shields.io/crates/d/korg.svg?style=flat-square)](https://crates.io/crates/korg)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![Rust 2021](https://img.shields.io/badge/rust-2021-93450a.svg?style=flat-square)](https://www.rust-lang.org)
+[![Tests](https://img.shields.io/badge/tests-175%20passing-brightgreen.svg?style=flat-square)](https://github.com/New1Direction/korg)
 
 ---
 
@@ -146,19 +143,23 @@ Korg is built on the same theoretical foundations that make databases and operat
 
 ## Quick Start
 
-### Install
+### Build from source
 
-```bash
-cargo install korg
-```
-
-### Or build from source
+The crate is not yet published to crates.io; install from source:
 
 ```bash
 git clone https://github.com/New1Direction/korg
 cd korg
 cargo build --release
-./target/release/korg --help
+./target/release/korg-tui --help
+```
+
+### Python bridge (for korgex / korgchat)
+
+```bash
+cd crates/korg-bridge
+maturin develop  # builds the PyO3 extension into the active venv
+python3 -c "import korg_bridge; print(korg_bridge.__version__)"
 ```
 
 ### Run your first campaign
@@ -279,7 +280,7 @@ The short version:
 
 ## Status
 
-Korg is in active development. Current test coverage: **133 tests, 0 failures**.
+Korg is in active development. Current test coverage: **175 tests, 0 failures** (162 cargo across 8 crates + 13 pytest for the PyO3 bridge).
 
 - [x] Append-only cognitive ledger with HLC ordering
 - [x] Deterministic replay and projection rebuilds
