@@ -1,0 +1,13 @@
+{"type":"last-prompt","leafUuid":"l1","sessionId":"sess-1"}
+{"type":"permission-mode","permissionMode":"auto","sessionId":"sess-1"}
+{"type":"system","parentUuid":null,"isSidechain":false,"subtype":"init","content":"session start","sessionId":"sess-1"}
+{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-05-27T10:00:00.000Z","message":{"role":"user","content":"read /tmp/foo and tell me what's in it"},"sessionId":"sess-1"}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-05-27T10:00:01.000Z","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"Let me check that file."},{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/tmp/foo"}}],"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":0}},"sessionId":"sess-1"}
+{"type":"user","uuid":"u2","parentUuid":"a1","timestamp":"2026-05-27T10:00:02.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"hello world"}]},"sessionId":"sess-1"}
+{"type":"assistant","uuid":"a2","parentUuid":"u2","timestamp":"2026-05-27T10:00:03.000Z","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"The file contains: hello world"}],"usage":{"input_tokens":15,"output_tokens":10,"cache_read_input_tokens":10}},"sessionId":"sess-1"}
+{"type":"user","uuid":"u3","parentUuid":"a2","timestamp":"2026-05-27T10:00:04.000Z","message":{"role":"user","content":"thanks. now run ls in /tmp"},"sessionId":"sess-1"}
+{"type":"assistant","uuid":"a3","parentUuid":"u3","timestamp":"2026-05-27T10:00:05.000Z","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"tool_use","id":"toolu_02","name":"Bash","input":{"command":"ls /tmp","description":"List /tmp"}}],"usage":{"input_tokens":20,"output_tokens":8}},"sessionId":"sess-1"}
+{"type":"user","uuid":"u4","parentUuid":"a3","timestamp":"2026-05-27T10:00:06.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_02","content":"foo\nbar\nbaz","is_error":false}]},"sessionId":"sess-1"}
+{"type":"assistant","uuid":"a4","parentUuid":"u4","timestamp":"2026-05-27T10:00:07.000Z","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"/tmp contains foo, bar, and baz."}],"usage":{"input_tokens":25,"output_tokens":12}},"sessionId":"sess-1"}
+{"type":"attachment","sessionId":"sess-1","data":"ignored"}
+{"type":"ai-title","sessionId":"sess-1","title":"reading /tmp/foo"}
