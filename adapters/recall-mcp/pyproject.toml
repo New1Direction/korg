@@ -1,0 +1,41 @@
+[build-system]
+requires      = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "korg-recall-mcp"
+version         = "0.1.0"
+description     = "Cross-session semantic memory MCP server over the korg ledger — install once in Claude Code, recall everything you've ever done."
+license         = { text = "MIT" }
+requires-python = ">=3.9"
+authors         = [{ name = "Korg ecosystem maintainers" }]
+classifiers     = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+]
+dependencies    = []
+
+[project.optional-dependencies]
+# fastembed = the same embedding backend KorgChat uses (ONNX, no torch dep).
+# Without it, recall falls back to substring matching — much noisier but
+# still useful for keyword lookups.
+semantic = ["fastembed>=0.4,<2.0"]
+dev      = ["pytest>=8.0.0,<9.0.0"]
+
+[project.scripts]
+korg-recall-mcp = "korg_recall_mcp.__main__:main"
+
+[tool.setuptools.packages.find]
+where   = ["src"]
+include = ["korg_recall_mcp*"]
+
+[tool.pytest.ini_options]
+testpaths    = ["tests"]
+python_files = ["test_*.py"]
