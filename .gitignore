@@ -37,6 +37,7 @@ scratch/
 /tmp/
 *.log
 *.tmp
+*_report.html
 
 # ── Internal docs (not for public repo) ──────────────────────────────────────
 ANNOUNCEMENT.md
