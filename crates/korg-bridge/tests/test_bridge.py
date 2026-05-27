@@ -27,7 +27,7 @@ def _read_events(journal_path: Path) -> list[dict]:
 
 
 def test_module_version_present():
-    assert korg_bridge.__version__ == "0.3.0"
+    assert korg_bridge.__version__ == "0.3.1"
 
 
 def test_repr_initial_state(tmp_journal):
@@ -183,6 +183,71 @@ def test_absurd_duration_rejected(tmp_journal):
             success=True,
             duration_ms=2**63,
             triggered_by=None,
+        )
+
+
+def test_payload_refs_round_trip(tmp_journal):
+    """v0.3.1: payload_refs list[dict] lands in the on-disk event."""
+    bridge = korg_bridge.Bridge(str(tmp_journal))
+    refs = [
+        {"sha256": "a" * 64, "size_bytes": 4096, "label": "Edit.args"},
+        {"sha256": "b" * 64, "size_bytes": 8192, "label": "Edit.result"},
+    ]
+    seq = bridge.record_tool_call(
+        source_agent="agent:korgex@0.3.1",
+        tool_name="Edit",
+        args={"_ref": "sha256:" + "a" * 64},
+        result={"_ref": "sha256:" + "b" * 64},
+        success=True,
+        duration_ms=12,
+        triggered_by=None,
+        payload_refs=refs,
+    )
+    assert seq == 1
+    events = _read_events(tmp_journal)
+    on_disk = events[0]["event"]["payload_refs"]
+    assert on_disk == refs
+
+
+def test_payload_refs_none_and_empty_both_accepted(tmp_journal):
+    bridge = korg_bridge.Bridge(str(tmp_journal))
+    bridge.record_tool_call(
+        source_agent="x",
+        tool_name="A",
+        args={},
+        result={},
+        success=True,
+        duration_ms=0,
+        triggered_by=None,
+        payload_refs=None,
+    )
+    bridge.record_tool_call(
+        source_agent="x",
+        tool_name="B",
+        args={},
+        result={},
+        success=True,
+        duration_ms=0,
+        triggered_by=None,
+        payload_refs=[],
+    )
+    events = _read_events(tmp_journal)
+    assert events[0]["event"]["payload_refs"] == []
+    assert events[1]["event"]["payload_refs"] == []
+
+
+def test_payload_refs_malformed_entry_raises(tmp_journal):
+    bridge = korg_bridge.Bridge(str(tmp_journal))
+    with pytest.raises(TypeError, match="payload_refs"):
+        bridge.record_tool_call(
+            source_agent="x",
+            tool_name="A",
+            args={},
+            result={},
+            success=True,
+            duration_ms=0,
+            triggered_by=None,
+            payload_refs=[{"sha256": 123, "size_bytes": 0, "label": ""}],  # sha256 not a str
         )
 
 
