@@ -114,6 +114,7 @@ impl Bridge {
             true,
             0,
             None,
+            Vec::new(),
         )
     }
 
@@ -143,13 +144,19 @@ impl Bridge {
             true,
             duration_ms,
             triggered_by,
+            Vec::new(),
         )
     }
 
     /// Emit a generic tool-call event. Args and result are arbitrary
     /// JSON-serialisable Python objects (dict, list, str, int, bool, None);
     /// they're converted via `pythonize::depythonize`.
-    #[pyo3(signature = (source_agent, tool_name, args, result, success, duration_ms, triggered_by = None))]
+    ///
+    /// `payload_refs` is an optional list of dicts shaped
+    /// `{"sha256": str, "size_bytes": int, "label": str}` — content-addressed
+    /// references for any large blobs the caller wrote out-of-band. Pass
+    /// `None` or `[]` if the tool call has no content-addressed payloads.
+    #[pyo3(signature = (source_agent, tool_name, args, result, success, duration_ms, triggered_by = None, payload_refs = None))]
     fn record_tool_call(
         &self,
         source_agent: &str,
@@ -159,11 +166,13 @@ impl Bridge {
         success: bool,
         duration_ms: u64,
         triggered_by: Option<u64>,
+        payload_refs: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<u64> {
         let args_json: serde_json::Value =
             depythonize(args).map_err(|e| PyTypeError::new_err(format!("args: {e}")))?;
         let result_json: serde_json::Value =
             depythonize(result).map_err(|e| PyTypeError::new_err(format!("result: {e}")))?;
+        let refs = parse_payload_refs(payload_refs)?;
         self.append(
             source_agent,
             tool_name,
@@ -172,6 +181,7 @@ impl Bridge {
             success,
             duration_ms,
             triggered_by,
+            refs,
         )
     }
 
@@ -208,6 +218,78 @@ impl Bridge {
     }
 }
 
+/// Parse a Python `list[{"sha256":..,"size_bytes":..,"label":..}]` (or None/[])
+/// into a `Vec<ContentRef>`. Each entry's missing/wrong-typed fields raise
+/// PyTypeError naming the field — easier to debug than a silent skip.
+fn parse_payload_refs(refs: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<ContentRef>> {
+    let Some(refs) = refs else {
+        return Ok(Vec::new());
+    };
+    if refs.is_none() {
+        return Ok(Vec::new());
+    }
+    let value: serde_json::Value = depythonize(refs)
+        .map_err(|e| PyTypeError::new_err(format!("payload_refs: {e}")))?;
+    let arr = match value {
+        serde_json::Value::Null => return Ok(Vec::new()),
+        serde_json::Value::Array(a) => a,
+        other => {
+            return Err(PyTypeError::new_err(format!(
+                "payload_refs must be a list, got {}",
+                other_type_name(&other)
+            )))
+        }
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for (i, item) in arr.into_iter().enumerate() {
+        let obj = match item {
+            serde_json::Value::Object(m) => m,
+            _ => {
+                return Err(PyTypeError::new_err(format!(
+                    "payload_refs[{i}] must be a dict"
+                )))
+            }
+        };
+        let sha256 = obj
+            .get("sha256")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                PyTypeError::new_err(format!("payload_refs[{i}].sha256 must be a str"))
+            })?
+            .to_string();
+        let size_bytes = obj
+            .get("size_bytes")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| {
+                PyTypeError::new_err(format!(
+                    "payload_refs[{i}].size_bytes must be a non-negative int"
+                ))
+            })?;
+        let label = obj
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        out.push(ContentRef {
+            sha256,
+            size_bytes,
+            label,
+        });
+    }
+    Ok(out)
+}
+
+fn other_type_name(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
 impl Bridge {
     /// Core append path — mirrors the HTTP `agent_tool_call_handler` in
     /// `korg-server/src/lib.rs:790-877`. Held in a single helper so the
@@ -222,6 +304,7 @@ impl Bridge {
         success: bool,
         duration_ms: u64,
         triggered_by: Option<u64>,
+        payload_refs: Vec<ContentRef>,
     ) -> PyResult<u64> {
         let mut journal = self
             .journal
@@ -242,7 +325,7 @@ impl Bridge {
             tool_name: tool_name.to_string(),
             args,
             result,
-            payload_refs: Vec::<ContentRef>::new(),
+            payload_refs,
             success,
             duration_ms,
             timestamp: Utc::now(),
