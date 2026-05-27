@@ -1,0 +1,40 @@
+[package]
+name        = "korg-bridge"
+version     = "0.3.0"
+edition     = "2021"
+description = "PyO3 bridge — exposes Korg's in-process WAL (CapabilityJournal) to Python so korgex / KorgChat can write directly without HTTP."
+license     = "MIT OR Apache-2.0"
+
+[lib]
+name       = "korg_bridge"
+# cdylib produces the .so/.pyd Python imports.
+# rlib lets the integration tests link the Rust side directly.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Maturin enables this feature when building the Python wheel; it tells PyO3
+# not to link libpython at compile time so the resulting .so works under any
+# cpython >=3.8 the user pip-installs into. Plain `cargo test` does NOT enable
+# this feature, so the link step finds libpython normally.
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+korg-core     = { path = "../korg-core" }
+korg-registry = { path = "../korg-registry" }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+chrono        = { workspace = true }
+uuid          = { workspace = true }
+
+[dependencies.pyo3]
+version  = "0.22"
+# abi3-py38: stable ABI from 3.8+, one wheel for all minor versions.
+# extension-module is gated behind our `extension-module` crate feature
+# above so cargo test still links cleanly against the local libpython.
+features = ["abi3-py38"]
+
+# pythonize bridges Python objects ↔ serde_json::Value. Without it we'd
+# have to walk PyDict/PyList by hand for every args/result conversion.
+[dependencies.pythonize]
+version = "0.22"

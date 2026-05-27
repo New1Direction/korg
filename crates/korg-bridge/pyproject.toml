@@ -1,0 +1,29 @@
+[build-system]
+requires      = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name            = "korg_bridge"
+version         = "0.3.0"
+description     = "In-process Python ↔ Korg WAL bridge (PyO3). Replaces the HTTP loop that korg_ledger.py used to use."
+requires-python = ">=3.8"
+readme          = "README.md"
+license         = { text = "MIT OR Apache-2.0" }
+authors         = [{ name = "Korg ecosystem maintainers" }]
+classifiers     = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[tool.maturin]
+# The Rust crate is named korg-bridge; the Python module is korg_bridge.
+# `bindings = "pyo3"` tells maturin to copy the cdylib into the wheel.
+bindings      = "pyo3"
+manifest-path = "Cargo.toml"
+module-name   = "korg_bridge"
+# `extension-module` is a crate-level feature in our Cargo.toml that enables
+# the matching pyo3 feature. Plain `cargo test` doesn't enable it, so the
+# Rust unit-test path links against the local libpython normally.
+features      = ["extension-module"]

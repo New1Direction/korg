@@ -9,6 +9,7 @@ members = [
     "crates/korg-runtime",
     "crates/korg-tui",
     "crates/korg-server",
+    "crates/korg-bridge",
 ]
 resolver = "2"
 
