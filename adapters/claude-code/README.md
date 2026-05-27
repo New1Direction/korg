@@ -38,28 +38,74 @@ The `llm_inference → llm_inference` chain (skipping over intervening
 that replaying any Claude Code session reconstructs an audit-coherent
 graph identical in shape to what korgex's own agent loop produces.
 
-## Usage
+## Two ways to use it
+
+### 1. Live tail mode (recommended)
+
+`korg follows you in real time` — the adapter watches
+`~/.claude/projects/**/*.jsonl` and streams new events into a korg
+ledger as Claude Code writes them. Install, run once, get a continuously-
+growing ledger forever:
+
+```bash
+pip install -e ./adapters/claude-code
+
+# Watch ~/.claude/projects, append events to ~/.korg/claude-events.jsonl
+korg-ingest-claude --tail
+
+# Just print events to stdout (no file write):
+korg-ingest-claude --tail --stub
+
+# Custom locations:
+korg-ingest-claude --tail \
+    --projects-dir ~/.claude/projects \
+    --out         ~/.korg/claude-events.jsonl \
+    --state       ~/.korg/claude-tail-state.json \
+    --poll-interval 0.5
+```
+
+The byte-offset state is persistent — kill the process and restart any
+time; it picks up exactly where it left off. The state file at
+`~/.korg/claude-tail-state.json` survives reboots.
+
+### 2. One-shot backfill
+
+For the existing pile of session files on your disk right now:
+
+```bash
+korg-ingest-claude --once --out ~/.korg/claude-events.jsonl
+# [korg-ingest-claude] one-shot pass complete · files_active=42 events=128304 ...
+```
+
+Runs once, ingests everything you haven't ingested yet, exits.
+
+### 3. Library usage
+
+For embedding into your own ledger plumbing:
 
 ```python
 from pathlib import Path
-import requests
-from claude_code_adapter import ClaudeCodeAdapter
+from claude_code_adapter import ClaudeCodeAdapter, TailIngester
 
 
 def emit(body: dict) -> int | None:
-    r = requests.post("http://localhost:8080/api/agent/tool-call", json=body)
-    return r.json().get("seq_id") if r.ok else None
+    # write to korg-bridge, korg-server, your own DB, etc.
+    ...
 
 
+# Single-session replay:
 adapter = ClaudeCodeAdapter(emit, source_agent="agent:claude-code@2.1.150")
-
-# Replay one session file:
-with Path.home().joinpath(".claude/projects/-Users-you-Documents-foo/abc.jsonl").open() as f:
+with Path("~/.claude/projects/-Users-you-Documents-foo/abc.jsonl").expanduser().open() as f:
     stats = adapter.ingest(f)
 
-print(stats)
-# IngestStats(user_prompts=12, llm_rounds=87, tool_calls=152, dropped=0)
+# Or multi-session tail:
+ingester = TailIngester(emit=emit, projects_dir=Path("~/.claude/projects").expanduser())
+ingester.run(poll_interval_s=1.0)   # blocks; Ctrl-C to stop
 ```
+
+The library exports `make_jsonl_emit(path)` and `make_stub_emit()` as
+ready-made `emit` callables for testing or when you just want a flat
+JSONL ledger on disk.
 
 ## Input shape
 
@@ -79,6 +125,26 @@ silently.
   result, not emitted as separate events.
 - Streaming intermediates — Claude Code only writes complete messages
   to the JSONL, so this is moot.
+
+## Tail-mode invariants
+
+These are property-tested in `tests/test_tail.py` and underpin the
+"install once, ledger forever" promise:
+
+- **No duplicate emission.** Byte offsets are persisted atomically per
+  file via tmp-rename; restarts resume at the exact byte they left off.
+- **Cross-poll causal coherence.** Per-file `ClaudeCodeAdapter` instances
+  retain both chain state (`prompt_seq`, `llm_seq`) and parser state
+  (`pending_tool_calls`, `seen_first_user`) across polls — so a
+  `tool_use` written in one poll cycle and its `tool_result` written in
+  the next still attach correctly.
+- **Mid-write tolerance.** A line being written without a trailing `\n`
+  at poll time is held back until the next poll. The adapter never
+  emits a half-formed line.
+- **Multi-session isolation.** Each `.jsonl` file (each session) gets
+  its own adapter; their `seq` chains can't interfere.
+- **New-file pickup.** Files appearing in `projects_dir` between polls
+  are discovered automatically on the next pass.
 
 ## Known limitations
 
