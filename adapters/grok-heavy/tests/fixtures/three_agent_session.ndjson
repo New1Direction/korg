@@ -1,0 +1,15 @@
+{"result":{"response":{"userResponse":{"message":"summarize the codex-re findings","sender":"human"}}}}
+{"result":{"response":{"uiLayout":{"reasoningUiLayout":"UNIFIED","willThinkLong":true,"rolloutIds":["Grok","Agent 1","Agent 2"]}}}}
+{"result":{"response":{"token":"Looking at ","messageTag":"summary","messageStepId":0,"rolloutId":"Grok"}}}
+{"result":{"response":{"token":"the request, I'll coordinate.","messageTag":"summary","messageStepId":0,"rolloutId":"Grok"}}}
+{"result":{"response":{"token":"Searching ","messageTag":"summary","messageStepId":0,"rolloutId":"Agent 1"}}}
+{"result":{"response":{"token":"for codex-re files.","messageTag":"summary","messageStepId":0,"rolloutId":"Agent 1"}}}
+{"result":{"response":{"token":"<xai:tool_usage_card><xai:tool_usage_card_id>card-001</xai:tool_usage_card_id>","messageTag":"tool_usage_card","messageStepId":1,"rolloutId":"Agent 1"}}}
+{"result":{"response":{"token":"<xai:tool_name>web_search</xai:tool_name>","messageTag":"tool_usage_card","messageStepId":1,"rolloutId":"Agent 1"}}}
+{"result":{"response":{"token":"<xai:tool_args><![CDATA[{\"query\":\"codex-re findings\"}]]></xai:tool_args></xai:tool_usage_card>","messageTag":"tool_usage_card","messageStepId":1,"rolloutId":"Agent 1"}}}
+{"result":{"response":{"token":"Reasoning ","messageTag":"summary","messageStepId":0,"rolloutId":"Agent 2"}}}
+{"result":{"response":{"token":"through the data.","messageTag":"summary","messageStepId":0,"rolloutId":"Agent 2"}}}
+{"result":{"response":{"token":"<xai:tool_usage_card><xai:tool_usage_card_id>card-002</xai:tool_usage_card_id><xai:tool_name>chatroom_send</xai:tool_name><xai:tool_args><![CDATA[{\"message\":\"I found 8 markdown files\",\"to\":\"Grok\"}]]></xai:tool_args></xai:tool_usage_card>","messageTag":"tool_usage_card","messageStepId":2,"rolloutId":"Agent 1"}}}
+{"result":{"response":{"token":"<xai:tool_usage_card><xai:tool_usage_card_id>card-003</xai:tool_usage_card_id><xai:tool_name>chatroom_send</xai:tool_name><xai:tool_args><![CDATA[{\"message\":\"verified count\",\"to\":\"Grok\"}]]></xai:tool_args></xai:tool_usage_card>","messageTag":"tool_usage_card","messageStepId":2,"rolloutId":"Agent 2"}}}
+{"result":{"response":{"token":"Synthesizing ","messageTag":"summary","messageStepId":3,"rolloutId":"Grok"}}}
+{"result":{"response":{"token":"final answer.","messageTag":"summary","messageStepId":3,"rolloutId":"Grok"}}}
