@@ -16,6 +16,10 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`adapters/codex-ws/`** — translates OpenAI Codex CLI WebSocket frames into korg `AgentToolCall` events. Validates the transport-agnostic claim against an architecturally-different stack (WebSocket, OpenAI tool-shape, custom_tool_call freeform-text). 11 tests.
+- **`adapters/grok-heavy/`** — translates Grok Heavy 16-agent NDJSON into korg events. Stress-tests korg's single-parent `triggered_by` causal model under a 16-way fan-out. Documents two known limitations (ingest order vs wall-clock concurrency, and cross-agent chatroom edges). 14 tests.
+
 ### Changed
 - README cleaned up: placeholder crates.io / docs.rs badges dropped (not yet published), install path corrected, test count updated to 175 (162 cargo + 13 pytest).
 - `cargo fmt` cleanup across korg-bridge.
