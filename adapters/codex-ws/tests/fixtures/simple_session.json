@@ -1,0 +1,107 @@
+[
+  {
+    "direction": "out",
+    "frame": {
+      "type": "response.create",
+      "model": "gpt-5.4",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {"type": "input_text", "text": "list the markdown files in codex-re/"}
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "direction": "in",
+    "frame": {
+      "type": "response.output_item.done",
+      "item": {
+        "id": "fc_001",
+        "type": "function_call",
+        "status": "completed",
+        "call_id": "call_001",
+        "name": "exec_command",
+        "arguments": "{\"cmd\":\"rg --files -g '*.md' codex-re/\",\"workdir\":\"/Users/alex\",\"yield_time_ms\":1000}"
+      }
+    }
+  },
+  {
+    "direction": "in",
+    "frame": {
+      "type": "response.output_item.done",
+      "item": {
+        "id": "fc_002",
+        "type": "function_call",
+        "status": "completed",
+        "call_id": "call_002",
+        "name": "exec_command",
+        "arguments": "{\"cmd\":\"rg --files -g '*.md' codex-re/ | wc -l\",\"workdir\":\"/Users/alex\",\"yield_time_ms\":1000}"
+      }
+    }
+  },
+  {
+    "direction": "in",
+    "frame": {
+      "type": "response.completed",
+      "response": {
+        "id": "resp_001",
+        "model": "gpt-5.4",
+        "usage": {
+          "input_tokens": 20151,
+          "input_tokens_details": {"cached_tokens": 3456},
+          "output_tokens": 295,
+          "output_tokens_details": {"reasoning_tokens": 114},
+          "total_tokens": 20446
+        }
+      }
+    }
+  },
+  {
+    "direction": "out",
+    "frame": {
+      "type": "response.create",
+      "model": "gpt-5.4",
+      "input": [
+        {
+          "type": "function_call_output",
+          "call_id": "call_001",
+          "output": "Exit code: 0\nWall time: 0 seconds\nOutput:\ncodex-re/FINDINGS.md\ncodex-re/WS_PROTOCOL.md\n"
+        },
+        {
+          "type": "function_call_output",
+          "call_id": "call_002",
+          "output": "Exit code: 0\nWall time: 0 seconds\nOutput:\n8\n"
+        }
+      ]
+    }
+  },
+  {
+    "direction": "in",
+    "frame": {
+      "type": "response.output_item.done",
+      "item": {
+        "id": "ctc_001",
+        "type": "custom_tool_call",
+        "status": "completed",
+        "call_id": "call_003",
+        "name": "apply_patch",
+        "input": "*** Begin Patch\n*** Update File: codex-re/FINDINGS.md\n@@\n+# REVERSE ENGINEERED\n*** End Patch"
+      }
+    }
+  },
+  {
+    "direction": "in",
+    "frame": {
+      "type": "response.completed",
+      "response": {
+        "id": "resp_002",
+        "model": "gpt-5.4",
+        "usage": {"input_tokens": 20446, "output_tokens": 87}
+      }
+    }
+  }
+]
