@@ -57,6 +57,22 @@ class NormalizedEvent:
     call_id: str | None = None
 
 
+@dataclass
+class SessionState:
+    """Persistent parser state across incremental parse_session() calls.
+
+    Needed for tail mode: a tool_use may land in one batch and its
+    tool_result in the next. Carrying pending_tool_calls across calls
+    lets the result attach back to its tool_use even across polls.
+
+    Single-shot use doesn't need this — just let parse_session() default
+    a fresh instance per call.
+    """
+
+    pending_tool_calls: dict[str, NormalizedEvent] = field(default_factory=dict)
+    seen_first_user: bool = False
+
+
 # Soft cap on tool_result content stored inline. Bigger payloads should
 # arrive as payload_refs (sha256, size_bytes) — but the adapter doesn't
 # do content addressing for v1.
@@ -98,16 +114,24 @@ def _stringify_tool_result(content: Any) -> str:
     return str(content)
 
 
-def parse_session(lines: Iterable[Any]) -> list[NormalizedEvent]:
+def parse_session(
+    lines: Iterable[Any],
+    state: SessionState | None = None,
+) -> list[NormalizedEvent]:
     """Walk Claude Code session events in file order, return ordered NormalizedEvents.
 
     `lines` may be raw JSONL strings or already-decoded dicts — mixed iterables
     work too. Malformed lines are skipped silently (they're typically blank
     lines at the end of a file).
+
+    `state` is optional; pass a persistent `SessionState` instance when
+    parsing the same logical session in multiple calls (tail mode). Without
+    it, each call is independent.
     """
+    if state is None:
+        state = SessionState()
     events: list[NormalizedEvent] = []
-    pending_tool_calls: dict[str, NormalizedEvent] = {}
-    seen_first_user = False
+    pending_tool_calls = state.pending_tool_calls
 
     for line in lines:
         if isinstance(line, dict):
@@ -131,12 +155,12 @@ def parse_session(lines: Iterable[Any]) -> list[NormalizedEvent]:
             if isinstance(content, str) and content.strip():
                 events.append(
                     NormalizedEvent(
-                        causal_role="root" if not seen_first_user else "user_followup",
+                        causal_role="root" if not state.seen_first_user else "user_followup",
                         tool_name="user_prompt",
                         args={"prompt": content},
                     )
                 )
-                seen_first_user = True
+                state.seen_first_user = True
                 continue
 
             # List-form content: may contain tool_results, text blocks, or both.
@@ -164,12 +188,12 @@ def parse_session(lines: Iterable[Any]) -> list[NormalizedEvent]:
                 if combined:
                     events.append(
                         NormalizedEvent(
-                            causal_role="root" if not seen_first_user else "user_followup",
+                            causal_role="root" if not state.seen_first_user else "user_followup",
                             tool_name="user_prompt",
                             args={"prompt": combined},
                         )
                     )
-                    seen_first_user = True
+                    state.seen_first_user = True
 
         elif t == "assistant":
             msg = obj.get("message") or {}
