@@ -2,6 +2,12 @@
 /target/
 Cargo.lock.bk
 
+# ── Python virtualenv (used for korg-bridge maturin builds) ──────────────────
+.venv/
+__pycache__/
+*.py[cod]
+.hypothesis/
+
 # ── IDE / editor ──────────────────────────────────────────────────────────────
 /.vscode/
 /.idea/
