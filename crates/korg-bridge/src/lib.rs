@@ -86,12 +86,8 @@ impl Bridge {
             p
         });
 
-        let mut journal = CapabilityJournal::new(
-            journal_path,
-            snapshot_path,
-            snapshot_interval,
-            lock_path,
-        );
+        let mut journal =
+            CapabilityJournal::new(journal_path, snapshot_path, snapshot_interval, lock_path);
         // load() will succeed on a missing file (it checks .exists()), so we
         // only surface real errors (lock contention, malformed JSON, etc.).
         journal.load().map_err(PyOSError::new_err)?;
@@ -157,7 +153,10 @@ impl Bridge {
             serde_json::Value::from(completion_tokens),
         );
         if let Some(text) = assistant_text {
-            result_map.insert("text".to_string(), serde_json::Value::String(text.to_string()));
+            result_map.insert(
+                "text".to_string(),
+                serde_json::Value::String(text.to_string()),
+            );
         }
         let result = serde_json::Value::Object(result_map);
         self.append(
@@ -252,8 +251,8 @@ fn parse_payload_refs(refs: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<ContentRe
     if refs.is_none() {
         return Ok(Vec::new());
     }
-    let value: serde_json::Value = depythonize(refs)
-        .map_err(|e| PyTypeError::new_err(format!("payload_refs: {e}")))?;
+    let value: serde_json::Value =
+        depythonize(refs).map_err(|e| PyTypeError::new_err(format!("payload_refs: {e}")))?;
     let arr = match value {
         serde_json::Value::Null => return Ok(Vec::new()),
         serde_json::Value::Array(a) => a,
@@ -277,9 +276,7 @@ fn parse_payload_refs(refs: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<ContentRe
         let sha256 = obj
             .get("sha256")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                PyTypeError::new_err(format!("payload_refs[{i}].sha256 must be a str"))
-            })?
+            .ok_or_else(|| PyTypeError::new_err(format!("payload_refs[{i}].sha256 must be a str")))?
             .to_string();
         let size_bytes = obj
             .get("size_bytes")
@@ -367,10 +364,7 @@ impl Bridge {
 
         let (root_event_id, causation_id) = match triggered_by {
             Some(triggered_by_seq) => {
-                let parent = journal
-                    .events
-                    .iter()
-                    .find(|e| e.seq_id == triggered_by_seq);
+                let parent = journal.events.iter().find(|e| e.seq_id == triggered_by_seq);
                 let root = parent.map(|e| e.metadata.root_event_id).unwrap_or(event_id);
                 let causation = parent.map(|e| e.metadata.event_id);
                 (root, causation)
