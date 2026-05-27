@@ -17,8 +17,10 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`adapters/claude-code/`** — translates Claude Code session JSONL files (`~/.claude/projects/<dir>/<uuid>.jsonl`) into korg `AgentToolCall` events. Any existing Claude Code user can now have a retroactive korg ledger of every session they've ever run, with zero behavior change. Smoke-tested against a real 3,141-event session (103 user prompts + 1893 LLM rounds + 1145 tool calls, zero dropped). 23 tests.
 - **`adapters/codex-ws/`** — translates OpenAI Codex CLI WebSocket frames into korg `AgentToolCall` events. Validates the transport-agnostic claim against an architecturally-different stack (WebSocket, OpenAI tool-shape, custom_tool_call freeform-text). 11 tests.
 - **`adapters/grok-heavy/`** — translates Grok Heavy 16-agent NDJSON into korg events. Stress-tests korg's single-parent `triggered_by` causal model under a 16-way fan-out. Documents two known limitations (ingest order vs wall-clock concurrency, and cross-agent chatroom edges). 14 tests.
+- **Transport-agnostic proof trio complete.** Three adapter PoCs across three architectural extremes (stdio JSONL, WebSocket, NDJSON streaming) all round-trip cleanly through the ledger with spec §2a causal coherence — moving the "universal capability ledger" claim from aspirational to demonstrated.
 
 ### Changed
 - README cleaned up: placeholder crates.io / docs.rs badges dropped (not yet published), install path corrected, test count updated to 175 (162 cargo + 13 pytest).
