@@ -235,6 +235,47 @@ def test_format_matches_empty():
     assert "no relevant matches" in format_matches_for_llm([], "semantic")
 
 
+# ── Bridge-compat: transparent 'recall' subcommand prefix ─────────────
+
+
+def test_main_accepts_leading_recall_subcommand_token(tmp_path):
+    """The bridge converts command_id 'korg-recall-mcp.recall' to argv
+    [korg-recall-mcp, recall, --query, ...]. recall-mcp must transparently
+    accept and ignore the leading 'recall' token so the same CLI works
+    both directly and via the bridge."""
+    from korg_recall_mcp.__main__ import main
+
+    ledger = tmp_path / "events.jsonl"
+    ledger.write_text(
+        json.dumps({
+            "seq": 1,
+            "source_agent": "agent:test",
+            "tool_name": "user_prompt",
+            "args": {"prompt": "rust borrow checker"},
+            "result": {},
+            "success": True,
+            "duration_ms": 0,
+        }) + "\n"
+    )
+
+    # Direct invocation: --query without 'recall' prefix.
+    rc_direct = main([
+        "--ledger", str(ledger),
+        "--query", "rust",
+        "--mode", "substring",
+    ])
+    assert rc_direct == 0
+
+    # Bridge-style invocation: 'recall' prefix + same args.
+    rc_bridge = main([
+        "recall",
+        "--ledger", str(ledger),
+        "--query", "rust",
+        "--mode", "substring",
+    ])
+    assert rc_bridge == 0
+
+
 def test_format_matches_includes_seq_score_tool(server):
     from korg_recall_mcp.index import IndexedEvent
     from korg_recall_mcp.search import Match
