@@ -151,6 +151,8 @@ pub async fn run_web_with_campaign(
         .route("/static/korg-frontend.js", get(wasm_js_handler))
         .route("/korg-frontend_bg.wasm", get(wasm_bytes_handler))
         .route("/static/korg-frontend_bg.wasm", get(wasm_bytes_handler))
+        .route("/assets/hero-loop.mp4", get(hero_video_handler))
+        .route("/assets/hero-mesh.glb", get(hero_mesh_handler))
         .route("/api/events", get(sse_handler))
         .route("/api/state", get(state_handler))
         .route("/api/screenshots", get(screenshots_handler))
@@ -272,6 +274,8 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
         .route("/static/korg-frontend.js", get(wasm_js_handler))
         .route("/korg-frontend_bg.wasm", get(wasm_bytes_handler))
         .route("/static/korg-frontend_bg.wasm", get(wasm_bytes_handler))
+        .route("/assets/hero-loop.mp4", get(hero_video_handler))
+        .route("/assets/hero-mesh.glb", get(hero_mesh_handler))
         .route("/api/events", get(sse_handler))
         .route("/api/state", get(state_handler))
         .route("/api/screenshots", get(screenshots_handler))
@@ -335,6 +339,28 @@ async fn wasm_bytes_handler() -> impl IntoResponse {
 /// Serves the premium monochrome landing page
 async fn landing_handler() -> impl IntoResponse {
     Html(LANDING_HTML)
+}
+
+async fn hero_video_handler() -> impl IntoResponse {
+    const BYTES: &[u8] = include_bytes!("../assets/hero-loop.mp4");
+    (
+        [
+            ("content-type", "video/mp4"),
+            ("cache-control", "public, max-age=31536000, immutable"),
+        ],
+        BYTES,
+    )
+}
+
+async fn hero_mesh_handler() -> impl IntoResponse {
+    const BYTES: &[u8] = include_bytes!("../assets/hero-mesh.glb");
+    (
+        [
+            ("content-type", "model/gltf-binary"),
+            ("cache-control", "public, max-age=31536000, immutable"),
+        ],
+        BYTES,
+    )
 }
 
 /// GET `/api/events` (SSE Stream endpoint)
@@ -994,642 +1020,1266 @@ async fn campaign_abort_handler(State(state): State<Arc<AppState>>) -> impl Into
 // ============================================================================
 // PREMIUM MONOCHROME LANDING PAGE
 // ============================================================================
-const LANDING_HTML: &str = r##"<!DOCTYPE html>
+const LANDING_HTML: &str = r##"<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>korg — the first deterministic cognitive runtime</title>
-    <meta name="description" content="Every AI agent decision logged, causally ordered, and reversible. Like Git, but for cognition.">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-    <style>
-        /* ── Reset & Tokens ─────────────────────────────────────────────────── */
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KORG — CROSS-VENDOR MEMORY FOR AI AGENTS</title>
+<meta name="description" content="Capture every AI session into one open ledger. Recall across all of them, semantically, from inside Claude Code. Local, auditable, cross-vendor.">
 
-        :root {
-            --bg:        #080808;
-            --surface:   #0d0d0d;
-            --border:    #1c1c1e;
-            --border-hi: #2e2e30;
-            --text-1:    #fafafa;
-            --text-2:    #8e8e93;
-            --text-3:    #48484a;
-            --amber:     #f59e0b;
-            --amber-dim: rgba(245, 158, 11, 0.12);
-            --sans:      'Inter', system-ui, sans-serif;
-            --mono:      'JetBrains Mono', 'Fira Code', monospace;
-        }
+<meta property="og:title" content="KORG — CROSS-VENDOR MEMORY FOR AI AGENTS">
+<meta property="og:description" content="ChatGPT Memory but local and cross-vendor. Captures Claude Code, Codex, Grok into one ledger. Recall semantically from inside Claude Code.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://yvaehkorg.lol/">
+<meta name="twitter:card" content="summary_large_image">
 
-        html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+<!-- D-DIN family (industrial DIN cut). Fallback chain prioritizes width
+     compression over ornament: Arial Narrow → Arial → Verdana. -->
+<link rel="preconnect" href="https://fonts.cdnfonts.com">
+<link rel="stylesheet" href="https://fonts.cdnfonts.com/css/d-din">
+<!-- JetBrains Mono retained ONLY for code blocks (the brand officially
+     has no mono — but a dev-tooling site needs authentic terminal text). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-        body {
-            font-family: var(--sans);
-            background: var(--bg);
-            color: var(--text-1);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            overflow-x: hidden;
-        }
+<!-- Importmap so Three.js's example modules resolve internal 'three' bare specifiers.
+     Required for GLTFLoader / DRACOLoader. Must come before any module scripts. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 
-        /* ── CRT Overlay ────────────────────────────────────────────────────── */
-        body::before {
-            content: "";
-            position: fixed;
-            inset: 0;
-            z-index: 9999;
-            pointer-events: none;
-            background: repeating-linear-gradient(
-                0deg,
-                rgba(0,0,0,0.09) 0px,
-                rgba(0,0,0,0.09) 1px,
-                transparent 1px,
-                transparent 3px
-            );
-            animation: crt-drift 12s linear infinite;
-        }
-        @keyframes crt-drift {
-            from { background-position: 0 0; }
-            to   { background-position: 0 120px; }
-        }
+<style>
+  /* ── Design tokens — SpaceX-inspired (see design-context) ────────── */
+  :root {
+    --canvas-night:      #000000;
+    --canvas-night-soft: #0a0a0a;
+    --canvas-light:      #ffffff;
+    --canvas-cool:       #f0f0fa;
 
-        /* ── Nav ────────────────────────────────────────────────────────────── */
-        nav {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 40px;
-            height: 56px;
-            border-bottom: 1px solid var(--border);
-            position: sticky;
-            top: 0;
-            background: rgba(8,8,8,0.92);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            z-index: 100;
-        }
+    --on-primary:        #ffffff;
+    --on-primary-mute:   #f0f0fa;
 
-        .nav-logo {
-            font-family: var(--mono);
-            font-size: 15px;
-            font-weight: 700;
-            letter-spacing: 0.04em;
-            color: var(--text-1);
-            text-decoration: none;
-        }
+    --ink:               #000000;
+    --ink-mute:          #5a5a5f;
 
-        .nav-right {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            font-family: var(--mono);
-            font-size: 11px;
-            color: var(--text-2);
-        }
+    --hairline-on-dark:  #3a3a3f;
+    --hairline-on-light: #e0e0e8;
 
-        .nav-badge {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
+    --font-display: 'D-DIN', 'Arial Narrow', Arial, Verdana, sans-serif;
+    --font-body:    'D-DIN', Arial, Verdana, sans-serif;
+    --font-mono:    'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
 
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: #22c55e;
-            animation: pulse-dot 2.4s ease-in-out infinite;
-        }
-        @keyframes pulse-dot {
-            0%, 100% { opacity: 0.4; }
-            50%       { opacity: 1; }
-        }
+    /* Type tokens — directly from the design system */
+    --type-display-xxl-size:    80px;
+    --type-display-xxl-lh:      0.95;
+    --type-display-xxl-track:   1.6px;
 
-        .nav-link {
-            color: var(--text-2);
-            text-decoration: none;
-            transition: color 0.15s;
-        }
-        .nav-link:hover { color: var(--text-1); }
+    --type-display-xl-size:     60px;
+    --type-display-xl-lh:       1.2;
+    --type-display-xl-track:    1.2px;
 
-        /* ── Hero ───────────────────────────────────────────────────────────── */
-        .hero {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            padding: 96px 24px 80px;
-            gap: 0;
-        }
+    --type-display-lg-size:     48px;
+    --type-display-lg-lh:       1.25;
+    --type-display-lg-track:    0.96px;
 
-        .hero-label {
-            font-family: var(--mono);
-            font-size: 11px;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            color: var(--amber);
-            margin-bottom: 28px;
-            opacity: 0;
-            animation: fade-up 0.6s ease 0.1s forwards;
-        }
+    --type-body-lg-size:        19px;     /* was 16 — hero + section ledes */
+    --type-body-lg-lh:          1.6;      /* was 1.7 — tightened for the bigger size */
+    --type-body-lg-track:       0.16px;   /* less tracking at larger sizes */
 
-        .hero-title {
-            font-size: clamp(36px, 6vw, 64px);
-            font-weight: 300;
-            letter-spacing: -0.03em;
-            line-height: 1.08;
-            color: var(--text-1);
-            max-width: 820px;
-            margin-bottom: 24px;
-            opacity: 0;
-            animation: fade-up 0.6s ease 0.2s forwards;
-        }
+    --type-body-md-size:        17px;     /* was 16 — general body */
+    --type-body-md-lh:          1.55;     /* was 1.5 */
+    --type-body-md-track:       0.16px;
 
-        .hero-sub {
-            font-size: 16px;
-            font-weight: 400;
-            color: var(--text-2);
-            line-height: 1.6;
-            max-width: 500px;
-            margin-bottom: 44px;
-            opacity: 0;
-            animation: fade-up 0.6s ease 0.3s forwards;
-        }
+    --type-button-cap-size:     13.5px;   /* was 13.008 */
+    --type-button-cap-lh:       0.94;
+    --type-button-cap-track:    1.2px;
 
-        .hero-ctas {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 64px;
-            opacity: 0;
-            animation: fade-up 0.6s ease 0.4s forwards;
-        }
+    --type-micro-cap-size:      12.5px;   /* was 12 */
+    --type-micro-cap-lh:        2.0;
+    --type-micro-cap-track:     1.0px;
 
-        .cta-primary {
-            font-family: var(--mono);
-            font-size: 13px;
-            font-weight: 500;
-            padding: 11px 22px;
-            border: 1px solid var(--border-hi);
-            background: transparent;
-            color: var(--text-1);
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            transition: border-color 0.15s, background 0.15s, color 0.15s;
-            position: relative;
-            overflow: hidden;
-        }
-        .cta-primary:hover {
-            border-color: var(--amber);
-            color: var(--amber);
-        }
+    --type-caption-size:        14px;     /* was 13.008 */
+    --type-caption-lh:          1.55;
+    --type-caption-track:       0px;
 
-        .cta-primary .prompt { color: var(--text-3); }
+    /* Spacing */
+    --s-xxs: 4px;
+    --s-xs:  8px;
+    --s-sm:  12px;
+    --s-md:  16px;
+    --s-lg:  18px;
+    --s-xl:  24px;
+    --s-xxl: 32px;
+    --s-huge: 48px;
 
-        .cta-secondary {
-            font-family: var(--mono);
-            font-size: 12px;
-            color: var(--text-2);
-            text-decoration: none;
-            padding: 11px 4px;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            transition: color 0.15s;
-            border-bottom: 1px solid transparent;
-        }
-        .cta-secondary:hover {
-            color: var(--text-1);
-            border-bottom-color: var(--border-hi);
-        }
+    /* Rounding */
+    --r-xs:   4px;
+    --r-sm:   8px;
+    --r-md:   16px;
+    --r-pill: 32px;
+    --r-full: 9999px;
 
-        /* ── Terminal Window ────────────────────────────────────────────────── */
-        .terminal-wrap {
-            width: 100%;
-            max-width: 720px;
-            opacity: 0;
-            animation: fade-up 0.7s ease 0.55s forwards;
-        }
+    --max-w:  1200px;
+    --gutter: var(--s-xxl);
+  }
 
-        .terminal {
-            background: #050505;
-            border: 1px solid var(--border);
-            border-radius: 0;
-            overflow: hidden;
-        }
+  * { box-sizing: border-box; }
+  html {
+    background: var(--canvas-night);
+    color: var(--on-primary);
+  }
+  body {
+    font-family: var(--font-body);
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-lh);
+    letter-spacing: var(--type-body-md-track);
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+  ::selection { background: var(--on-primary); color: var(--canvas-night); }
+  a { color: inherit; text-decoration: none; transition: opacity 140ms; }
+  a.inline { text-decoration: underline; text-underline-offset: 3px; }
+  code, pre { font-family: var(--font-mono); }
 
-        .terminal-bar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 16px;
-            border-bottom: 1px solid var(--border);
-            background: #080808;
-        }
+  .container { max-width: var(--max-w); margin: 0 auto; padding: 0 var(--gutter); }
 
-        .terminal-dots {
-            display: flex;
-            gap: 6px;
-        }
-        .terminal-dots span {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: var(--border-hi);
-        }
+  /* ── Display tiers ──────────────────────────────────────────────── */
+  .display-xxl {
+    font-family: var(--font-display);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: var(--type-display-xxl-size);
+    line-height: var(--type-display-xxl-lh);
+    letter-spacing: var(--type-display-xxl-track);
+    color: var(--on-primary);
+    margin: 0;
+  }
+  .display-xl {
+    font-family: var(--font-display);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: var(--type-display-xl-size);
+    line-height: var(--type-display-xl-lh);
+    letter-spacing: var(--type-display-xl-track);
+    color: var(--on-primary);
+    margin: 0;
+  }
+  .display-lg {
+    font-family: var(--font-display);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: var(--type-display-lg-size);
+    line-height: var(--type-display-lg-lh);
+    letter-spacing: var(--type-display-lg-track);
+    color: var(--on-primary);
+    margin: 0;
+  }
+  .micro-cap {
+    font-family: var(--font-body);
+    font-weight: 400;
+    text-transform: uppercase;
+    font-size: var(--type-micro-cap-size);
+    line-height: var(--type-micro-cap-lh);
+    letter-spacing: var(--type-micro-cap-track);
+    color: var(--on-primary-mute);
+  }
+  .button-cap {
+    font-family: var(--font-body);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: var(--type-button-cap-size);
+    line-height: var(--type-button-cap-lh);
+    letter-spacing: var(--type-button-cap-track);
+  }
+  .body-lg {
+    font-family: var(--font-body);
+    font-size: var(--type-body-lg-size);
+    line-height: var(--type-body-lg-lh);
+    letter-spacing: var(--type-body-lg-track);
+    color: var(--on-primary-mute);
+  }
+  .caption {
+    font-family: var(--font-body);
+    font-size: var(--type-caption-size);
+    line-height: var(--type-caption-lh);
+    letter-spacing: var(--type-caption-track);
+    color: var(--on-primary-mute);
+  }
 
-        .terminal-title {
-            font-family: var(--mono);
-            font-size: 10px;
-            color: var(--text-3);
-            letter-spacing: 0.06em;
-        }
+  /* ── Ghost pill CTA (the brand's signature button) ──────────────── */
+  .ghost-pill {
+    display: inline-block;
+    background: var(--canvas-night);
+    color: var(--on-primary);
+    border: 1px solid var(--on-primary);
+    border-radius: var(--r-pill);
+    padding: var(--s-lg) var(--s-xl);
+    font-family: var(--font-body);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: var(--type-button-cap-size);
+    line-height: var(--type-button-cap-lh);
+    letter-spacing: var(--type-button-cap-track);
+    cursor: pointer;
+    transition: background 160ms, color 160ms;
+  }
+  .ghost-pill:hover {
+    background: var(--on-primary);
+    color: var(--canvas-night);
+  }
 
-        .terminal-body {
-            padding: 20px 24px 24px;
-            font-family: var(--mono);
-            font-size: 12.5px;
-            line-height: 1.9;
-            min-height: 230px;
-        }
+  /* ── Nav (overlay on dark) ──────────────────────────────────────── */
+  nav.top {
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 50;
+    padding: var(--s-xl) var(--s-xxl);
+    background: transparent;
+  }
+  nav.top .row {
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 100%;
+  }
+  nav.top .links {
+    display: flex; gap: var(--s-xxl);
+    align-items: center;
+  }
+  nav.top a {
+    color: var(--on-primary);
+    font-family: var(--font-body);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: var(--type-button-cap-size);
+    letter-spacing: var(--type-button-cap-track);
+    line-height: var(--type-button-cap-lh);
+  }
+  nav.top a:hover { opacity: 0.72; }
 
-        .log-line {
-            display: flex;
-            gap: 12px;
-            opacity: 0;
-            transform: translateY(4px);
-        }
+  /* Logo wordmark */
+  .logo {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: 1.6px;
+    text-transform: uppercase;
+    color: var(--on-primary);
+  }
+  .logo .mark {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: var(--on-primary);
+    border-radius: 50%;
+    margin-bottom: 1px;
+  }
 
-        .log-ts    { color: var(--text-3); flex-shrink: 0; }
-        .log-level { color: var(--text-2); flex-shrink: 0; width: 36px; }
-        .log-mod   { color: var(--text-2); flex-shrink: 0; }
-        .log-msg   { color: var(--text-1); }
-        .log-seq   { color: var(--amber); font-weight: 700; }
-        .log-event { color: var(--text-2); }
-        .log-rewind { color: var(--amber); font-weight: 700; }
-        .log-ok    { color: #22c55e; font-weight: 700; }
+  /* ── Bands ───────────────────────────────────────────────────────── */
+  section.band {
+    position: relative;
+    padding: var(--s-huge) 0;
+  }
+  section.band.full {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    padding: 0;
+  }
+  section.band.dark-soft { background: var(--canvas-night-soft); }
+  section.band + section.band { border-top: 1px solid var(--hairline-on-dark); }
 
-        /* Staggered line reveals */
-        .log-line:nth-child(1)  { animation: log-in 0.3s ease 1.0s forwards; }
-        .log-line:nth-child(2)  { animation: log-in 0.3s ease 1.3s forwards; }
-        .log-line:nth-child(3)  { animation: log-in 0.3s ease 1.6s forwards; }
-        .log-line:nth-child(4)  { animation: log-in 0.3s ease 1.9s forwards; }
-        .log-line:nth-child(5)  { animation: log-in 0.3s ease 2.2s forwards; }
-        .log-line:nth-child(6)  { animation: log-in 0.3s ease 2.5s forwards; }
-        .log-line:nth-child(7)  { animation: log-in 0.3s ease 2.8s forwards; }
-        .log-line:nth-child(8)  { animation: log-in 0.3s ease 3.4s forwards; }
-        .log-line:nth-child(9)  { animation: log-in 0.3s ease 3.7s forwards; }
-        .log-line:nth-child(10) { animation: log-in 0.3s ease 4.0s forwards; }
+  /* ── Hero ───────────────────────────────────────────────────────── */
+  section.hero {
+    position: relative;
+    min-height: 100vh;
+    display: flex; align-items: center;
+    overflow: hidden;
+    padding: 120px 0 96px;
+  }
+  /* Constellation = our 'full-bleed photograph' */
+  #hero-video {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    z-index: 0;
+    pointer-events: none;
+    background: var(--canvas-night);
+    /* Dial 0.0 (invisible) → 1.0 (full strength).
+       0.4 = very ambient · 0.55 = balanced · 0.75 = present but muted */
+    opacity: 0.55;
+  }
+  /* Subtle vignette to anchor type — graded canvas, not a scrim.
+     Two-stack: outer ring darkens edges (premium framing), inner
+     bell darkens the center where the headline sits (legibility on
+     bright video patches). Tunable rgba values 0.35 / 0.25 — lower
+     values feel more cinematic, higher values feel safer. */
+  .hero::before {
+    content: ''; position: absolute; inset: 0; z-index: 1;
+    background:
+      radial-gradient(ellipse 50% 40% at 50% 50%, rgba(0,0,0,0.35) 0%, transparent 75%),
+      radial-gradient(ellipse 70% 60% at 50% 50%, transparent 40%, rgba(0,0,0,0.55) 100%);
+    pointer-events: none;
+  }
+  .hero .content {
+    position: relative; z-index: 2;
+    text-align: center;
+    width: 100%;
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 0 var(--gutter);
+  }
+  .hero .eyebrow {
+    display: block;
+    margin-bottom: var(--s-xxl);
+  }
+  .hero h1 {
+    margin: 0 0 var(--s-xl);
+    /* Soft dark halo lifts the type off bright video patches.
+       Stays invisible on dark patches. */
+    text-shadow: 0 2px 14px rgba(0,0,0,0.55);
+  }
+  .hero .lede {
+    margin: 0 auto var(--s-huge);
+    max-width: 640px;
+    color: var(--on-primary);
+    text-shadow: 0 1px 8px rgba(0,0,0,0.65);
+  }
+  .hero .eyebrow,
+  .hero .install-hint {
+    text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+  }
+  .hero .ctas { display: flex; justify-content: center; }
 
-        @keyframes log-in {
-            to { opacity: 1; transform: none; }
-        }
+  /* Install hint: ONE unified pill containing label + divider + code.
+     Visually balanced, single click target, premium "system caption" vibe. */
+  .hero .install-hint {
+    margin-top: var(--s-xl);
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid var(--on-primary);
+    border-radius: var(--r-pill);
+    background: rgba(0,0,0,0.45);
+    overflow: hidden;
+    cursor: pointer;
+    transition: background 160ms, color 160ms, border-color 160ms;
+  }
+  .hero .install-hint .label,
+  .hero .install-hint code {
+    padding: 10px 18px;
+    line-height: 1;
+    font-size: 13.5px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .hero .install-hint .label {
+    font-family: var(--font-body);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.4px;
+    color: var(--on-primary-mute);
+    border-right: 1px solid rgba(255,255,255,0.22);
+    padding-right: 16px;
+  }
+  .hero .install-hint code {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--on-primary);
+    padding-left: 16px;
+  }
+  .hero .install-hint:hover {
+    background: var(--on-primary);
+  }
+  .hero .install-hint:hover .label,
+  .hero .install-hint:hover code {
+    color: var(--canvas-night);
+  }
+  .hero .install-hint:hover .label {
+    border-right-color: rgba(0,0,0,0.2);
+  }
 
-        /* ── Feature Strip ──────────────────────────────────────────────────── */
-        .features {
-            width: 100%;
-            max-width: 1000px;
-            margin: 0 auto;
-            padding: 80px 24px;
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 1px;
-            background: var(--border);
-            border-top: 1px solid var(--border);
-            border-bottom: 1px solid var(--border);
-        }
+  /* ── Stats band (hairline-separated cells) ──────────────────────── */
+  .stats {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+  }
+  .stat-cell {
+    padding: var(--s-huge) var(--s-xl);
+    text-align: center;
+    border-right: 1px solid var(--hairline-on-dark);
+  }
+  .stat-cell:last-child { border-right: none; }
+  .stat-num {
+    font-family: var(--font-display);
+    font-size: 56px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 1px;
+    color: var(--on-primary);
+    margin-bottom: var(--s-md);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-label { /* uses micro-cap */ }
 
-        .feat {
-            background: var(--bg);
-            padding: 40px 36px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            transition: background 0.2s;
-        }
-        .feat:hover { background: var(--surface); }
+  /* ── Section heading block ──────────────────────────────────────── */
+  .section-head {
+    text-align: center;
+    margin-bottom: var(--s-huge);
+  }
+  .section-head .eyebrow { display: block; margin-bottom: var(--s-md); }
+  .section-head h2 { margin: 0 auto var(--s-md); max-width: 880px; }
+  .section-head .lede { max-width: 640px; margin: var(--s-md) auto 0; }
 
-        .feat-name {
-            font-family: var(--mono);
-            font-size: 13px;
-            font-weight: 700;
-            color: var(--text-1);
-            letter-spacing: 0.02em;
-        }
+  /* ── Demo card (the engineering display) ────────────────────────── */
+  .demo-card {
+    background: var(--canvas-night-soft);
+    border: 1px solid var(--hairline-on-dark);
+    overflow: hidden;
+    max-width: 960px;
+    margin: 0 auto;
+    border-radius: var(--r-xs);
+  }
+  .demo-card .titlebar {
+    display: flex; align-items: center;
+    gap: var(--s-sm);
+    padding: var(--s-sm) var(--s-lg);
+    border-bottom: 1px solid var(--hairline-on-dark);
+  }
+  .demo-card .titlebar .dots { display: flex; gap: 6px; }
+  .demo-card .titlebar .dots span {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--hairline-on-dark);
+  }
+  .demo-card .titlebar .label {
+    margin-left: var(--s-sm);
+    font-family: var(--font-body);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.96px;
+    color: var(--on-primary-mute);
+  }
+  .demo-card .titlebar .label .live {
+    margin-left: var(--s-sm);
+    padding: 1px 8px;
+    border: 1px solid var(--on-primary);
+    border-radius: var(--r-xs);
+    font-size: 10px;
+    color: var(--on-primary);
+    letter-spacing: 1.17px;
+  }
+  .demo-body {
+    padding: var(--s-huge) var(--s-huge) var(--s-huge);
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    line-height: 1.75;
+    color: var(--on-primary-mute);
+  }
+  .demo-body .meta { color: var(--ink-mute); font-style: italic; font-size: 12.5px; }
+  .demo-body .you {
+    color: var(--on-primary);
+    font-weight: 500;
+  }
+  .demo-body .you::before { content: '> '; color: var(--ink-mute); font-style: normal; font-weight: 400; }
+  .demo-body .claude { color: var(--on-primary); }
+  .demo-body .claude::before { content: '* '; color: var(--on-primary-mute); font-weight: 700; }
+  .demo-body .tool {
+    margin: var(--s-md) 0;
+    padding: var(--s-sm) var(--s-md);
+    background: var(--canvas-night);
+    border-left: 2px solid var(--on-primary);
+    font-size: 12.5px;
+    color: var(--on-primary-mute);
+  }
+  .demo-body .tool .name { color: var(--on-primary); font-weight: 500; }
+  .demo-body .result {
+    color: var(--on-primary-mute);
+    font-size: 12.5px;
+    padding-left: var(--s-md);
+    border-left: 1px solid var(--hairline-on-dark);
+    margin: var(--s-xxs) 0 var(--s-xs);
+  }
+  .demo-body .divider {
+    border: none;
+    border-top: 1px solid var(--hairline-on-dark);
+    margin: var(--s-xl) 0;
+  }
+  .demo-callout {
+    margin-top: var(--s-xl);
+    padding: var(--s-md) var(--s-lg);
+    border-left: 2px solid var(--on-primary);
+    font-family: var(--font-body);
+    font-size: 14.5px;
+    line-height: 1.5;
+    letter-spacing: 0.32px;
+    color: var(--on-primary);
+    text-transform: none;
+    background: transparent;
+  }
+  .demo-callout strong { font-weight: 700; }
 
-        .feat-desc {
-            font-size: 13px;
-            color: var(--text-2);
-            line-height: 1.6;
-            font-weight: 400;
-        }
+  /* ── Feature grid (engineering spec sheet) ──────────────────────── */
+  .feature-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--hairline-on-dark);
+    border-bottom: 1px solid var(--hairline-on-dark);
+  }
+  .feature {
+    padding: var(--s-huge) var(--s-xl);
+    border-right: 1px solid var(--hairline-on-dark);
+  }
+  .feature:last-child { border-right: none; }
+  .feature .num {
+    /* micro-cap */
+    font-family: var(--font-body);
+    font-size: var(--type-micro-cap-size);
+    text-transform: uppercase;
+    letter-spacing: var(--type-micro-cap-track);
+    color: var(--on-primary-mute);
+    margin-bottom: var(--s-xl);
+    display: block;
+  }
+  .feature h3 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 26px;            /* was 22 */
+    line-height: 1.12;
+    letter-spacing: 0.7px;
+    margin: 0 0 var(--s-md);
+    color: var(--on-primary);
+  }
+  .feature p {
+    margin: 0;
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-lh);
+    letter-spacing: var(--type-body-md-track);
+    color: var(--on-primary-mute);
+  }
+  .feature p code {
+    background: var(--canvas-night-soft);
+    border: 1px solid var(--hairline-on-dark);
+    padding: 1px 6px;
+    color: var(--on-primary);
+    font-size: 12.5px;
+  }
 
-        .feat-detail {
-            font-family: var(--mono);
-            font-size: 10px;
-            color: var(--text-3);
-            margin-top: 4px;
-        }
+  /* ── Comparison table (white-on-black inversion for "us") ──────── */
+  .compare-wrap {
+    border: 1px solid var(--hairline-on-dark);
+    border-radius: var(--r-xs);
+    overflow: hidden;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  table.compare { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  table.compare th, table.compare td {
+    padding: var(--s-lg) var(--s-xl);
+    text-align: left;
+    border-bottom: 1px solid var(--hairline-on-dark);
+  }
+  table.compare th {
+    font-family: var(--font-body);
+    font-size: var(--type-micro-cap-size);
+    text-transform: uppercase;
+    letter-spacing: var(--type-micro-cap-track);
+    color: var(--on-primary-mute);
+    font-weight: 700;
+  }
+  table.compare tr:last-child td { border-bottom: none; }
+  table.compare td { color: var(--on-primary-mute); }
+  table.compare td.product { font-weight: 700; color: var(--on-primary); text-transform: uppercase; letter-spacing: 0.96px; font-size: 13px; }
+  table.compare tr.us td { background: var(--on-primary); color: var(--canvas-night); }
+  table.compare tr.us td.product { color: var(--canvas-night); }
+  table.compare tr.us td.product::before { content: '◆ '; }
 
-        /* ── Install Strip ──────────────────────────────────────────────────── */
-        .install-strip {
-            width: 100%;
-            max-width: 1000px;
-            margin: 0 auto;
-            padding: 80px 24px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 32px;
-            text-align: center;
-        }
+  /* ── Install steps ──────────────────────────────────────────────── */
+  .steps {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--hairline-on-dark);
+    border-bottom: 1px solid var(--hairline-on-dark);
+  }
+  .step {
+    padding: var(--s-huge) var(--s-xl);
+    border-right: 1px solid var(--hairline-on-dark);
+    display: flex; flex-direction: column;
+  }
+  .step:last-child { border-right: none; }
+  .step .step-num {
+    font-family: var(--font-body);
+    font-size: var(--type-micro-cap-size);
+    text-transform: uppercase;
+    letter-spacing: var(--type-micro-cap-track);
+    color: var(--on-primary-mute);
+    margin-bottom: var(--s-md);
+  }
+  .step h4 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 20px;            /* was 18 */
+    letter-spacing: 0.7px;
+    line-height: 1.2;
+    margin: 0 0 var(--s-md);
+    color: var(--on-primary);
+  }
+  .step p {
+    margin: 0 0 var(--s-md);
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-lh);
+    letter-spacing: var(--type-body-md-track);
+    color: var(--on-primary-mute);
+    flex: 1;
+  }
+  .step pre {
+    background: var(--canvas-night);
+    border: 1px solid var(--hairline-on-dark);
+    border-radius: var(--r-xs);
+    padding: var(--s-md);
+    overflow-x: auto; margin: 0;
+    color: var(--on-primary-mute);
+    font-size: 12.5px;
+    line-height: 1.6;
+    font-family: var(--font-mono);
+  }
+  .step pre code { background: none; padding: 0; }
+  .step pre .cmt { color: var(--ink-mute); }
+  .step pre .key { color: var(--on-primary); font-weight: 600; }
+  .step pre .str { color: var(--on-primary-mute); }
 
-        .install-heading {
-            font-size: 28px;
-            font-weight: 300;
-            letter-spacing: -0.02em;
-            color: var(--text-1);
-        }
+  /* ── Closing band ───────────────────────────────────────────────── */
+  section.closing {
+    text-align: center;
+    padding: 160px 0 120px;
+    position: relative;
+    overflow: hidden;
+  }
+  section.closing .content { position: relative; z-index: 2; }
+  section.closing h2 { margin-bottom: var(--s-xl); }
+  section.closing .lede {
+    margin: 0 auto var(--s-huge);
+    max-width: 560px;
+  }
+  /* faint background depth — the constellation as a tiny reprise */
+  section.closing::before {
+    content: ''; position: absolute; inset: 0; z-index: 0;
+    background-image:
+      radial-gradient(ellipse 60% 50% at 50% 60%, rgba(255,255,255,0.04), transparent 70%);
+    pointer-events: none;
+  }
 
-        .install-box {
-            display: flex;
-            align-items: center;
-            gap: 0;
-            border: 1px solid var(--border-hi);
-            overflow: hidden;
-            max-width: 420px;
-            width: 100%;
-        }
+  /* ── Footer ──────────────────────────────────────────────────────── */
+  footer {
+    background: var(--canvas-night);
+    border-top: 1px solid var(--hairline-on-dark);
+    padding: var(--s-xxl) var(--s-xl);
+  }
+  footer .row {
+    display: flex; justify-content: space-between;
+    align-items: flex-start; gap: var(--s-huge);
+    flex-wrap: wrap;
+    max-width: var(--max-w);
+    margin: 0 auto;
+    padding: var(--s-xl) var(--gutter) var(--s-huge);
+  }
+  footer .col { flex: 1; min-width: 200px; }
+  footer h5 {
+    font-family: var(--font-body);
+    font-size: var(--type-micro-cap-size);
+    text-transform: uppercase;
+    letter-spacing: var(--type-micro-cap-track);
+    color: var(--on-primary-mute);
+    margin: 0 0 var(--s-md);
+    font-weight: 700;
+  }
+  footer ul { list-style: none; padding: 0; margin: 0; }
+  footer li {
+    margin-bottom: var(--s-xs);
+    font-family: var(--font-body);
+    font-size: var(--type-caption-size);
+    line-height: var(--type-caption-lh);
+    color: var(--on-primary-mute);
+  }
+  footer li a { color: var(--on-primary-mute); }
+  footer li a:hover { color: var(--on-primary); }
+  footer .signature {
+    border-top: 1px solid var(--hairline-on-dark);
+    padding: var(--s-xl) var(--gutter);
+    max-width: var(--max-w);
+    margin: 0 auto;
+    display: flex; justify-content: space-between;
+    align-items: center; flex-wrap: wrap; gap: var(--s-md);
+    font-family: var(--font-body);
+    font-size: var(--type-caption-size);
+    text-transform: uppercase;
+    letter-spacing: 0.96px;
+    color: var(--on-primary-mute);
+  }
+  footer .signature .badges { display: flex; gap: var(--s-xs); }
+  footer .signature .badge {
+    padding: 3px 10px;
+    border: 1px solid var(--hairline-on-dark);
+    border-radius: var(--r-xs);
+    color: var(--on-primary-mute);
+    font-size: 10px;
+    letter-spacing: 0.96px;
+  }
+  footer .signature a { color: var(--on-primary); }
 
-        .install-prompt {
-            font-family: var(--mono);
-            font-size: 13px;
-            padding: 14px 16px;
-            background: var(--surface);
-            color: var(--text-3);
-            border-right: 1px solid var(--border);
-            flex-shrink: 0;
-            user-select: none;
-        }
+  /* ── Ledger feature band (single-screen 3D feature) ─────────────── */
+  section.ledger-deepdive {
+    min-height: 100vh;
+    background: var(--canvas-night);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+  }
+  .ledger-sticky {
+    position: relative;
+    width: 100%;
+    min-height: 80vh;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+  }
+  #ledger-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+  }
+  /* Soft center vignette for type legibility — same recipe as hero */
+  .ledger-sticky::before {
+    content: ''; position: absolute; inset: 0; z-index: 1;
+    background:
+      radial-gradient(ellipse 40% 35% at 50% 50%, rgba(0,0,0,0.45) 0%, transparent 75%),
+      radial-gradient(ellipse 70% 60% at 50% 50%, transparent 40%, rgba(0,0,0,0.6) 100%);
+    pointer-events: none;
+  }
+  .ledger-overlay {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    max-width: var(--max-w);
+    margin: 0 auto;
+    padding: 0 var(--gutter);
+  }
+  .ledger-frame {
+    text-align: left;
+    max-width: 640px;
+  }
+  .ledger-frame .eyebrow {
+    display: block;
+    margin-bottom: var(--s-lg);
+    color: var(--on-primary);
+  }
+  .ledger-frame h2 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: clamp(40px, 5vw, 64px);
+    line-height: 1.0;
+    letter-spacing: 1.2px;
+    color: var(--on-primary);
+    margin: 0 0 var(--s-xl);
+    text-shadow: 0 2px 16px rgba(0,0,0,0.6);
+  }
+  .ledger-frame p {
+    font-size: 18px;
+    line-height: 1.55;
+    color: var(--on-primary);
+    margin: 0;
+    max-width: 520px;
+    text-shadow: 0 1px 8px rgba(0,0,0,0.7);
+  }
 
-        .install-cmd {
-            font-family: var(--mono);
-            font-size: 13px;
-            padding: 14px 16px;
-            color: var(--text-1);
-            flex: 1;
-            letter-spacing: 0.01em;
-        }
-
-        .install-copy {
-            font-family: var(--mono);
-            font-size: 11px;
-            padding: 14px 16px;
-            background: none;
-            border: none;
-            border-left: 1px solid var(--border);
-            color: var(--text-2);
-            cursor: pointer;
-            transition: color 0.15s, background 0.15s;
-        }
-        .install-copy:hover {
-            color: var(--amber);
-            background: var(--amber-dim);
-        }
-
-        .install-links {
-            display: flex;
-            gap: 24px;
-            font-family: var(--mono);
-            font-size: 11px;
-            color: var(--text-3);
-        }
-        .install-links a {
-            color: var(--text-2);
-            text-decoration: none;
-            transition: color 0.15s;
-        }
-        .install-links a:hover { color: var(--text-1); }
-
-        /* ── Footer ─────────────────────────────────────────────────────────── */
-        footer {
-            border-top: 1px solid var(--border);
-            padding: 24px 40px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            font-family: var(--mono);
-            font-size: 11px;
-            color: var(--text-3);
-        }
-
-        .footer-left { display: flex; gap: 16px; }
-        .footer-left a {
-            color: var(--text-3);
-            text-decoration: none;
-            transition: color 0.15s;
-        }
-        .footer-left a:hover { color: var(--text-2); }
-
-        /* ── Animations ─────────────────────────────────────────────────────── */
-        @keyframes fade-up {
-            from { opacity: 0; transform: translateY(12px); }
-            to   { opacity: 1; transform: none; }
-        }
-
-        /* ── Responsive ─────────────────────────────────────────────────────── */
-        @media (max-width: 720px) {
-            nav { padding: 0 20px; }
-            .nav-right .nav-link { display: none; }
-            .hero { padding: 64px 20px 56px; }
-            .features {
-                grid-template-columns: 1fr;
-                padding: 0;
-            }
-            .feat { padding: 28px 20px; }
-            footer { flex-direction: column; gap: 12px; text-align: center; }
-        }
-    </style>
+  /* ── Responsive ─────────────────────────────────────────────────── */
+  @media (max-width: 1279px) {
+    :root { --type-display-xxl-size: 64px; }
+  }
+  @media (max-width: 960px) {
+    :root {
+      --type-display-xxl-size: 48px;
+      --type-display-xxl-track: 1.2px;
+      --gutter: var(--s-xl);
+    }
+    .feature-grid, .stats, .steps { grid-template-columns: 1fr; }
+    .feature, .stat-cell, .step { border-right: none; border-bottom: 1px solid var(--hairline-on-dark); }
+    .feature:last-child, .stat-cell:last-child, .step:last-child { border-bottom: none; }
+    nav.top .links a:not(.cta) { display: none; }
+    nav.top { padding: var(--s-md) var(--s-xl); }
+    section.hero { padding: 100px 0 60px; min-height: auto; }
+    section.band { padding: var(--s-xxl) 0; }
+    .ledger-frame h2 { font-size: 38px; }
+  }
+  @media (max-width: 600px) {
+    :root { --type-display-xxl-size: 40px; }
+    .stat-num { font-size: 40px; }
+    .demo-body { padding: var(--s-xl) var(--s-md); font-size: 12px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #hero-video { display: none; }
+    .hero::before { opacity: 0.5; }
+  }
+</style>
 </head>
+
 <body>
 
-    <!-- Nav -->
-    <nav>
-        <a href="/" class="nav-logo">korg</a>
-        <div class="nav-right">
-            <div class="nav-badge">
-                <span class="status-dot"></span>
-                <span>v0.1.0 stable</span>
-            </div>
-            <a href="https://github.com/New1Direction/korg" target="_blank" class="nav-link">github</a>
-            <a href="https://crates.io/crates/korg" target="_blank" class="nav-link">crates.io</a>
-            <a href="/cockpit" class="nav-link">cockpit →</a>
+<!-- ── Nav (overlay) ─────────────────────────────────────────────────── -->
+<nav class="top">
+  <div class="row">
+    <a href="/" class="logo">KORG<span class="mark"></span></a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#compare">Comparison</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/New1Direction/korg">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ── Hero ─────────────────────────────────────────────────────────── -->
+<section class="hero">
+  <video
+    id="hero-video"
+    src="assets/hero-loop.mp4"
+    autoplay
+    muted
+    playsinline
+    preload="auto"
+    aria-hidden="true"
+  ></video>
+  <script>
+    // Spin once on arrival; freeze on last frame.
+    // If the natural end-frame is mid-motion (i.e. doesn't compose well
+    // as a static hero), un-comment FREEZE_AT below and the video will
+    // stop at that specific timestamp instead.
+    (function () {
+      const v = document.getElementById('hero-video');
+      if (!v) return;
+      // const FREEZE_AT = 0.62; // seconds — pick whichever frame composes best
+      // if (typeof FREEZE_AT === 'number') {
+      //   v.addEventListener('timeupdate', () => {
+      //     if (v.currentTime >= FREEZE_AT) { v.pause(); v.currentTime = FREEZE_AT; }
+      //   });
+      // }
+      v.addEventListener('ended', () => {
+        // Ensure last frame stays visible (default browser behavior, but
+        // explicit so we can hook future transitions here).
+        v.classList.add('done');
+      });
+    })();
+  </script>
+  <div class="content">
+    <span class="micro-cap eyebrow">COGNITIVE INFRASTRUCTURE · OPEN SOURCE · CROSS-VENDOR</span>
+    <h1 class="display-xxl">YOUR AI SESSIONS,<br>REMEMBERED.</h1>
+    <p class="body-lg lede">
+      Capture every Claude Code, Codex, or Grok session into one open
+      ledger on your machine. Recall semantically across all of them
+      from inside Claude Code. Cross-vendor memory you actually own.
+    </p>
+    <div class="ctas">
+      <a class="ghost-pill" href="#install">GET STARTED</a>
+    </div>
+    <div class="install-hint" role="button" tabindex="0"
+         onclick="(function(el){var c=el.querySelector('code');var t=c.textContent;navigator.clipboard.writeText(t);c.textContent='COPIED';setTimeout(function(){c.textContent=t;},1200);})(this)">
+      <span class="label">INSTALL</span>
+      <code>npx -y @korg/recall-mcp</code>
+    </div>
+  </div>
+</section>
+
+<!-- ── Stats band ────────────────────────────────────────────────────── -->
+<section class="band dark-soft" style="padding: 0;">
+  <div class="stats">
+    <div class="stat-cell">
+      <div class="stat-num">04</div>
+      <div class="micro-cap stat-label">CAPTURE ADAPTERS</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-num">715+</div>
+      <div class="micro-cap stat-label">TESTS PASSING</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-num">30+</div>
+      <div class="micro-cap stat-label">MCP TOOLS EXPOSED</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-num">100%</div>
+      <div class="micro-cap stat-label">LOCAL · OPEN SOURCE</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Demo band ────────────────────────────────────────────────────── -->
+<section class="band">
+  <div class="container">
+    <div class="section-head">
+      <span class="micro-cap eyebrow">THE KILLER DEMO</span>
+      <h2 class="display-lg">YOU SOLVED THIS BEFORE.<br>NOW YOUR AI KNOWS IT TOO.</h2>
+      <p class="body-lg lede">
+        Three weeks ago in a different session, you fixed an OAuth refresh
+        bug. Today you've forgotten exactly how. Without memory, Claude
+        gives a generic OAuth explanation. With Korg installed:
+      </p>
+    </div>
+
+    <div class="demo-card">
+      <div class="titlebar">
+        <div class="dots"><span></span><span></span><span></span></div>
+        <div class="label">CLAUDE-CODE / KORG-RECALL <span class="live">LIVE</span></div>
+      </div>
+      <div class="demo-body">
+        <div class="you">how did i fix the oauth token refresh failing on 401 last time?</div>
+        <hr class="divider">
+        <div class="meta">// claude calls the recall MCP tool</div>
+        <div class="tool">
+          <span class="name">recall</span>(query="oauth token refresh 401", mode="semantic", top_n=3)
         </div>
-    </nav>
+        <div class="result">[recall · semantic] 2 match(es):</div>
+        <div class="result">&nbsp;&nbsp;· seq=4127 score=0.84 agent=claude-code#a3b · the 401 happens because the access_token expires during the request lifecycle…</div>
+        <div class="result">&nbsp;&nbsp;· seq=4131 score=0.79 agent=claude-code#a3b · added a 5-second refresh window + retry-once-on-401 wrapper…</div>
+        <hr class="divider">
+        <div class="claude">You solved this on May 7 — the 401 was from racing the token refresh. You added a 5-second refresh window and a retry-once-on-401 wrapper around fetch. Want me to apply the same pattern here?</div>
+        <div class="demo-callout">
+          <strong>THAT'S IT.</strong> No prompt engineering. No doc dive. No
+          re-searching Stack Overflow. The model recalled the exact session
+          where you solved it — across days, projects, machines if you sync.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
-    <!-- Hero -->
-    <section class="hero">
-        <p class="hero-label">v0.1.0 · now on crates.io</p>
+<!-- ── How it works ─────────────────────────────────────────────────── -->
+<section class="band dark-soft" id="how">
+  <div class="container">
+    <div class="section-head">
+      <span class="micro-cap eyebrow">HOW IT WORKS</span>
+      <h2 class="display-lg">THREE PIECES.<br>ALL RUNNING LOCALLY.</h2>
+      <p class="body-lg lede">
+        No cloud, no API keys, no vendor account. Your ledger is one
+        JSONL file on your disk. You can grep it, version it, replay it.
+      </p>
+    </div>
 
-        <h1 class="hero-title">the first deterministic<br>cognitive runtime.</h1>
-
-        <p class="hero-sub">
-            Every AI agent decision logged, causally ordered, and reversible.
-            Like Git, but for cognition.
+    <div class="feature-grid">
+      <div class="feature">
+        <span class="num">01 — CAPTURE</span>
+        <h3>EVERY SESSION,<br>AUTOMATICALLY.</h3>
+        <p>
+          A background daemon tails <code>~/.claude/projects/**/*.jsonl</code>
+          as Claude Code writes them. Every prompt, tool call, and reply
+          appended to one open ledger. Adapters for OpenAI Codex (WebSocket)
+          and Grok Heavy (NDJSON) ship in the box.
         </p>
+      </div>
+      <div class="feature">
+        <span class="num">02 — RECALL</span>
+        <h3>SEARCH BY MEANING,<br>NOT KEYWORDS.</h3>
+        <p>
+          A single MCP tool — <code>recall</code> — embeds your query with
+          BGE-small (local, no API), cosine-ranks against your entire ledger,
+          returns top matches. Works in Claude Code or any MCP client via
+          <code>npx @korg/recall-mcp</code>.
+        </p>
+      </div>
+      <div class="feature">
+        <span class="num">03 — INVOKE</span>
+        <h3>RE-EXECUTE,<br>DON'T RE-DERIVE.</h3>
+        <p>
+          Recall returns events tagged with stable <code>tool_name</code>s.
+          A bridge (<code>@korg/introspect-mcp</code>) exposes every ecosystem
+          binary's callables under the same identifiers. Recall a past
+          command. Invoke it on the current branch. Loop closes.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
 
-        <div class="hero-ctas">
-            <a href="https://github.com/New1Direction/korg" target="_blank" class="cta-primary">
-                <span class="prompt">$</span> cargo install korg
-            </a>
-            <a href="https://github.com/New1Direction/korg" target="_blank" class="cta-secondary">
-                GitHub ↗
-            </a>
-        </div>
+<!-- ── Ledger feature band (single-screen, with 3D mesh) ────────────── -->
+<section class="ledger-deepdive" id="ledger">
+  <div class="ledger-sticky">
+    <canvas id="ledger-canvas"></canvas>
+    <div class="ledger-overlay">
+      <div class="ledger-frame">
+        <span class="micro-cap eyebrow">THE SHAPE OF MEMORY</span>
+        <h2>CAUSAL.<br>SEARCHABLE.<br>STRUCTURED.</h2>
+        <p>
+          Every event carries a stable <code>tool_name</code>, a
+          <code>triggered_by</code> parent, and a flattened embedding
+          text. Recall walks it semantically; the bridge re-executes
+          from the same identifiers. The loop closes deterministically.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
 
-        <!-- Live log terminal -->
-        <div class="terminal-wrap">
-            <div class="terminal">
-                <div class="terminal-bar">
-                    <div class="terminal-dots">
-                        <span></span><span></span><span></span>
-                    </div>
-                    <span class="terminal-title">korg campaign --headless</span>
-                    <span></span>
-                </div>
-                <div class="terminal-body">
-                    <div class="log-line">
-                        <span class="log-ts">17:01:00Z</span>
-                        <span class="log-level">INFO</span>
-                        <span class="log-mod">korg::</span>
-                        <span class="log-msg">session_id=<span class="log-seq">019e5333</span> mode=balanced</span>
-                    </div>
-                    <div class="log-line">
-                        <span class="log-ts">17:01:01Z</span>
-                        <span class="log-level">INFO</span>
-                        <span class="log-mod">leader::</span>
-                        <span class="log-msg">swarm=[captain, harper, benjamin, lucas]</span>
-                    </div>
-                    <div class="log-line">
-                        <span class="log-ts">17:01:02Z</span>
-                        <span class="log-level">INFO</span>
-                        <span class="log-mod">log::</span>
-                        <span class="log-msg">append <span class="log-seq">seq=1</span> <span class="log-event">TransitionStarted</span></span>
-                    </div>
-                    <div class="log-line">
-                        <span class="log-ts">17:01:03Z</span>
-                        <span class="log-level">INFO</span>
-                        <span class="log-mod">log::</span>
-                        <span class="log-msg">append <span class="log-seq">seq=2</span> <span class="log-event">LeaseAcquired</span> actor=benjamin</span>
-                    </div>
-                    <div class="log-line">
-                        <span class="log-ts">17:01:04Z</span>
-                        <span class="log-level">INFO</span>
-                        <span class="log-mod">log::</span>
-                        <span class="log-msg">append <span class="log-seq">seq=3</span> <span class="log-event">EffectStarted</span> target=src/auth.rs</span>
-                    </div>
-                    <div class="log-line">
-                        <span class="log-ts">17:01:06Z</span>
-                        <span class="log-level">WARN</span>
-                        <span class="log-mod">eval::</span>
-                        <span class="log-msg">verdict=REVISE entropy=0.72 doom_loop_risk=moderate</span>
-                    </div>
-                    <div class="log-line">
-                        <span class="log-ts">17:01:07Z</span>
-                        <span class="log-level">INFO</span>
-                        <span class="log-mod">log::</span>
-                        <span class="log-msg"><span class="log-rewind">↩ rewind --seq 3</span> &nbsp;restoring workspace…</span>
-                    </div>
-                    <div class="log-line">
-                        <span class="log-ts">17:01:07Z</span>
-                        <span class="log-level">INFO</span>
-                        <span class="log-mod">log::</span>
-                        <span class="log-msg">git read-tree O(1) · projections rebuilt · clock=<span class="log-seq">seq=3</span></span>
-                    </div>
-                    <div class="log-line">
-                        <span class="log-ts">17:01:08Z</span>
-                        <span class="log-level">INFO</span>
-                        <span class="log-mod">log::</span>
-                        <span class="log-msg">append <span class="log-seq">seq=4</span> <span class="log-event">EffectStarted</span> branch=b91a4c2e</span>
-                    </div>
-                    <div class="log-line">
-                        <span class="log-ts">17:01:10Z</span>
-                        <span class="log-level">INFO</span>
-                        <span class="log-mod">arena::</span>
-                        <span class="log-msg"><span class="log-ok">✓ ACCEPT</span> trajectory=0.91 entropy=0.89 campaign_complete</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Feature strip -->
-    <div class="features">
-        <div class="feat">
-            <div class="feat-name">rewind</div>
-            <div class="feat-desc">Restore any agent decision to any prior state in O(1) time. No re-execution, no guessing.</div>
-            <div class="feat-detail">korg rewind --seq N</div>
-        </div>
-        <div class="feat">
-            <div class="feat-name">ledger</div>
-            <div class="feat-desc">Append-only HLC-ordered event log. Every transition is signed, sequenced, and cryptographically sealed.</div>
-            <div class="feat-detail">130 tests · 0 failures</div>
-        </div>
-        <div class="feat">
-            <div class="feat-name">fork</div>
-            <div class="feat-desc">Branch from any checkpoint. Run parallel strategies, compare outcomes, discard or merge.</div>
-            <div class="feat-detail">speculative execution</div>
-        </div>
+<!-- ── Comparison ───────────────────────────────────────────────────── -->
+<section class="band" id="compare">
+  <div class="container">
+    <div class="section-head">
+      <span class="micro-cap eyebrow">WHY THIS DIDN'T EXIST BEFORE</span>
+      <h2 class="display-lg">THE ONLY MEMORY LAYER<br>THAT SPANS VENDOR BOUNDARIES.</h2>
+      <p class="body-lg lede">
+        Every other vendor has the same incentive: lock you into their
+        memory. Korg has the opposite — the ledger format is open JSONL
+        on your own disk.
+      </p>
     </div>
 
-    <!-- Install -->
-    <div class="install-strip">
-        <h2 class="install-heading">get started in one command</h2>
-        <div class="install-box">
-            <span class="install-prompt">$</span>
-            <span class="install-cmd" id="icmd">cargo install korg</span>
-            <button class="install-copy" onclick="copyInstall()" id="icopy">copy</button>
-        </div>
-        <div class="install-links">
-            <a href="https://docs.rs/korg" target="_blank">docs.rs/korg</a>
-            <a href="https://crates.io/crates/korg" target="_blank">crates.io/crates/korg</a>
-            <a href="https://github.com/New1Direction/korg" target="_blank">github</a>
-        </div>
+    <div class="compare-wrap">
+      <table class="compare">
+        <thead>
+          <tr>
+            <th>PRODUCT</th>
+            <th>MEMORY SCOPE</th>
+            <th>TOOLS COVERED</th>
+            <th>FORMAT</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="product">CHATGPT MEMORY</td><td>per-account</td><td>OpenAI only</td><td>proprietary</td></tr>
+          <tr><td class="product">ANTHROPIC MEMORY</td><td>—</td><td>—</td><td>ships nothing today</td></tr>
+          <tr><td class="product">CURSOR MEMORIES</td><td>per-project</td><td>Cursor only</td><td>proprietary</td></tr>
+          <tr class="us"><td class="product">KORG</td><td>per-machine</td><td>any tool with a capture adapter</td><td>open JSONL · greppable · yours</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── Install ──────────────────────────────────────────────────────── -->
+<section class="band dark-soft" id="install">
+  <div class="container">
+    <div class="section-head">
+      <span class="micro-cap eyebrow">INSTALL · SIXTY SECONDS</span>
+      <h2 class="display-lg">THREE STEPS.<br>ONE JSON EDIT.<br>RESTART.</h2>
+      <p class="body-lg lede">
+        No Python install needed for the recall server (npx). The capture
+        daemon is a one-time pipx install — runs in the background forever
+        after.
+      </p>
     </div>
 
-    <!-- Footer -->
-    <footer>
-        <div class="footer-left">
-            <span>korg v0.1.0</span>
-            <a href="https://github.com/New1Direction/korg/blob/main/LICENSE" target="_blank">MIT / Apache-2.0</a>
-            <a href="https://github.com/New1Direction/korg/blob/main/CHANGELOG.md" target="_blank">changelog</a>
-            <a href="https://github.com/New1Direction/korg/blob/main/ROADMAP.md" target="_blank">roadmap</a>
-        </div>
-        <span>github.com/New1Direction/korg</span>
-    </footer>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">STEP 01</div>
+        <h4>REGISTER THE MCP SERVER</h4>
+        <p>Add to <code>~/.claude.json</code> — the only config edit.</p>
+<pre><code><span class="cmt">// ~/.claude.json</span>
+{
+  <span class="key">"mcpServers"</span>: {
+    <span class="key">"korg-recall"</span>: {
+      <span class="key">"command"</span>: <span class="str">"npx"</span>,
+      <span class="key">"args"</span>: [<span class="str">"-y"</span>, <span class="str">"@korg/recall-mcp"</span>]
+    }
+  }
+}</code></pre>
+      </div>
+      <div class="step">
+        <div class="step-num">STEP 02</div>
+        <h4>START THE CAPTURE DAEMON</h4>
+        <p>One-time install. <code>--tail</code> watches your sessions forever.</p>
+<pre><code><span class="cmt"># Python — one time</span>
+pipx install korg-claude-code-adapter
+korg-ingest-claude <span class="key">--tail</span> &amp;</code></pre>
+      </div>
+      <div class="step">
+        <div class="step-num">STEP 03</div>
+        <h4>RESTART CLAUDE CODE</h4>
+        <p>Done. <code>recall</code> is in the toolset. Every session compounds.</p>
+<pre><code><span class="cmt"># try it:</span>
+<span class="str">"how did i solve X last week?"</span></code></pre>
+      </div>
+    </div>
+  </div>
+</section>
 
-    <script>
-        function copyInstall() {
-            const btn = document.getElementById('icopy');
-            navigator.clipboard.writeText('cargo install korg').then(() => {
-                btn.textContent = 'copied!';
-                btn.style.color = 'var(--amber)';
-                setTimeout(() => {
-                    btn.textContent = 'copy';
-                    btn.style.color = '';
-                }, 2000);
-            });
+<!-- ── Closing ──────────────────────────────────────────────────────── -->
+<section class="band closing">
+  <div class="content container">
+    <span class="micro-cap eyebrow" style="margin-bottom: var(--s-xl); display: block;">BUILT IN PUBLIC · MIT</span>
+    <h2 class="display-xl">FREE FOREVER LOCALLY.<br>STAR IT, FORK IT, AUDIT IT.</h2>
+    <p class="body-lg lede" style="margin: var(--s-xl) auto 0;">
+      ~715 tests across 5 languages of code. Four GitHub repos. MIT.
+      No cloud account required.
+    </p>
+    <div class="ctas" style="margin-top: var(--s-huge);">
+      <a class="ghost-pill" href="https://github.com/New1Direction/korg">VIEW ON GITHUB</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── Footer ───────────────────────────────────────────────────────── -->
+<footer>
+  <div class="row">
+    <div class="col">
+      <a href="/" class="logo" style="margin-bottom: var(--s-md);">KORG<span class="mark"></span></a>
+      <p class="caption" style="margin: var(--s-sm) 0 0; max-width: 280px; color: var(--on-primary-mute);">
+        Cognitive infrastructure for AI agents. Capture every session.
+        Recall across all of them. Invoke from inside Claude Code.
+      </p>
+    </div>
+    <div class="col">
+      <h5>ECOSYSTEM</h5>
+      <ul>
+        <li><a href="https://github.com/New1Direction/korg">korg</a></li>
+        <li><a href="https://github.com/New1Direction/korgex">korgex</a></li>
+        <li><a href="https://github.com/New1Direction/korgchat">korgchat</a></li>
+        <li><a href="https://github.com/New1Direction/thumper">thumper</a></li>
+      </ul>
+    </div>
+    <div class="col">
+      <h5>NPM PACKAGES</h5>
+      <ul>
+        <li><a href="https://www.npmjs.com/package/@korg/recall-mcp">@korg/recall-mcp</a></li>
+        <li><a href="https://www.npmjs.com/package/@korg/introspect-mcp">@korg/introspect-mcp</a></li>
+      </ul>
+    </div>
+    <div class="col">
+      <h5>CONNECT</h5>
+      <ul>
+        <li><a href="https://github.com/New1Direction">github.com/New1Direction</a></li>
+        <li><a href="https://github.com/New1Direction/korg/issues">Issues &amp; feedback</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="signature">
+    <div>BUILT BY <a href="https://github.com/New1Direction">ARES</a> · 2026</div>
+    <div class="badges">
+      <span class="badge">MIT</span>
+      <span class="badge">OPEN SOURCE</span>
+      <span class="badge">NO TELEMETRY</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ── Ledger deep-dive 3D — scroll-driven .glb rotation + frame swap ── -->
+<script type="module">
+  // Skip the whole thing on reduced-motion preference.
+  if (!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+    const canvas = document.getElementById('ledger-canvas');
+    const section = document.getElementById('ledger');
+    if (canvas && section) {
+      // Use bare specifiers so GLTFLoader / DRACOLoader's internal
+      // `import 'three'` statements resolve via the importmap in <head>.
+      const THREE = await import('three');
+      const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+      const { DRACOLoader } = await import('three/addons/loaders/DRACOLoader.js');
+
+      // ── Scene setup ──
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+      camera.position.set(0, 0, 3.2);
+
+      const renderer = new THREE.WebGLRenderer({
+        canvas, antialias: true, alpha: true,
+        powerPreference: 'low-power',
+      });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.1;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+      // ── Lighting (premium key + soft fill, no HDR for self-containment) ──
+      const key = new THREE.DirectionalLight(0xffffff, 2.4);
+      key.position.set(2.5, 3, 2);
+      scene.add(key);
+      const fill = new THREE.DirectionalLight(0xffffff, 0.55);
+      fill.position.set(-3, -1, 1.5);
+      scene.add(fill);
+      const rim = new THREE.DirectionalLight(0xffffff, 0.8);
+      rim.position.set(0, -2, -3);
+      scene.add(rim);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.18));
+
+      // ── The .glb mesh (with wireframe-icosphere fallback while loading) ──
+      const modelGroup = new THREE.Group();
+      scene.add(modelGroup);
+
+      const fallbackGeom = new THREE.IcosahedronGeometry(0.85, 1);
+      const fallbackMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff, metalness: 0.9, roughness: 0.22,
+        wireframe: true, transparent: true, opacity: 0.55,
+      });
+      const fallback = new THREE.Mesh(fallbackGeom, fallbackMat);
+      modelGroup.add(fallback);
+
+      const dracoLoader = new DRACOLoader();
+      dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+      dracoLoader.setDecoderConfig({ type: 'js' });
+      const gltfLoader = new GLTFLoader();
+      gltfLoader.setDRACOLoader(dracoLoader);
+
+      gltfLoader.load(
+        'assets/hero-mesh.glb',
+        (gltf) => {
+          modelGroup.remove(fallback);
+          const loaded = gltf.scene;
+          const box = new THREE.Box3().setFromObject(loaded);
+          const size = box.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z);
+          loaded.scale.setScalar(1.6 / maxDim);
+          box.setFromObject(loaded);
+          const center = box.getCenter(new THREE.Vector3());
+          loaded.position.sub(center);
+          modelGroup.add(loaded);
+        },
+        undefined,
+        (err) => {
+          console.warn('[ledger-3d] glb load failed, using wireframe fallback:', err);
         }
-    </script>
+      );
+
+      // ── Sizing ──
+      function resize() {
+        const w = canvas.clientWidth;
+        const h = canvas.clientHeight;
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      const ro = new ResizeObserver(resize);
+      ro.observe(canvas);
+      resize();
+
+      // ── Render only while section is on-screen ──
+      let isVisible = false;
+      const io = new IntersectionObserver(([entry]) => { isVisible = entry.isIntersecting; });
+      io.observe(section);
+
+      // ── Animation loop — gentle continuous rotation, no scroll-driven scrub ──
+      function loop() {
+        requestAnimationFrame(loop);
+        if (!isVisible) return;
+        const now = performance.now();
+        modelGroup.rotation.y = now * 0.00018;
+        modelGroup.rotation.x = Math.sin(now * 0.00025) * 0.08;
+        modelGroup.rotation.z = Math.sin(now * 0.0004) * 0.03;
+        renderer.render(scene, camera);
+      }
+      loop();
+    }
+  }
+</script>
 
 </body>
-</html>"##;
+</html>
+"##;
 
 // ============================================================================
 // OAUTH & GATEWAY AUTHENTICATION LAYER HANDLERS
