@@ -70,3 +70,9 @@ package-lock.json
 
 # Editable-install metadata (pip install -e)
 *.egg-info/
+
+# Node / TS adapter build outputs
+node_modules/
+**/node_modules/
+**/dist/
+package-lock.json
