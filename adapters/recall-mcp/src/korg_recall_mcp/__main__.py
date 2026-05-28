@@ -34,6 +34,16 @@ DEFAULT_LEDGER = Path.home() / ".korg" / "claude-events.jsonl"
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Transparent-accept a leading "recall" token so that invocations via
+    # the korg-introspect-mcp bridge work without per-binary special-casing
+    # there. The bridge converts command_id `korg-recall-mcp.recall` →
+    # `[korg-recall-mcp, recall, --query, ...]` per its uniform argv
+    # convention; we strip the redundant subcommand here.
+    raw = list(sys.argv[1:]) if argv is None else list(argv)
+    if raw and raw[0] == "recall":
+        raw = raw[1:]
+    argv = raw
+
     p = argparse.ArgumentParser(
         prog="korg-recall-mcp",
         description=(
