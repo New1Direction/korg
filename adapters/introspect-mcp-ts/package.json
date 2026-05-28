@@ -1,0 +1,47 @@
+{
+  "name": "@korg/introspect-mcp",
+  "version": "0.1.0",
+  "description": "Generic --introspect → MCP server bridge. Wrap any korg:introspect@v1 binary as an MCP server with one line of Claude Code config.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "korg-introspect-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "node --test --import tsx tests/*.test.ts",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "claude-code",
+    "introspect",
+    "cli-bridge",
+    "korg"
+  ],
+  "author": "Korg ecosystem maintainers",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/New1Direction/korg.git",
+    "directory": "adapters/introspect-mcp-ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}
