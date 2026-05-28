@@ -1,0 +1,38 @@
+[build-system]
+requires      = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "korg-introspect-mcp"
+version         = "0.1.0"
+description     = "Generic --introspect → MCP server bridge. Wrap any korg:introspect@v1 binary as an MCP server in one line of config."
+license         = { text = "MIT" }
+requires-python = ">=3.9"
+authors         = [{ name = "Korg ecosystem maintainers" }]
+classifiers     = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+# Zero runtime dependencies — stdlib only. The MCP wire format and
+# JSON-RPC are simple enough to implement directly, same as recall-mcp.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0,<9.0.0"]
+
+[project.scripts]
+korg-introspect-mcp = "korg_introspect_mcp.__main__:main"
+
+[tool.setuptools.packages.find]
+where   = ["src"]
+include = ["korg_introspect_mcp*"]
+
+[tool.pytest.ini_options]
+testpaths    = ["tests"]
+python_files = ["test_*.py"]
