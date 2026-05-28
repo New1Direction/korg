@@ -20,6 +20,8 @@
 #![allow(unused_variables)]
 #![allow(unused_assignments)]
 
+mod introspect;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -86,6 +88,11 @@ struct Cli {
     /// Cognition Mode (instant, balanced, heavy, research, recovery, autonomous)
     #[arg(long, default_value = "balanced")]
     mode: String,
+
+    /// Emit the korg:introspect@v1 document (callables + capabilities + exit codes) and exit.
+    /// Agents use this to discover korg's surface without invoking anything.
+    #[arg(long)]
+    introspect: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -415,6 +422,15 @@ async fn main() -> Result<()> {
     // Initialize structured tracing before any async tasks.
     // Controlled via KORG_LOG env var (e.g. KORG_LOG=info,korg=debug)
     // and KORG_LOG_JSON=1 for JSON output suitable for log shippers.
+    // Pre-parse --introspect from raw argv BEFORE tracing init, so the
+    // document on stdout is never polluted by a tracing line. Foundry
+    // uses the same pre-parse trick for --machine / --introspect / --help.
+    if std::env::args().any(|a| a == "--introspect") {
+        let doc = introspect::build_document(env!("CARGO_PKG_VERSION"));
+        println!("{}", serde_json::to_string_pretty(&doc)?);
+        return Ok(());
+    }
+
     korg_core::telemetry::init_tracing();
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "korg starting");
 
