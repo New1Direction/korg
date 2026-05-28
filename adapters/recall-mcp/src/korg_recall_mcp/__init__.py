@@ -1,6 +1,15 @@
 """korg-recall-mcp — cross-session semantic recall MCP server over the korg ledger."""
 
 from korg_recall_mcp.index import EventIndex, IndexedEvent
+from korg_recall_mcp.introspect import (
+    BINARY_NAME,
+    EXIT_CODES,
+    INTROSPECT_SCHEMA_ID,
+    Callable,
+    Capabilities,
+    build_introspect_document,
+    get_callables,
+)
 from korg_recall_mcp.search import (
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_MIN_SCORE,
@@ -27,6 +36,14 @@ __all__ = [
     # index
     "EventIndex",
     "IndexedEvent",
+    # introspect (one source of truth for MCP + --introspect)
+    "BINARY_NAME",
+    "EXIT_CODES",
+    "INTROSPECT_SCHEMA_ID",
+    "Callable",
+    "Capabilities",
+    "build_introspect_document",
+    "get_callables",
     # search
     "DEFAULT_EMBEDDING_MODEL",
     "DEFAULT_MIN_SCORE",

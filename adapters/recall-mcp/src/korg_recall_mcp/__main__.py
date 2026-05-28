@@ -21,12 +21,13 @@ import sys
 from pathlib import Path
 
 from korg_recall_mcp.index import EventIndex
+from korg_recall_mcp.introspect import build_introspect_document
 from korg_recall_mcp.search import (
     DEFAULT_MIN_SCORE,
     DEFAULT_TOP_N,
     RecallEngine,
 )
-from korg_recall_mcp.server import format_matches_for_llm, serve_stdio
+from korg_recall_mcp.server import SERVER_VERSION, format_matches_for_llm, serve_stdio
 
 
 DEFAULT_LEDGER = Path.home() / ".korg" / "claude-events.jsonl"
@@ -74,8 +75,24 @@ def main(argv: list[str] | None = None) -> int:
         choices=["auto", "semantic", "substring"],
         default="auto",
     )
+    p.add_argument(
+        "--introspect",
+        action="store_true",
+        help=(
+            "Print the korg:introspect@v1 document (callables, capabilities, "
+            "exit codes) as JSON on stdout and exit. The same source of truth "
+            "the MCP tools/list endpoint serves from."
+        ),
+    )
 
     args = p.parse_args(argv)
+
+    # Introspect short-circuit — works before any I/O so agents can discover
+    # the tool without having a ledger at all.
+    if args.introspect:
+        import json as _json
+        print(_json.dumps(build_introspect_document(SERVER_VERSION), indent=2))
+        return 0
 
     ledger_paths = args.ledger or [DEFAULT_LEDGER]
     index = EventIndex(ledger_paths=[Path(p).expanduser() for p in ledger_paths])

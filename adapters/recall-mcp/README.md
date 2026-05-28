@@ -102,6 +102,38 @@ korg-recall-mcp --query "TODO rate limiter" --mode substring
 korg-recall-mcp --query "anything about async" --min-score 0.55 --top-n 3
 ```
 
+## `--introspect`: agent-native discovery
+
+Foundry-style discovery: emit a `korg:introspect@v1` document describing
+every callable, its input schema, declared side-effects, output mode,
+and stable command ID. **The same source of truth that the MCP
+`tools/list` endpoint serves from** — so the JSON Schema an agent
+discovers via `--introspect | jq` is byte-identical to what it'll get
+back from an MCP call. One source, two surfaces.
+
+```bash
+$ korg-recall-mcp --introspect | jq '.callables[0].capabilities'
+{
+  "output_mode": "stream",
+  "side_effects": "fs_read",
+  "requires_project": false,
+  "long_running": false,
+  "stateful": false,
+  "reads_stdin": false,
+  "supports_output_path": false
+}
+```
+
+Agents can use this **before** invoking anything to decide whether a
+callable is safe and how to consume its output. The `callables_declared:
+true` flag is the truthfulness signal — the package commits to documenting
+its capabilities rather than emitting an empty stub.
+
+Stable `command_id` (here `korg-recall-mcp.recall`) means agents can pin
+to this identifier across version bumps. The `exit_codes` table at the
+document root is the canonical agent contract (string-keyed on the wire
+since JSON has no integer keys).
+
 ## The MCP tool surface
 
 One tool: `recall`. Schema (abbreviated):
