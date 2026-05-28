@@ -67,3 +67,6 @@ src-tauri/
 node_modules/
 package.json
 package-lock.json
+
+# Editable-install metadata (pip install -e)
+*.egg-info/
