@@ -25,6 +25,11 @@ from korg_setup.claude_config import (
     McpServerSpec,
     ensure_mcp_server_registered,
 )
+from korg_setup.discovery import (
+    DEFAULT_CANDIDATES,
+    IntrospectableBinary,
+    discover_all,
+)
 from korg_setup.launchd import (
     LABEL,
     PLIST_PATH,
@@ -39,6 +44,11 @@ DEFAULT_LEDGER_DIR = Path.home() / ".korg"
 DEFAULT_LEDGER_FILE = DEFAULT_LEDGER_DIR / "claude-events.jsonl"
 DEFAULT_TAIL_STATE = DEFAULT_LEDGER_DIR / "claude-tail-state.json"
 DEFAULT_MCP_SERVER_NAME = "korg-recall"
+
+# Side-effects classes auto-allowed when registering an introspect-bridge
+# server. Conservative default — agents can DISCOVER the full surface but
+# only INVOKE read-only operations until the user opts into more.
+DEFAULT_BRIDGE_ALLOW = "fs_read"
 
 
 @dataclass
@@ -56,6 +66,8 @@ class SetupReport:
     backup_path: Optional[Path] = None
     plist_status: Optional[PlistChangeStatus] = None
     config_status: Optional[ChangeStatus] = None
+    # Bridge entries written this run, name → (binary_path, status).
+    bridge_entries: dict[str, tuple[Path, ChangeStatus]] = field(default_factory=dict)
     overall_ok: bool = True
 
     def add(self, name: str, status: str, detail: str = "") -> None:
@@ -75,6 +87,9 @@ def run_setup(
     claude_config_path: Path = DEFAULT_CONFIG_PATH,
     mcp_server_name: str = DEFAULT_MCP_SERVER_NAME,
     install_daemon: bool = True,
+    register_introspect_bridges: bool = True,
+    introspect_candidates: Optional[tuple[str, ...]] = None,
+    bridge_allow: str = DEFAULT_BRIDGE_ALLOW,
     dry_run: bool = False,
 ) -> SetupReport:
     """Run the full setup. Each step is idempotent; safe to re-run."""
@@ -157,6 +172,117 @@ def run_setup(
                 f"could not edit {claude_config_path}: {e}",
             )
             return report
+
+    # 3.5. Auto-register introspect-bridge MCP servers for every binary on
+    # PATH that supports --introspect. Idempotent and conservative — the
+    # default policy is fs_read only; the user can broaden via the env in
+    # each entry, OR uninstall any bridge later via korg-setup uninstall.
+    if register_introspect_bridges:
+        bridge_bin = shutil.which("korg-introspect-mcp")
+        if bridge_bin is None:
+            report.add(
+                "bridges",
+                "skip",
+                "korg-introspect-mcp not on PATH; install it (pip install -e "
+                "adapters/introspect-mcp) to auto-expose other binaries.",
+            )
+        else:
+            candidates = (
+                tuple(introspect_candidates)
+                if introspect_candidates is not None
+                else DEFAULT_CANDIDATES
+            )
+            try:
+                discovered = discover_all(candidates=candidates)
+            except Exception as e:
+                discovered = []
+                report.add("bridges", "warn", f"discovery probe errored: {e}")
+
+            if not discovered:
+                report.add(
+                    "bridges",
+                    "skip",
+                    f"no --introspect-aware binaries found "
+                    f"(probed: {', '.join(candidates)})",
+                )
+            else:
+                bridges_added = 0
+                bridges_updated = 0
+                bridges_unchanged = 0
+                detail_lines: list[str] = []
+                for bin_info in discovered:
+                    server_name = bin_info.mcp_server_name
+                    # Skip the canonical recall server — it's registered
+                    # natively above and runs the MCP server directly, not
+                    # via the bridge. Bridging it would double-register.
+                    if server_name == mcp_server_name:
+                        detail_lines.append(
+                            f"  · {bin_info.binary_name} v{bin_info.version} "
+                            f"({bin_info.callable_count} callables) "
+                            f"— already registered natively as '{mcp_server_name}'"
+                        )
+                        continue
+
+                    spec_bridge = McpServerSpec(
+                        name=server_name,
+                        command=bridge_bin,
+                        args=[str(bin_info.binary_path)],
+                        env={"KORG_INTROSPECT_MCP_ALLOW": bridge_allow}
+                        if bridge_allow
+                        else None,
+                    )
+                    if dry_run:
+                        detail_lines.append(
+                            f"  · would register '{server_name}' → "
+                            f"{bin_info.binary_name} v{bin_info.version} "
+                            f"({bin_info.callable_count} callables) "
+                            f"[allow={bridge_allow or 'default'}]"
+                        )
+                        bridges_added += 1
+                        report.bridge_entries[server_name] = (
+                            bin_info.binary_path,
+                            "added",
+                        )
+                        continue
+                    try:
+                        status, _ = ensure_mcp_server_registered(
+                            spec_bridge, claude_config_path
+                        )
+                        report.bridge_entries[server_name] = (
+                            bin_info.binary_path,
+                            status,
+                        )
+                        if status == "added":
+                            bridges_added += 1
+                        elif status == "updated":
+                            bridges_updated += 1
+                        else:
+                            bridges_unchanged += 1
+                        detail_lines.append(
+                            f"  · {status:<9} '{server_name}' → "
+                            f"{bin_info.binary_name} v{bin_info.version} "
+                            f"({bin_info.callable_count} callables)"
+                        )
+                    except Exception as e:
+                        detail_lines.append(
+                            f"  · fail '{server_name}': {e}"
+                        )
+
+                summary = (
+                    f"{bridges_added} added, {bridges_updated} updated, "
+                    f"{bridges_unchanged} unchanged"
+                )
+                report.add(
+                    "bridges",
+                    "ok",
+                    summary + "\n" + "\n".join(detail_lines),
+                )
+    else:
+        report.add(
+            "bridges",
+            "skip",
+            "register_introspect_bridges=False",
+        )
 
     # 4. Background service
     if not install_daemon:

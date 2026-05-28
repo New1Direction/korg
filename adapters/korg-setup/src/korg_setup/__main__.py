@@ -26,6 +26,7 @@ from korg_setup.launchd import (
     uninstall_service,
 )
 from korg_setup.setup import (
+    DEFAULT_BRIDGE_ALLOW,
     DEFAULT_LEDGER_DIR,
     DEFAULT_LEDGER_FILE,
     DEFAULT_MCP_SERVER_NAME,
@@ -56,6 +57,8 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         claude_config_path=args.claude_config,
         mcp_server_name=args.mcp_name,
         install_daemon=not args.no_daemon,
+        register_introspect_bridges=not args.no_bridges,
+        bridge_allow=args.bridge_allow,
         dry_run=args.dry_run,
     )
     print(format_report(report), file=sys.stderr)
@@ -79,6 +82,7 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
         print(
             f"korg-setup uninstall will:\n"
             f"  · remove MCP server '{args.mcp_name}' from {args.claude_config}\n"
+            f"  · remove any auto-registered korg-introspect-mcp bridge entries\n"
             f"  · stop + delete the launchd agent {LABEL} (macOS only)\n"
             f"  · NOT delete the ledger at {args.ledger_file}\n",
             file=sys.stderr,
@@ -88,7 +92,7 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
             print("Aborted.", file=sys.stderr)
             return 1
 
-    # MCP entry
+    # Native MCP entry (recall)
     config_status, backup = remove_mcp_server(args.mcp_name, args.claude_config)
     if config_status == "removed":
         print(f"  ✓ removed MCP server '{args.mcp_name}' from {args.claude_config}", file=sys.stderr)
@@ -96,6 +100,29 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
             print(f"  · backup saved to {backup}", file=sys.stderr)
     else:
         print(f"  · '{args.mcp_name}' was not registered in {args.claude_config}", file=sys.stderr)
+
+    # Introspect-bridge entries auto-registered earlier
+    from korg_setup.discovery import DEFAULT_CANDIDATES, discover_all
+    try:
+        discovered = discover_all(candidates=DEFAULT_CANDIDATES)
+    except Exception:
+        discovered = []
+    bridge_names = []
+    for b in discovered:
+        name = b.mcp_server_name
+        if name == args.mcp_name:
+            continue  # already removed above
+        status_b, _ = remove_mcp_server(name, args.claude_config)
+        if status_b == "removed":
+            bridge_names.append(name)
+    if bridge_names:
+        print(
+            f"  ✓ removed {len(bridge_names)} bridge entr"
+            f"{'y' if len(bridge_names) == 1 else 'ies'}: {', '.join(bridge_names)}",
+            file=sys.stderr,
+        )
+    else:
+        print(f"  · no bridge entries to remove", file=sys.stderr)
 
     # launchd
     if is_macos():
@@ -126,6 +153,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--yes", action="store_true", help="non-interactive (skip confirmation prompt)")
     parser.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
     parser.add_argument("--no-daemon", action="store_true", help="don't install/start the launchd agent")
+    parser.add_argument(
+        "--no-bridges",
+        action="store_true",
+        help="don't auto-register MCP entries for --introspect-aware binaries",
+    )
+    parser.add_argument(
+        "--bridge-allow",
+        type=str,
+        default=DEFAULT_BRIDGE_ALLOW,
+        help=(
+            f"KORG_INTROSPECT_MCP_ALLOW value passed to every bridge entry "
+            f"(default {DEFAULT_BRIDGE_ALLOW!r}; use 'all' to allow everything)."
+        ),
+    )
     parser.add_argument(
         "--ledger-dir",
         type=Path,
