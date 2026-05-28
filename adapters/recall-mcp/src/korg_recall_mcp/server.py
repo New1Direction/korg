@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from korg_recall_mcp.index import EventIndex
+from korg_recall_mcp.introspect import get_callables
 from korg_recall_mcp.search import (
     DEFAULT_MIN_SCORE,
     DEFAULT_TOP_N,
@@ -39,65 +40,21 @@ SERVER_NAME = "korg-recall"
 SERVER_VERSION = "0.1.0"
 
 
-# ── Tool schema ───────────────────────────────────────────────────────
+# ── Tool schema (sourced from the introspect registry) ────────────────
 
 
 def _recall_tool_schema() -> dict[str, Any]:
-    return {
-        "name": "recall",
-        "description": (
-            "Search across all prior AI sessions recorded in the korg "
-            "ledger. Returns relevant past prompts, model replies, and "
-            "tool calls/results. Use this BEFORE attempting work that "
-            "may have been done before — finding the prior session "
-            "saves the cost of rediscovery."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Natural-language description of what you're looking for.",
-                },
-                "top_n": {
-                    "type": "integer",
-                    "description": f"Max number of results (default {DEFAULT_TOP_N}).",
-                    "default": DEFAULT_TOP_N,
-                    "minimum": 1,
-                    "maximum": 50,
-                },
-                "min_score": {
-                    "type": "number",
-                    "description": (
-                        f"Cosine-similarity floor for semantic matches "
-                        f"(default {DEFAULT_MIN_SCORE}). Ignored for substring mode."
-                    ),
-                    "default": DEFAULT_MIN_SCORE,
-                    "minimum": 0.0,
-                    "maximum": 1.0,
-                },
-                "mode": {
-                    "type": "string",
-                    "enum": ["auto", "semantic", "substring"],
-                    "description": (
-                        "auto: semantic if fastembed installed else substring. "
-                        "semantic: require embedding-backed ranking. "
-                        "substring: pure keyword AND-of-terms."
-                    ),
-                    "default": "auto",
-                },
-                "tool_filter": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Optional list of tool_name values to restrict the "
-                        "search to (e.g. ['user_prompt'], ['Read', 'Bash'])."
-                    ),
-                },
-            },
-            "required": ["query"],
-        },
-    }
+    """The MCP tools/list entry for `recall`.
+
+    Same source of truth as the `--introspect` document — see
+    `korg_recall_mcp.introspect.get_callables()`. Changing the schema
+    in one place updates both the MCP descriptor and the CLI
+    introspection output.
+    """
+    for c in get_callables():
+        if c.name == "recall":
+            return c.to_mcp_tool()
+    raise RuntimeError("recall callable missing from registry")
 
 
 # ── Result formatting ─────────────────────────────────────────────────
