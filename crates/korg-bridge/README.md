@@ -7,6 +7,24 @@ It lets Python agent runtimes (`korgex`, future KorgChat) write AgentToolCall
 events directly to the same journal.json that the korg HTTP server reads —
 without the HTTP round-trip.
 
+## Tamper-evident by construction (korg-ledger@v1)
+
+Because `CapabilityJournal::append` now hash-chains every event
+(`prev_hash`/`entry_hash`, see `korg_registry::ledger_chain`), **anything that
+writes through this bridge inherits a tamper-evident, cross-verifiable journal
+for free** — no per-app crypto. A journal written by the Rust bridge verifies
+byte-for-byte under both `korg_registry::ledger_chain::verify_chain` (Rust) and
+korgex's `src/ledger_spec.verify_chain` (Python): the two ledger paths
+(korgchat-via-bridge, korgex) collapse onto one chained substrate.
+
+Build the wheel and verify:
+
+```bash
+maturin build -m crates/korg-bridge/Cargo.toml          # → target/wheels/korg_bridge-*.whl
+pip install --force-reinstall --no-deps target/wheels/korg_bridge-*.whl
+pytest crates/korg-bridge/tests/test_bridge_chain.py    # recomputes the chain from stdlib; must match
+```
+
 ## Why
 
 Before v0.3.0, `korgex/src/korg_ledger.py` POSTed every event to a running
