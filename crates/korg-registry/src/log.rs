@@ -317,12 +317,43 @@ pub struct JournalEvent {
     pub seq_id: u64,
     pub metadata: EventMetadata,
     pub event: CapabilityEvent,
+
+    /// korg-ledger@v1 chain link: the previous event's `entry_hash`
+    /// (`GENESIS_HASH` for the first event). `#[serde(default)]` keeps
+    /// pre-chain journals readable (they deserialize to an empty string).
+    #[serde(default)]
+    pub prev_hash: String,
+    /// korg-ledger@v1: hash of this event's canonical preimage (the event with
+    /// `entry_hash` removed). SHA-256, or HMAC-SHA256 when a key is configured.
+    #[serde(default)]
+    pub entry_hash: String,
 }
 
 impl JournalEvent {
     pub fn default_schema_version() -> String {
         "1.0".to_string()
     }
+
+    /// Compute this event's `entry_hash` per korg-ledger@v1: serialize the whole
+    /// event, drop the `entry_hash` field, and hash the canonical preimage.
+    /// `prev_hash` IS part of the preimage — that is what links the chain.
+    pub fn compute_entry_hash(&self, key: Option<&[u8]>) -> String {
+        let mut v = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
+        if let Some(o) = v.as_object_mut() {
+            o.remove("entry_hash");
+        }
+        crate::ledger_chain::chain_hash(&v, key)
+    }
+}
+
+/// Optional HMAC key (`KORG_LEDGER_HMAC_KEY`). Present → the chain is
+/// tamper-PROOF (unforgeable without the key); absent → tamper-evident.
+/// Mirrors korgex's `_ledger_hmac_key` so journals are cross-verifiable.
+fn ledger_hmac_key() -> Option<Vec<u8>> {
+    std::env::var("KORG_LEDGER_HMAC_KEY")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.into_bytes())
 }
 
 /// Periodic state checkpoint to bypass full event replay cold-starts
@@ -466,12 +497,20 @@ impl CapabilityJournal {
         let wall_clock = chrono::Utc::now().timestamp_millis();
         self.clock = self.clock.merge(&metadata.emitted_at, wall_clock);
 
-        let journal_event = JournalEvent {
+        let prev_hash = self
+            .events
+            .last()
+            .map(|e| e.entry_hash.clone())
+            .unwrap_or_else(|| crate::ledger_chain::GENESIS_HASH.to_string());
+        let mut journal_event = JournalEvent {
             schema_version: JournalEvent::default_schema_version(),
             seq_id: self.last_seq_id,
             metadata,
             event,
+            prev_hash,
+            entry_hash: String::new(),
         };
+        journal_event.entry_hash = journal_event.compute_entry_hash(ledger_hmac_key().as_deref());
         if let Some(tb) = journal_event.metadata.triggered_by {
             self.triggered_by_index
                 .entry(tb)
@@ -520,14 +559,37 @@ impl CapabilityJournal {
 
         self.last_seq_id += 1;
         self.clock = emitted_at;
-        let journal_event = JournalEvent {
+        let prev_hash = self
+            .events
+            .last()
+            .map(|e| e.entry_hash.clone())
+            .unwrap_or_else(|| crate::ledger_chain::GENESIS_HASH.to_string());
+        let mut journal_event = JournalEvent {
             schema_version: JournalEvent::default_schema_version(),
             seq_id: self.last_seq_id,
             metadata,
             event,
+            prev_hash,
+            entry_hash: String::new(),
         };
+        journal_event.entry_hash = journal_event.compute_entry_hash(ledger_hmac_key().as_deref());
         self.events.push(journal_event);
         let _ = self.flush();
+    }
+
+    /// Verify the journal's korg-ledger@v1 hash-chain. Empty vec == intact;
+    /// otherwise each error names the offending `seq_id`. Honours
+    /// `KORG_LEDGER_HMAC_KEY`. This is what makes "the ledger proves itself"
+    /// true at the substrate layer (idea #2): a tampered/edited/reordered
+    /// on-disk journal is detected, not trusted.
+    pub fn verify_chain(&self) -> Vec<String> {
+        let key = ledger_hmac_key();
+        let values: Vec<serde_json::Value> = self
+            .events
+            .iter()
+            .filter_map(|e| serde_json::to_value(e).ok())
+            .collect();
+        crate::ledger_chain::verify_chain(&values, key.as_deref())
     }
 
     /// Synchronize the causal logical clock with external causal clocks
@@ -733,5 +795,68 @@ impl CapabilityJournal {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod chain_tests {
+    use super::*;
+
+    fn temp_journal(tag: &str) -> CapabilityJournal {
+        let base = std::env::temp_dir().join(format!("korg-chain-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        CapabilityJournal::new(
+            base.join("journal.json"),
+            base.join("snapshots.json"),
+            10,
+            base.join("journal.lock"),
+        )
+    }
+
+    fn sample_event(tool: &str) -> CapabilityEvent {
+        CapabilityEvent::AgentToolCall {
+            source_agent: "test".to_string(),
+            tool_name: tool.to_string(),
+            args: serde_json::json!({ "x": 1 }),
+            result: serde_json::json!({}),
+            payload_refs: vec![],
+            success: true,
+            duration_ms: 0,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn appended_events_form_an_intact_chain() {
+        let mut j = temp_journal("intact");
+        j.append(sample_event("Read"));
+        j.append(sample_event("Edit"));
+        j.append(sample_event("Bash"));
+        assert_eq!(j.events.len(), 3);
+        // first event anchors to GENESIS; each links to the previous entry_hash
+        assert_eq!(j.events[0].prev_hash, crate::ledger_chain::GENESIS_HASH);
+        assert_eq!(j.events[1].prev_hash, j.events[0].entry_hash);
+        assert_eq!(j.events[2].prev_hash, j.events[1].entry_hash);
+        assert!(j.events.iter().all(|e| e.entry_hash.len() == 64));
+        assert!(
+            j.verify_chain().is_empty(),
+            "freshly appended chain must be intact"
+        );
+    }
+
+    #[test]
+    fn tampering_a_persisted_event_breaks_verification() {
+        let mut j = temp_journal("tamper");
+        j.append(sample_event("Read"));
+        j.append(sample_event("Edit"));
+        assert!(j.verify_chain().is_empty());
+        // edit an event's content WITHOUT recomputing its entry_hash
+        if let CapabilityEvent::AgentToolCall { ref mut args, .. } = j.events[0].event {
+            *args = serde_json::json!({ "x": 999 });
+        }
+        let errors = j.verify_chain();
+        assert!(!errors.is_empty(), "a content edit must be detected");
+        assert!(errors.iter().any(|e| e.contains("seq 1")), "{errors:?}");
     }
 }
