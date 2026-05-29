@@ -1,0 +1,31 @@
+{
+  "spec_version": "korg-ledger@v1",
+  "canonicalization": "JSON, keys sorted by code point, separators (',',':'), non-ASCII \\uXXXX-escaped; preimage = event minus entry_hash",
+  "hmac": "HMAC-SHA256 over the same preimage when a key is present",
+  "vectors": [
+    {
+      "file": "basic-intact.jsonl",
+      "key": null,
+      "verify": "intact",
+      "tip_entry_hash": "7418b9105a664e21078fde881fbd8a5295c49bb384aa62a48d5b544292d910af"
+    },
+    {
+      "file": "hmac-intact.jsonl",
+      "key": "korg-conformance-key",
+      "verify": "intact",
+      "tip_entry_hash": "1b371102038082d3fac965fe21ba357129c61f57fcd93f1a0ffa5e6eaa454e78"
+    },
+    {
+      "file": "tampered-content.jsonl",
+      "key": null,
+      "verify": "tampered",
+      "error_contains": "seq 2"
+    },
+    {
+      "file": "tampered-deletion.jsonl",
+      "key": null,
+      "verify": "tampered",
+      "error_contains": "seq 3"
+    }
+  ]
+}
