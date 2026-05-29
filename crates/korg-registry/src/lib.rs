@@ -6,6 +6,8 @@
 
 pub(crate) mod checkpoint;
 pub(crate) mod executor;
+/// korg-ledger@v1 tamper-evident hash-chain (canonicalize / chain_hash / verify_chain).
+pub mod ledger_chain;
 pub mod log;
 pub(crate) mod plan;
 pub(crate) mod planner;
@@ -1214,6 +1216,8 @@ mod tests {
             seq_id: 1,
             metadata: mock_metadata(plan_id, 1, &ev1),
             event: ev1,
+            prev_hash: String::new(),
+            entry_hash: String::new(),
         };
         assert!(proj.apply(&envelope1).is_ok());
         let state = proj.snapshot();
@@ -1232,6 +1236,8 @@ mod tests {
             seq_id: 2,
             metadata: mock_metadata(plan_id, 2, &ev2),
             event: ev2,
+            prev_hash: String::new(),
+            entry_hash: String::new(),
         };
         assert!(proj.apply(&envelope2).is_ok());
         let state = proj.snapshot();
@@ -1251,6 +1257,8 @@ mod tests {
             seq_id: 3,
             metadata: mock_metadata(plan_id, 3, &ev3),
             event: ev3,
+            prev_hash: String::new(),
+            entry_hash: String::new(),
         };
         assert!(proj.apply(&envelope3).is_ok());
         let state = proj.snapshot();
@@ -1271,6 +1279,8 @@ mod tests {
             seq_id: 4,
             metadata: mock_metadata(plan_id, 4, &ev4),
             event: ev4,
+            prev_hash: String::new(),
+            entry_hash: String::new(),
         };
         assert!(proj.apply(&envelope4).is_ok());
         let state = proj.snapshot();
@@ -1287,6 +1297,8 @@ mod tests {
             seq_id: 5,
             metadata: mock_metadata(plan_id, 5, &ev5),
             event: ev5,
+            prev_hash: String::new(),
+            entry_hash: String::new(),
         };
         assert!(proj.apply(&envelope5).is_ok());
         let state = proj.snapshot();
@@ -1441,12 +1453,16 @@ mod tests {
                 seq_id: 1,
                 metadata: mock_metadata(plan_id, 1, &ev1),
                 event: ev1,
+                prev_hash: String::new(),
+                entry_hash: String::new(),
             },
             JournalEvent {
                 schema_version: "1.0".to_string(),
                 seq_id: 2,
                 metadata: mock_metadata(plan_id, 2, &ev2),
                 event: ev2,
+                prev_hash: String::new(),
+                entry_hash: String::new(),
             },
         ];
 

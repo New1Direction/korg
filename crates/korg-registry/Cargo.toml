@@ -13,6 +13,8 @@ uuid       = { workspace = true }
 chrono     = { workspace = true }
 tracing    = { workspace = true }
 fs2        = "0.4"
+sha2       = "0.10"
+hmac       = "0.12"
 
 [dev-dependencies]
 sha2       = "0.10"
