@@ -1,6 +1,7 @@
 {
   "name": "@korgg/recall-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "mcpName": "io.github.New1Direction/korg-recall-mcp",
   "description": "Cross-session semantic memory MCP server over the korg ledger — npx-installable Claude Code agent memory across vendors.",
   "type": "module",
   "main": "dist/index.js",
