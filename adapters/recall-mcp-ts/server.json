@@ -1,0 +1,11 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.New1Direction/korg-recall-mcp",
+  "description": "Cross-vendor semantic memory: recall across Claude Code / Codex / Grok sessions by meaning.",
+  "version": "0.1.0",
+  "repository": { "url": "https://github.com/New1Direction/korg", "source": "github" },
+  "packages": [
+    { "registryType": "npm", "identifier": "@korgg/recall-mcp", "version": "0.1.0",
+      "transport": { "type": "stdio" } }
+  ]
+}
