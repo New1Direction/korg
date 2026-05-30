@@ -1,6 +1,7 @@
 {
   "name": "@korgg/introspect-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "mcpName": "io.github.New1Direction/korg-introspect-mcp",
   "description": "Generic --introspect → MCP server bridge. Wrap any korg:introspect@v1 binary as an MCP server with one line of Claude Code config.",
   "type": "module",
   "main": "dist/index.js",
