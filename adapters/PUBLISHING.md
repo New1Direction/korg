@@ -1,7 +1,7 @@
 # Publishing the npm packages
 
-This doc covers the publish flow for `@korg/recall-mcp` and
-`@korg/introspect-mcp`. Both packages are TypeScript ports of their
+This doc covers the publish flow for `@korgg/recall-mcp` and
+`@korgg/introspect-mcp`. Both packages are TypeScript ports of their
 Python siblings (`adapters/recall-mcp/` and `adapters/introspect-mcp/`)
 intended for `npx`-style distribution to Claude Code users.
 
@@ -55,8 +55,8 @@ Same flow for `introspect-mcp-ts`.
 After publishing, both packages become available via:
 
 ```bash
-npx -y @korg/recall-mcp --help
-npx -y @korg/introspect-mcp thump --list-tools
+npx -y @korgg/recall-mcp --help
+npx -y @korgg/introspect-mcp thump --list-tools
 ```
 
 ## What gets published
@@ -96,18 +96,18 @@ reference is authoritative for any new field.
 
 ## What the npm org name unlocks
 
-When users see `npx -y @korg/recall-mcp` in a doc or blog post, the
+When users see `npx -y @korgg/recall-mcp` in a doc or blog post, the
 `@korg` prefix immediately signals "this is part of the korg
 ecosystem" — discoverable on npm via `npm search @korg`. The scope
 also reserves the namespace; nobody else can publish `@korg/whatever`.
 
 ## Withdraw / unpublish
 
-npm's 24-hour withdrawal window: `npm unpublish @korg/recall-mcp@0.1.0`
+npm's 24-hour withdrawal window: `npm unpublish @korgg/recall-mcp@0.1.0`
 within 24 hours of publishing. After 24 hours, npm only allows
 `deprecate`, not `unpublish` (security policy). Use `deprecate` for
 any breaking issue:
 
 ```bash
-npm deprecate @korg/recall-mcp@0.1.0 "Critical bug — use 0.1.1+"
+npm deprecate @korgg/recall-mcp@0.1.0 "Critical bug — use 0.1.1+"
 ```

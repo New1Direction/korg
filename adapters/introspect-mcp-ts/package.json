@@ -1,5 +1,5 @@
 {
-  "name": "@korg/introspect-mcp",
+  "name": "@korgg/introspect-mcp",
   "version": "0.1.0",
   "description": "Generic --introspect → MCP server bridge. Wrap any korg:introspect@v1 binary as an MCP server with one line of Claude Code config.",
   "type": "module",

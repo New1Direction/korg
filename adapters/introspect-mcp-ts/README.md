@@ -1,4 +1,4 @@
-# @korg/introspect-mcp
+# @korgg/introspect-mcp
 
 > **Bridge any `--introspect`-aware CLI to Claude Code via MCP. TypeScript edition.**
 
@@ -9,7 +9,7 @@ contract, same safety gating, same `command_id` conventions as the
 Python reference, distributed via npm for `npx` install.
 
 ```bash
-npx -y @korg/introspect-mcp thump --list-tools
+npx -y @korgg/introspect-mcp thump --list-tools
 # [korg-introspect-mcp] thump v0.2.0 — 9 tool(s):
 #   thump.tui            side_effects=fs_read   ...
 #   thump.generate       side_effects=fs_write  ... (would be denied)
@@ -36,17 +36,17 @@ Add one entry per binary you want to expose:
   "mcpServers": {
     "korg-thump": {
       "command": "npx",
-      "args": ["-y", "@korg/introspect-mcp", "thump"],
+      "args": ["-y", "@korgg/introspect-mcp", "thump"],
       "env": { "KORG_INTROSPECT_MCP_ALLOW": "fs_write" }
     },
     "korg": {
       "command": "npx",
-      "args": ["-y", "@korg/introspect-mcp", "/usr/local/bin/korg"],
+      "args": ["-y", "@korgg/introspect-mcp", "/usr/local/bin/korg"],
       "env": { "KORG_INTROSPECT_MCP_ALLOW": "all" }
     },
     "korg-korgex": {
       "command": "npx",
-      "args": ["-y", "@korg/introspect-mcp", "korgex"]
+      "args": ["-y", "@korgg/introspect-mcp", "korgex"]
     }
   }
 }
@@ -55,7 +55,7 @@ Add one entry per binary you want to expose:
 Restart Claude Code. **30+ tools across the entire korg ecosystem**
 land in the agent's toolset. Tool names match each binary's
 `command_id` from its `--introspect` document, so the
-recall→re-invoke loop (when paired with `@korg/recall-mcp`) is
+recall→re-invoke loop (when paired with `@korgg/recall-mcp`) is
 deterministic.
 
 ## What it does
@@ -116,13 +116,13 @@ fix is on the binary side — keep this mapper boring.
 
 ```bash
 # Sanity-check what an agent will see (no MCP server launched):
-npx -y @korg/introspect-mcp thump --list-tools
+npx -y @korgg/introspect-mcp thump --list-tools
 
 # Run as MCP server on stdio (default — what Claude Code calls):
-npx -y @korg/introspect-mcp thump --allow fs_write
+npx -y @korgg/introspect-mcp thump --allow fs_write
 
 # Pass an absolute path or PATH name:
-npx -y @korg/introspect-mcp /usr/local/bin/korgex --allow all
+npx -y @korgg/introspect-mcp /usr/local/bin/korgex --allow all
 ```
 
 ## What's deliberately NOT supported in v1

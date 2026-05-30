@@ -1,4 +1,4 @@
-// The korg:introspect@v1 document for @korg/recall-mcp.
+// The korg:introspect@v1 document for @korgg/recall-mcp.
 // MUST stay schema-aligned with the Python reference at
 // adapters/recall-mcp/src/korg_recall_mcp/introspect.py so cross-binary
 // agents see one schema across the ecosystem.

@@ -1,5 +1,5 @@
 {
-  "name": "@korg/recall-mcp",
+  "name": "@korgg/recall-mcp",
   "version": "0.1.0",
   "description": "Cross-session semantic memory MCP server over the korg ledger — npx-installable Claude Code agent memory across vendors.",
   "type": "module",
