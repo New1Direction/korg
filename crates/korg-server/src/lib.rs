@@ -1895,7 +1895,7 @@ const LANDING_HTML: &str = r##"<!doctype html>
     <div class="install-hint" role="button" tabindex="0"
          onclick="(function(el){var c=el.querySelector('code');var t=c.textContent;navigator.clipboard.writeText(t);c.textContent='COPIED';setTimeout(function(){c.textContent=t;},1200);})(this)">
       <span class="label">INSTALL</span>
-      <code>npx -y @korg/recall-mcp</code>
+      <code>npx -y @korgg/recall-mcp</code>
     </div>
   </div>
 </section>
@@ -1992,7 +1992,7 @@ const LANDING_HTML: &str = r##"<!doctype html>
           A single MCP tool — <code>recall</code> — embeds your query with
           BGE-small (local, no API), cosine-ranks against your entire ledger,
           returns top matches. Works in Claude Code or any MCP client via
-          <code>npx @korg/recall-mcp</code>.
+          <code>npx @korgg/recall-mcp</code>.
         </p>
       </div>
       <div class="feature">
@@ -2000,7 +2000,7 @@ const LANDING_HTML: &str = r##"<!doctype html>
         <h3>RE-EXECUTE,<br>DON'T RE-DERIVE.</h3>
         <p>
           Recall returns events tagged with stable <code>tool_name</code>s.
-          A bridge (<code>@korg/introspect-mcp</code>) exposes every ecosystem
+          A bridge (<code>@korgg/introspect-mcp</code>) exposes every ecosystem
           binary's callables under the same identifiers. Recall a past
           command. Invoke it on the current branch. Loop closes.
         </p>
@@ -2085,7 +2085,7 @@ const LANDING_HTML: &str = r##"<!doctype html>
   <span class="key">"mcpServers"</span>: {
     <span class="key">"korg-recall"</span>: {
       <span class="key">"command"</span>: <span class="str">"npx"</span>,
-      <span class="key">"args"</span>: [<span class="str">"-y"</span>, <span class="str">"@korg/recall-mcp"</span>]
+      <span class="key">"args"</span>: [<span class="str">"-y"</span>, <span class="str">"@korgg/recall-mcp"</span>]
     }
   }
 }</code></pre>
@@ -2146,8 +2146,8 @@ korg-ingest-claude <span class="key">--tail</span> &amp;</code></pre>
     <div class="col">
       <h5>NPM PACKAGES</h5>
       <ul>
-        <li><a href="https://www.npmjs.com/package/@korg/recall-mcp">@korg/recall-mcp</a></li>
-        <li><a href="https://www.npmjs.com/package/@korg/introspect-mcp">@korg/introspect-mcp</a></li>
+        <li><a href="https://www.npmjs.com/package/@korgg/recall-mcp">@korgg/recall-mcp</a></li>
+        <li><a href="https://www.npmjs.com/package/@korgg/introspect-mcp">@korgg/introspect-mcp</a></li>
       </ul>
     </div>
     <div class="col">

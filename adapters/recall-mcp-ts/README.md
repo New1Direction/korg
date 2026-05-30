@@ -1,4 +1,4 @@
-# @korg/recall-mcp
+# @korgg/recall-mcp
 
 > **TypeScript port of korg-recall-mcp for npx distribution.**
 
@@ -8,7 +8,7 @@ same ledger format as the Python reference implementation — but
 installable in one command:
 
 ```bash
-npx -y @korg/recall-mcp
+npx -y @korgg/recall-mcp
 ```
 
 ## Why a TypeScript port
@@ -19,9 +19,9 @@ Claude Code itself is TypeScript. The canonical MCP SDK is TypeScript.
 install-friction case specifically — the Python version stays as the
 reference implementation with the higher-quality `fastembed` backend.
 
-| | `@korg/recall-mcp` (TS) | `korg-recall-mcp` (Python) |
+| | `@korgg/recall-mcp` (TS) | `korg-recall-mcp` (Python) |
 |---|---|---|
-| **Install** | `npx -y @korg/recall-mcp` | `pipx install 'korg-recall-mcp[semantic]'` |
+| **Install** | `npx -y @korgg/recall-mcp` | `pipx install 'korg-recall-mcp[semantic]'` |
 | **Embedding backend** | `@xenova/transformers` (BGE-small, ONNX, optional dep) | `fastembed` (BGE-small, ONNX) |
 | **Bundle weight** | ~10MB + 50MB model on first semantic call | ~30MB + 130MB model |
 | **Substring fallback** | always available, zero-dep | always available, zero-dep |
@@ -43,7 +43,7 @@ Add to `~/.claude.json`:
   "mcpServers": {
     "korg-recall": {
       "command": "npx",
-      "args": ["-y", "@korg/recall-mcp", "--ledger", "/Users/you/.korg/claude-events.jsonl"]
+      "args": ["-y", "@korgg/recall-mcp", "--ledger", "/Users/you/.korg/claude-events.jsonl"]
     }
   }
 }
@@ -163,7 +163,7 @@ npm test
 npm install
 npm run build       # tsc → dist/
 npm test            # all 49 tests
-npm publish --access public   # publishes @korg/recall-mcp
+npm publish --access public   # publishes @korgg/recall-mcp
 ```
 
 The `bin` field in package.json registers `korg-recall-mcp` as the
@@ -174,7 +174,7 @@ shell command. After global install (or `npx`), the binary is on PATH.
 - v0.1.0 — substring-only path is solid (zero deps, fully tested).
   Semantic path is wired but the transformers.js install is left as
   the user's choice via `npm install @xenova/transformers` (or
-  `npm install @korg/recall-mcp` will pull it as an optionalDependency).
+  `npm install @korgg/recall-mcp` will pull it as an optionalDependency).
 - Not yet:
   - **Persistent embeddings cache to disk.** Embeddings recompute on
     cold start. For multi-thousand-event ledgers, a sidecar cache
