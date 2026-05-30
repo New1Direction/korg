@@ -16,6 +16,12 @@
       "tip_entry_hash": "1b371102038082d3fac965fe21ba357129c61f57fcd93f1a0ffa5e6eaa454e78"
     },
     {
+      "file": "nonbmp-intact.jsonl",
+      "key": null,
+      "verify": "intact",
+      "tip_entry_hash": "045d2d865e89c54340408b309c81d6b0f1367ebf0aa4504f1af66f7f1e4cb590"
+    },
+    {
       "file": "tampered-content.jsonl",
       "key": null,
       "verify": "tampered",

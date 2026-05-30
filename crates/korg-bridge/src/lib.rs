@@ -27,6 +27,21 @@ use pyo3::types::PyAny;
 use pythonize::depythonize;
 use uuid::Uuid;
 
+// CausalityError — raised when a write would violate the causal DAG.
+//
+// The bridge is the trust boundary where Python writes enter the Rust journal.
+// `verify_dag` (korg-ledger@v1 §5) checks the same invariant at READ time, but
+// by then a broken event is already chained. This exception lets the bridge
+// REJECT the write before it lands: a `triggered_by` must name an existing,
+// strictly-earlier `seq_id`. Subclasses `ValueError` so callers that only catch
+// `ValueError` (the previous behaviour for bad input) still see it.
+pyo3::create_exception!(
+    korg_bridge,
+    CausalityError,
+    PyValueError,
+    "A write whose triggered_by does not reference an existing, strictly-earlier seq_id."
+);
+
 /// Default snapshot interval — matches the value korg-server uses when
 /// constructing its journal.
 const DEFAULT_SNAPSHOT_INTERVAL: usize = 100;
@@ -341,6 +356,28 @@ impl Bridge {
             )));
         }
 
+        // Write-time causality gate (korg-ledger@v1 §5, enforced at the trust
+        // boundary). If the caller names a parent, it MUST exist and be
+        // strictly earlier than the seq_id this write is about to take. We
+        // reject BEFORE touching the clock or appending, so a rejected write
+        // neither advances last_seq_id nor leaves a partial event on disk.
+        if let Some(parent_seq) = triggered_by {
+            // append_with_metadata assigns seq_id = last_seq_id + 1.
+            let next_seq = journal.last_seq_id + 1;
+            if parent_seq >= next_seq {
+                return Err(CausalityError::new_err(format!(
+                    "triggered_by {parent_seq} is not strictly earlier than this \
+                     event's seq_id {next_seq}; refusing to record"
+                )));
+            }
+            if !journal.events.iter().any(|e| e.seq_id == parent_seq) {
+                return Err(CausalityError::new_err(format!(
+                    "triggered_by {parent_seq} references no existing event; \
+                     refusing to record an orphan"
+                )));
+            }
+        }
+
         let event = CapabilityEvent::AgentToolCall {
             source_agent: source_agent.to_string(),
             tool_name: tool_name.to_string(),
@@ -401,6 +438,7 @@ impl Bridge {
 #[pymodule]
 fn korg_bridge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Bridge>()?;
+    m.add("CausalityError", m.py().get_type_bound::<CausalityError>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

@@ -83,3 +83,36 @@ fn hmac_chain_fails_without_the_key() {
         "keyed chain wrongly verified without the key"
     );
 }
+
+/// Non-BMP / surrogate-pair determinism oracle.
+///
+/// The events in `nonbmp-intact.jsonl` carry astral-plane code points —
+/// 😀 (U+1F600), 💩 (U+1F4A9), 𐀀 (U+10000, the very first astral code point) —
+/// alongside BMP CJK (中文). Python's `json.dumps(ensure_ascii=True)` escapes
+/// each astral code point as a UTF-16 surrogate *pair* (`😀`, …),
+/// which is exactly the `cp > 0xFFFF` branch in `write_json_string`. The frozen
+/// tip `045d2d8…` was computed by the Python reference. If Rust's surrogate
+/// arithmetic or non-ASCII escaping diverged by a single byte, this tip would
+/// not reproduce — so this test is the empirical proof that the moat holds on
+/// non-BMP text, not merely on ASCII.
+#[test]
+fn nonbmp_surrogate_chain_reproduces_python_frozen_tip() {
+    const FROZEN_TIP: &str = "045d2d865e89c54340408b309c81d6b0f1367ebf0aa4504f1af66f7f1e4cb590";
+    let events = read_jsonl("nonbmp-intact.jsonl");
+
+    // The full chain must verify (each stored entry_hash recomputed by Rust).
+    let errors = verify_chain(&events, None);
+    assert!(
+        errors.is_empty(),
+        "non-BMP chain failed to verify: {errors:?}"
+    );
+
+    // Explicit cross-impl anchor: Rust's chain_hash of the tip event must equal
+    // the Python-frozen tip, byte-for-byte through the surrogate-pair escaper.
+    let tip = chain_hash(events.last().unwrap(), None);
+    assert_eq!(
+        tip, FROZEN_TIP,
+        "Rust chain_hash diverged from Python on non-BMP text — moat-breaking \
+         surrogate/escaping bug in write_canonical"
+    );
+}
