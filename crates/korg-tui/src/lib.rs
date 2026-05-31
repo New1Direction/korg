@@ -73,6 +73,33 @@ pub struct GitCommit {
     pub message: String,
 }
 
+/// Parse `git log` output where each line is
+/// `hash\u{1f}author\u{1f}date\u{1f}subject` (unit-separator delimited).
+///
+/// Lines missing any of the four fields, or with an empty hash, are skipped.
+/// Empty or garbage input yields an empty `Vec` — this NEVER fabricates commits.
+fn parse_git_log(output: &str) -> Vec<GitCommit> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\u{1f}');
+            let hash = parts.next()?;
+            let author = parts.next()?;
+            let date = parts.next()?;
+            let message = parts.next()?;
+            if hash.is_empty() {
+                return None;
+            }
+            Some(GitCommit {
+                hash: hash.to_string(),
+                author: author.to_string(),
+                date: date.to_string(),
+                message: message.to_string(),
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandCode {
     Explain,
@@ -212,16 +239,10 @@ impl Default for KorgTui {
             command_palette_input: String::new(),
             command_palette_selected_idx: 0,
             swarm_size: 4,
-            h_sem: 0.42,
-            h_sem_history: vec![42, 43, 41, 44, 45, 42, 40, 43, 46, 42],
+            h_sem: 0.0,
+            h_sem_history: vec![],
             current_verdict: "Waiting for first evaluation...".to_string(),
-            rubric_status: vec![
-                ("Trajectory Efficiency".to_string(), true),
-                ("Epistemic Integrity".to_string(), true),
-                ("Tool-Use Precision".to_string(), false),
-                ("Semantic Adherence".to_string(), true),
-                ("Resource Utilization".to_string(), true),
-            ],
+            rubric_status: vec![],
             arena_history: vec!["Round 0: No winner yet".to_string()],
             trace_events: vec!["No TraceEvents yet".to_string()],
             ktrans_log: vec!["No .ktrans yet".to_string()],
@@ -237,49 +258,24 @@ impl Default for KorgTui {
             feedback_tx: None,
 
             // Enriched health defaults
-            velocity: 85.0,
-            risk: 0.35,
+            velocity: 0.0,
+            risk: 0.0,
             progress: 0.0,
             doom_prob: 0.0,
 
             // Enriched telemetry defaults
-            persona_scores: [0.92, 0.87, 0.83, 0.89],
+            persona_scores: [0.0, 0.0, 0.0, 0.0],
             telemetry_merges: 0,
-            crdt_sync_frequency: 1.2,
+            crdt_sync_frequency: 0.0,
             conflicts_count: 0,
-            provenance_chain_length: 1,
-            lock_states: vec![
-                (
-                    "Captain".to_string(),
-                    "READ".to_string(),
-                    "0.15ms".to_string(),
-                    "Active".to_string(),
-                ),
-                (
-                    "Harper".to_string(),
-                    "IDLE".to_string(),
-                    "-".to_string(),
-                    "Idle".to_string(),
-                ),
-                (
-                    "Benjamin".to_string(),
-                    "IDLE".to_string(),
-                    "-".to_string(),
-                    "Idle".to_string(),
-                ),
-                (
-                    "Lucas".to_string(),
-                    "IDLE".to_string(),
-                    "-".to_string(),
-                    "Idle".to_string(),
-                ),
-            ],
+            provenance_chain_length: 0,
+            lock_states: vec![],
 
             // Persona sparkline histories
-            captain_score_history: vec![92, 91, 93, 92, 94, 93, 92, 92, 93, 92],
-            harper_score_history: vec![87, 86, 88, 87, 89, 87, 86, 87, 88, 87],
-            benjamin_score_history: vec![83, 82, 84, 83, 85, 83, 82, 83, 84, 83],
-            lucas_score_history: vec![89, 88, 90, 89, 91, 89, 88, 89, 90, 89],
+            captain_score_history: vec![],
+            harper_score_history: vec![],
+            benjamin_score_history: vec![],
+            lucas_score_history: vec![],
 
             playhead: 0,
             fork_modal_open: false,
@@ -681,48 +677,30 @@ impl KorgTui {
         }
     }
 
+    /// Load recent git commits into the ledger view.
+    ///
+    /// Reads real `git log` metadata (hash, author, date, subject). On any
+    /// failure — non-zero exit, no git, or empty output — the ledger is left
+    /// empty rather than fabricating commits.
     pub fn load_git_commits(&mut self) {
-        let mut commits = vec![];
         let output = std::process::Command::new("git")
-            .args(&["log", "--oneline", "-n", "20"])
+            .args([
+                "log",
+                "--pretty=format:%h\u{1f}%an\u{1f}%ad\u{1f}%s",
+                "--date=short",
+                "-n",
+                "20",
+            ])
             .output();
-        if let Ok(out) = output {
-            if out.status.success() {
+        match output {
+            Ok(out) if out.status.success() => {
                 let log_str = String::from_utf8_lossy(&out.stdout);
-                for line in log_str.lines() {
-                    let parts: Vec<&str> = line.splitn(2, ' ').collect();
-                    if parts.len() == 2 {
-                        commits.push(GitCommit {
-                            hash: parts[0].to_string(),
-                            author: "Operator".to_string(),
-                            date: "Now".to_string(),
-                            message: parts[1].to_string(),
-                        });
-                    }
-                }
+                self.git_commits = parse_git_log(&log_str);
+            }
+            _ => {
+                self.git_commits = vec![];
             }
         }
-        if commits.is_empty() {
-            commits.push(GitCommit {
-                hash: "019e4cd1".to_string(),
-                author: "Lucas".to_string(),
-                date: "2026-05-21".to_string(),
-                message: "feat: Integrate real semantic merge & synthetic live loops".to_string(),
-            });
-            commits.push(GitCommit {
-                hash: "ae8720b7".to_string(),
-                author: "Benjamin".to_string(),
-                date: "2026-05-21".to_string(),
-                message: "fix: playhead steering fork campaign reset loops".to_string(),
-            });
-            commits.push(GitCommit {
-                hash: "a4c2ef0d".to_string(),
-                author: "Captain".to_string(),
-                date: "2026-05-20".to_string(),
-                message: "chore: establish zero-trust validation sandbox limits".to_string(),
-            });
-        }
-        self.git_commits = commits;
     }
 
     pub fn open_selected_file(&mut self) {
@@ -996,10 +974,6 @@ impl KorgTui {
                 self.ktrans_log.remove(0);
             }
         }
-    }
-
-    pub fn update_from_leader(&mut self, _leader: &LeaderOrchestrator) {
-        // Real integration would pull live data here
     }
 }
 
@@ -1689,25 +1663,24 @@ async fn run_tui_event_loop(
                                             )]));
                                     }
 
-                                    // Trigger actual playhead steering fork! (Revert git tree)
-                                    let playhead_tx = app.playhead;
-                                    let dir = app
-                                        .opened_file_path
-                                        .clone()
-                                        .unwrap_or_else(|| "HEAD".to_string());
+                                    // Reset the working tree to HEAD.
                                     let terminal_tx_clone = terminal_tx.clone();
                                     tokio::spawn(async move {
-                                        let _ = terminal_tx_clone.send(format!("[System] Visual Steering Fork requested for commit/tx position {}", playhead_tx)).await;
+                                        let _ = terminal_tx_clone.send("[System] Resetting working tree to HEAD...".to_string()).await;
                                         let output = tokio::process::Command::new("git")
-                                            .args(&["read-tree", "--reset", "-u", "HEAD"])
+                                            .args(["read-tree", "--reset", "-u", "HEAD"])
                                             .output()
                                             .await;
                                         match output {
                                             Ok(out) if out.status.success() => {
-                                                let _ = terminal_tx_clone.send("[System] Codebase workspace successfully reverted to snapshot HEAD.".to_string()).await;
+                                                let _ = terminal_tx_clone.send("[System] Working tree reset to HEAD.".to_string()).await;
                                             }
-                                            _ => {
-                                                let _ = terminal_tx_clone.send("[System] WARNING: Bypassed physical git reversion for mock/local branch.".to_string()).await;
+                                            Ok(out) => {
+                                                let err = String::from_utf8_lossy(&out.stderr);
+                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {}", err.trim())).await;
+                                            }
+                                            Err(e) => {
+                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {e}")).await;
                                             }
                                         }
                                     });
@@ -2427,26 +2400,25 @@ async fn run_tui_event_loop(
                                     }
                                 }
                                 KeyCode::Enter | KeyCode::Char('f') | KeyCode::Char('F') => {
-                                    let target_commit =
-                                        app.git_commits[app.selected_commit_idx].hash.clone();
-                                    app.log(format!(
-                                        "Visual Replay checkout requested for commit {}",
-                                        target_commit
-                                    ));
+                                    app.log("Working-tree reset to HEAD requested");
 
                                     let terminal_tx_clone = terminal_tx.clone();
                                     tokio::spawn(async move {
-                                        let _ = terminal_tx_clone.send(format!("[System] Time-Traveling codebase working directory to tree commit {}...", target_commit)).await;
+                                        let _ = terminal_tx_clone.send("[System] Resetting working tree to HEAD...".to_string()).await;
                                         let output = tokio::process::Command::new("git")
-                                            .args(&["read-tree", "--reset", "-u", "HEAD"])
+                                            .args(["read-tree", "--reset", "-u", "HEAD"])
                                             .output()
                                             .await;
                                         match output {
                                             Ok(out) if out.status.success() => {
-                                                let _ = terminal_tx_clone.send(format!("✓ Codebase working directory successfully reset to tree: {}", target_commit)).await;
+                                                let _ = terminal_tx_clone.send("[System] Working tree reset to HEAD.".to_string()).await;
                                             }
-                                            _ => {
-                                                let _ = terminal_tx_clone.send(format!("[System] Simulated playhead reversion success to tree hash {}", target_commit)).await;
+                                            Ok(out) => {
+                                                let err = String::from_utf8_lossy(&out.stderr);
+                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {}", err.trim())).await;
+                                            }
+                                            Err(e) => {
+                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {e}")).await;
                                             }
                                         }
                                     });
@@ -2589,16 +2561,6 @@ async fn run_tui_event_loop(
                         "campaign failure detected — choose a recovery point".to_string();
                     app.rewind_mode = true;
                 }
-            }
-        }
-
-        // Light demo heartbeat if no real data yet
-        if app.current_verdict.contains("Waiting") {
-            app.h_sem = (app.h_sem + 0.015) % 1.0;
-            let scaled = (app.h_sem * 100.0) as u64;
-            app.h_sem_history.push(scaled);
-            if app.h_sem_history.len() > 30 {
-                app.h_sem_history.remove(0);
             }
         }
     }
@@ -4457,5 +4419,45 @@ mod tests {
         app.policy_violation_alert = None;
         app.pending_approval = None;
         assert!(app.policy_violation_alert.is_none());
+    }
+
+    #[test]
+    fn test_parse_git_log_real_input() {
+        let us = '\u{1f}';
+        let input = format!(
+            "a1b2c3d{us}Ada Lovelace{us}2026-05-31{us}feat: add ledger\n\
+             e4f5g6h{us}Alan Turing{us}2026-05-30{us}fix: honest defaults"
+        );
+        let commits = parse_git_log(&input);
+        assert_eq!(commits.len(), 2);
+
+        assert_eq!(commits[0].hash, "a1b2c3d");
+        assert_eq!(commits[0].author, "Ada Lovelace");
+        assert_eq!(commits[0].date, "2026-05-31");
+        assert_eq!(commits[0].message, "feat: add ledger");
+
+        assert_eq!(commits[1].hash, "e4f5g6h");
+        assert_eq!(commits[1].author, "Alan Turing");
+        assert_eq!(commits[1].date, "2026-05-30");
+        assert_eq!(commits[1].message, "fix: honest defaults");
+
+        // Garbage / empty input must NEVER fabricate commits.
+        assert!(parse_git_log("").is_empty());
+        assert!(parse_git_log("garbage").is_empty());
+    }
+
+    #[test]
+    fn test_default_is_honest_no_fabricated_telemetry() {
+        let app = KorgTui::default();
+        assert_eq!(app.persona_scores, [0.0; 4]);
+        assert!(app.captain_score_history.is_empty());
+        assert!(app.harper_score_history.is_empty());
+        assert!(app.benjamin_score_history.is_empty());
+        assert!(app.lucas_score_history.is_empty());
+        assert!(app.h_sem_history.is_empty());
+        assert!(app.rubric_status.is_empty());
+        assert!(app.lock_states.is_empty());
+        assert_eq!(app.velocity, 0.0);
+        assert_eq!(app.risk, 0.0);
     }
 }
