@@ -3757,22 +3757,31 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             Line::from(""),
         ];
         for (i, candidate) in app.rewind_candidates.iter().enumerate() {
-            let scope_label = match candidate.scope {
-                RewindScope::LocalUndo => "Local Undo",
-                RewindScope::StrategicReset => "Strategic Reset",
-            };
-            let prefix = if i == app.rewind_cursor { "▶ " } else { "  " };
-            let style = if i == app.rewind_cursor {
+            let scope_label = scope_badge(&candidate.scope);
+            let selected = i == app.rewind_cursor;
+            let prefix = if selected { "▶ " } else { "  " };
+            let style = if selected {
                 Style::default().fg(Color::Rgb(0, 240, 255)).bold()
             } else {
                 Style::default().fg(Color::Rgb(160, 165, 175))
             };
+            // Scope badge + rationale on the candidate's primary line.
             lines.push(Line::from(Span::styled(
                 format!(
                     "{}[{}]  seq {}  — {}",
                     prefix, scope_label, candidate.seq_id, candidate.rationale
                 ),
                 style,
+            )));
+            // Invalidation preview: exactly what this rewind discards, from real seq_ids.
+            let preview_style = if selected {
+                Style::default().fg(Color::Rgb(255, 140, 90))
+            } else {
+                Style::default().fg(Color::Rgb(120, 110, 110))
+            };
+            lines.push(Line::from(Span::styled(
+                format!("     ↳ {}", format_invalidation(&candidate.invalidates)),
+                preview_style,
             )));
             if i < app.rewind_candidates.len() - 1 {
                 lines.push(Line::from(""));
@@ -4349,6 +4358,39 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
+/// Short label for a rewind's blast radius, for the scope badge in the overlay.
+///
+/// `LocalUndo` is a surgical rollback of the immediate failure; `StrategicReset`
+/// abandons the whole causal chain. Labels are operator-facing and intentionally
+/// vendor-neutral.
+fn scope_badge(scope: &RewindScope) -> &'static str {
+    match scope {
+        RewindScope::LocalUndo => "Surgical",
+        RewindScope::StrategicReset => "Strategic",
+    }
+}
+
+/// Human "what will this rewind throw away" line for the invalidation preview.
+///
+/// Built purely from the candidate's real `invalidates` seq_ids — never a guess:
+///   - `[]`        -> "nothing to discard"
+///   - `[7]`       -> "will discard 1 step (seq 7)"
+///   - `[3,4,5]`   -> "will discard 3 steps (seq 3–5)"   (min–max of the slice, en-dash)
+///
+/// The range uses the min and max of the slice, so it is correct regardless of
+/// ordering and reads honestly even if the discarded set is sparse.
+fn format_invalidation(invalidates: &[u64]) -> String {
+    match invalidates.len() {
+        0 => "nothing to discard".to_string(),
+        1 => format!("will discard 1 step (seq {})", invalidates[0]),
+        n => {
+            let lo = invalidates.iter().min().copied().unwrap_or(0);
+            let hi = invalidates.iter().max().copied().unwrap_or(0);
+            format!("will discard {} steps (seq {}\u{2013}{})", n, lo, hi)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4444,6 +4486,38 @@ mod tests {
         // Garbage / empty input must NEVER fabricate commits.
         assert!(parse_git_log("").is_empty());
         assert!(parse_git_log("garbage").is_empty());
+    }
+
+    #[test]
+    fn test_format_invalidation_nothing_to_discard() {
+        // No seq_ids invalidated -> the rewind discards nothing.
+        assert_eq!(format_invalidation(&[]), "nothing to discard");
+    }
+
+    #[test]
+    fn test_format_invalidation_single_step() {
+        // A single seq_id reads as one step, singular.
+        assert_eq!(format_invalidation(&[7]), "will discard 1 step (seq 7)");
+    }
+
+    #[test]
+    fn test_format_invalidation_multi_step_range() {
+        // Multiple seq_ids collapse to a min–max range (en-dash), plural.
+        assert_eq!(
+            format_invalidation(&[3, 4, 5]),
+            "will discard 3 steps (seq 3–5)"
+        );
+        // Range is derived from min/max of the slice, not assumed contiguous/sorted.
+        assert_eq!(
+            format_invalidation(&[9, 4, 7]),
+            "will discard 3 steps (seq 4–9)"
+        );
+    }
+
+    #[test]
+    fn test_scope_badge_labels() {
+        assert_eq!(scope_badge(&RewindScope::LocalUndo), "Surgical");
+        assert_eq!(scope_badge(&RewindScope::StrategicReset), "Strategic");
     }
 
     #[test]
