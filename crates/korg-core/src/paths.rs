@@ -39,6 +39,14 @@ pub(crate) fn data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp/korg/data"))
 }
 
+/// Path to the persistent agent signing identity (Ed25519, raw hex, mode 0o600).
+///
+/// Under the **config** dir (not cache) so it survives cache clears — the signing
+/// identity must be stable across runs for `.ktrans` signatures to be attributable.
+pub fn agent_identity_path() -> PathBuf {
+    config_dir().join("identity.ed25519")
+}
+
 /// Campaign artifacts directory for a given session.
 pub fn campaign_dir(session_id: &uuid::Uuid) -> PathBuf {
     cache_dir().join("campaigns").join(session_id.to_string())
@@ -144,5 +152,12 @@ mod tests {
     fn project_root_returns_something() {
         let r = project_root();
         assert!(!r.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn agent_identity_path_is_named_and_under_korg() {
+        let p = agent_identity_path();
+        assert!(p.ends_with("identity.ed25519"));
+        assert!(p.to_string_lossy().contains("korg"));
     }
 }

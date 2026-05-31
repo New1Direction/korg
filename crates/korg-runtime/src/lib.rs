@@ -22,6 +22,7 @@ pub mod dag;
 pub mod evaluator;
 pub mod execution;
 pub mod harness;
+pub mod identity;
 pub mod leader;
 pub mod personas;
 pub mod provenance;
