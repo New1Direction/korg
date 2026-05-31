@@ -439,39 +439,13 @@ pub async fn heal_node_with_context(
         }
     }
 
-    // Simulation fallback (no worktree context available)
+    // No compiler stderr + worktree path, or no known pattern matched: there is
+    // nothing real to repair here. Report honestly that we did not heal — the
+    // caller decides what to do with a genuine failure. Never fake success.
     if let Some(ref tx) = logs_tx {
-        let _ = tx.send("  [HEAL] Launching isolated sandbox recovery workspace...".to_string());
+        let _ = tx.send("  [HEAL] No actionable error context — cannot auto-heal".to_string());
     }
-    tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
-    if let Some(ref tx) = logs_tx {
-        let _ = tx.send(
-            "  [HEAL] [Step 1/4: Diagnosis] Found missing dependency or syntax boundary mismatch"
-                .to_string(),
-        );
-    }
-    tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
-    if let Some(ref tx) = logs_tx {
-        let _ = tx.send(
-            "  [HEAL] [Step 2/4: Patching] Synthesizing localized code correction patch"
-                .to_string(),
-        );
-    }
-    tokio::time::sleep(tokio::time::Duration::from_millis(40)).await;
-    if let Some(ref tx) = logs_tx {
-        let _ = tx.send(
-            "  [HEAL] [Step 3/4: Verification] Running regression and lockfile integration tests"
-                .to_string(),
-        );
-    }
-    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
-    if let Some(ref tx) = logs_tx {
-        let _ = tx.send(format!(
-            "  [HEAL] [Step 4/4: Redeploy] Patch committed (elapsed: {:.2?})",
-            start.elapsed()
-        ));
-    }
-    Ok(true)
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -482,14 +456,15 @@ mod tests {
     #[tokio::test]
     async fn test_recovery_flow() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        // Without compiler stderr + a worktree path there is nothing real to
+        // repair, so heal_node must report that honestly — no fake "healed".
         let healed = heal_node("thump test --fail", Some(tx)).await.unwrap();
-        assert!(healed);
+        assert!(!healed, "heal_node with no error/worktree context cannot heal");
         let mut logs = Vec::new();
         while let Ok(log) = rx.try_recv() {
             logs.push(log);
         }
-        assert!(!logs.is_empty());
-        assert!(logs.iter().any(|l| l.contains("[HEAL]")));
+        assert!(logs.iter().any(|l| l.contains("[HEAL] Intercepting")));
     }
 
     #[tokio::test]
