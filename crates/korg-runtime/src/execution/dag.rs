@@ -196,13 +196,17 @@ pub struct ExecutionSummary {
 pub struct SpeculativeScheduler {
     pub dag: Arc<Mutex<ExecutionDag>>,
     warm_boot_started: bool,
+    /// Stable agent identity that signs this execution's Merkle root — injected,
+    /// not minted per run (see `crate::identity`).
+    signing_key: ed25519_dalek::SigningKey,
 }
 
 impl SpeculativeScheduler {
-    pub fn new(dag: ExecutionDag) -> Self {
+    pub fn new(dag: ExecutionDag, signing_key: ed25519_dalek::SigningKey) -> Self {
         Self {
             dag: Arc::new(Mutex::new(dag)),
             warm_boot_started: false,
+            signing_key,
         }
     }
 
@@ -290,10 +294,9 @@ impl SpeculativeScheduler {
                     }
 
                     let node_start = Instant::now();
-                    let success = !node.command.contains("fail");
+                    let success = run_command(&node.command).await;
 
                     if success {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                         node.status = NodeStatus::Success;
                         node.certainty = 100.0;
                         if let Some(ref tx) = logs_tx_clone {
@@ -346,8 +349,8 @@ impl SpeculativeScheduler {
         let merkle_root = dag_guard.compute_merkle_root();
         let dag_json = serde_json::to_string(&*dag_guard).unwrap_or_default();
 
-        // Ephemeral ed25519 attestation of this execution's Merkle root
-        let (node_pubkey, signature) = sign_merkle_root(merkle_root.as_bytes());
+        // Sign this execution's Merkle root with the agent's persistent identity.
+        let (node_pubkey, signature) = sign_merkle_root(merkle_root.as_bytes(), &self.signing_key);
 
         if let Some(ref tx) = logs_tx {
             let _ = tx.send(format!(
@@ -374,14 +377,30 @@ impl SpeculativeScheduler {
     }
 }
 
-fn sign_merkle_root(data: &[u8]) -> (Option<String>, Option<String>) {
+fn sign_merkle_root(
+    data: &[u8],
+    key: &ed25519_dalek::SigningKey,
+) -> (Option<String>, Option<String>) {
     use ed25519_dalek::Signer;
-    let mut rng = rand::rngs::OsRng;
-    let key = ed25519_dalek::SigningKey::generate(&mut rng);
     let sig = key.sign(data);
     let pubkey_hex = hex::encode(key.verifying_key().to_bytes());
     let sig_hex = hex::encode(sig.to_bytes());
     (Some(pubkey_hex), Some(sig_hex))
+}
+
+/// Run a shell command for real and report whether it exited successfully.
+/// Replaces the previous `!command.contains("fail")` simulation — the DAG node's
+/// status now reflects the command's actual exit code.
+async fn run_command(command: &str) -> bool {
+    match tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .output()
+        .await
+    {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
 }
 
 // =========================================================================
@@ -472,14 +491,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_speculative_scheduler_run() {
+    async fn run_command_reflects_real_exit_status() {
+        assert!(run_command("true").await, "`true` exits 0 → success");
+        assert!(!run_command("false").await, "`false` exits non-zero → failure");
+    }
+
+    #[tokio::test]
+    async fn run_succeeds_when_commands_really_succeed() {
         let mut dag = ExecutionDag::new("smoke");
         dag.add_node(make_node("a", vec![]));
         dag.add_node(make_node("b", vec!["a"]));
-        let mut scheduler = SpeculativeScheduler::new(dag);
+        let key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        let mut scheduler = SpeculativeScheduler::new(dag, key);
         let summary = scheduler.run(None).await.unwrap();
         assert!(summary.overall_success);
         assert_eq!(summary.status, "done");
         assert!(!summary.merkle_root.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_fails_on_a_real_nonzero_exit_not_a_string_match() {
+        // The old sim used `success = !command.contains("fail")`, so `false`
+        // (no "fail" substring, real exit 1) wrongly passed. Real execution must
+        // fail it — and with no heal context it must stay failed, not fake-heal.
+        let mut dag = ExecutionDag::new("smoke");
+        dag.add_node(make_node("ok", vec![]));
+        let mut bad = make_node("bad", vec![]);
+        bad.command = "false".into();
+        dag.add_node(bad);
+        let key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        let mut scheduler = SpeculativeScheduler::new(dag, key);
+        let summary = scheduler.run(None).await.unwrap();
+        assert!(!summary.overall_success, "a real non-zero exit must fail the DAG");
+    }
+
+    #[test]
+    fn sign_merkle_root_uses_the_given_key_deterministically() {
+        use ed25519_dalek::Verifier;
+        let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let (pk, sig) = sign_merkle_root(b"root-abc", &key);
+        // The pubkey is the given key's stable identity (not a throwaway), and
+        // Ed25519 is deterministic so re-signing the same data matches.
+        assert_eq!(pk, Some(hex::encode(key.verifying_key().to_bytes())));
+        let (_, sig2) = sign_merkle_root(b"root-abc", &key);
+        assert_eq!(sig, sig2);
+        let raw = hex::decode(sig.unwrap()).unwrap();
+        let signature = ed25519_dalek::Signature::from_slice(&raw).unwrap();
+        assert!(key.verifying_key().verify(b"root-abc", &signature).is_ok());
     }
 }

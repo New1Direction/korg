@@ -548,7 +548,10 @@ pub async fn build_campaign_dag(
     });
 
     // Speculative pre-warm (gated on capability)
-    let mut scheduler = crate::dag::SpeculativeScheduler::new(dag.clone());
+    let mut scheduler = crate::dag::SpeculativeScheduler::new(
+        dag.clone(),
+        crate::identity::load_or_create_identity(),
+    );
     let _ = scheduler.speculative_warm_boot().await;
     if let Some(tx) = tui_tx {
         let _ = tx.try_send(crate::tui_bridge::TuiUpdate::Trace(
