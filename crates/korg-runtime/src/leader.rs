@@ -106,10 +106,11 @@ impl LeaderOrchestrator {
         let telemetry_bb = Arc::new(Mutex::new(Blackboard::new(sid)));
         let (legacy_bb, base_snapshot) = Self::load_blackboard();
 
-        // Generate a fresh Ed25519 key for this campaign's .ktrans artifacts.
-        // In a real deployment this would be derived from a long-term operator key or HSM.
-        let mut rng = rand::rngs::OsRng;
-        let campaign_signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
+        // Persistent Ed25519 identity for this agent's .ktrans signatures, so they're
+        // attributable to the same key across campaigns instead of a throwaway per-run
+        // key. Fail-safe: falls back to an ephemeral key if the identity file can't be
+        // read or created (see `crate::identity`).
+        let campaign_signing_key = crate::identity::load_or_create_identity();
 
         let runtime_coordinator = Arc::new(crate::runtime::RuntimeCoordinator::new(sid, 4, 10, 3));
         let capability_resolver = Arc::new(tokio::sync::Mutex::new(
