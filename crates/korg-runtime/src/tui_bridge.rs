@@ -13,6 +13,25 @@ pub enum ContractResponse {
     Rewind(u64),
 }
 
+/// Lifecycle phase of a single worker, as a structured signal (not a display
+/// string). Emitted alongside the human-readable `TuiUpdate::Trace` lines so the
+/// operator TUI can build a live leader → worker tree from real state.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum WorkerLifecycle {
+    /// Worker is being spawned (process/handshake in flight).
+    Spawning,
+    /// Worker is actively running.
+    Running,
+    /// Worker completed successfully (or was self-healed).
+    Ok,
+    /// Worker process crashed — queued for recovery.
+    Crashed,
+    /// Worker exceeded the timeout budget.
+    TimedOut,
+    /// Worker failed to spawn at all.
+    SpawnError,
+}
+
 /// Events pushed by the LeaderOrchestrator to the live operator TUI.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum TuiUpdate {
@@ -59,4 +78,13 @@ pub enum TuiUpdate {
     },
     /// Runtime surfaced rewind options after a doom-loop / failure detection.
     RewindAvailable(Vec<crate::recovery::RewindCandidate>),
+    /// Structured worker-lifecycle signal feeding the live swarm tree. Emitted at
+    /// the same real lifecycle points as the worker `Trace` lines — never parsed
+    /// from a display string, never fabricated.
+    WorkerState {
+        node_id: String,
+        persona: String,
+        state: WorkerLifecycle,
+        elapsed_ms: u64,
+    },
 }

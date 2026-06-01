@@ -26,7 +26,18 @@ use syntect::parsing::SyntaxSet;
 // Wire types defined in korg-runtime so the orchestration layer can reference
 // them without depending on this module.
 pub use korg_runtime::recovery::{RewindCandidate, RewindScope};
-pub use korg_runtime::tui_bridge::{ContractResponse, TuiUpdate};
+pub use korg_runtime::tui_bridge::{ContractResponse, TuiUpdate, WorkerLifecycle};
+
+/// One row in the live swarm tree: a single worker's real, last-known lifecycle
+/// state. Rows are only ever created/updated from an emitted
+/// `TuiUpdate::WorkerState` — never seeded or fabricated.
+#[derive(Debug, Clone)]
+pub struct WorkerRow {
+    pub node_id: String,
+    pub persona: String,
+    pub state: WorkerLifecycle,
+    pub elapsed_ms: u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TuiTab {
@@ -230,6 +241,10 @@ pub struct KorgTui {
     pub rewind_mode: bool,
     pub rewind_cursor: usize,
     pub rewind_prompt: String,
+
+    // Live leader → worker tree (Swarm Console). Populated only from real
+    // `TuiUpdate::WorkerState` signals; defaults empty (never fabricated).
+    pub workers: Vec<WorkerRow>,
 }
 
 impl Default for KorgTui {
@@ -322,6 +337,9 @@ impl Default for KorgTui {
             rewind_mode: false,
             rewind_cursor: 0,
             rewind_prompt: String::new(),
+
+            // Live swarm tree starts empty — rows appear only from real signals.
+            workers: vec![],
         };
 
         app.rebuild_file_tree();
@@ -336,6 +354,32 @@ impl Default for KorgTui {
 }
 
 impl KorgTui {
+    /// Upsert a worker row in the live swarm tree from a real `WorkerState`
+    /// signal. If a row with this `node_id` already exists, its state/elapsed
+    /// (and persona) are replaced in place; otherwise a new row is pushed.
+    /// This is the only path that ever creates a worker row — rows are never
+    /// seeded or fabricated, so the tree reflects only emitted lifecycle events.
+    pub fn apply_worker_state(
+        &mut self,
+        node_id: String,
+        persona: String,
+        state: WorkerLifecycle,
+        elapsed_ms: u64,
+    ) {
+        if let Some(row) = self.workers.iter_mut().find(|r| r.node_id == node_id) {
+            row.persona = persona;
+            row.state = state;
+            row.elapsed_ms = elapsed_ms;
+        } else {
+            self.workers.push(WorkerRow {
+                node_id,
+                persona,
+                state,
+                elapsed_ms,
+            });
+        }
+    }
+
     pub fn save_current_tab_state(&mut self) {
         if let Some(idx) = self.active_tab_idx {
             if idx < self.open_tabs.len() {
@@ -2561,6 +2605,14 @@ async fn run_tui_event_loop(
                         "campaign failure detected — choose a recovery point".to_string();
                     app.rewind_mode = true;
                 }
+                TuiUpdate::WorkerState {
+                    node_id,
+                    persona,
+                    state,
+                    elapsed_ms,
+                } => {
+                    app.apply_worker_state(node_id, persona, state, elapsed_ms);
+                }
             }
         }
     }
@@ -2965,13 +3017,15 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let columns_layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(50), // Left: Chat
-                    Constraint::Percentage(50), // Right: Shell subprocess terminal
+                    Constraint::Percentage(38), // Left: Chat
+                    Constraint::Percentage(32), // Middle: Shell subprocess terminal
+                    Constraint::Percentage(30), // Right: live swarm tree
                 ])
                 .split(console_layout[0]);
 
             let chat_area = columns_layout[0];
             let term_area = columns_layout[1];
+            let tree_area = columns_layout[2];
             let input_area = console_layout[1];
 
             let height = chat_area.height as usize;
@@ -3096,6 +3150,89 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     )),
             );
             f.render_widget(term_block, term_area);
+
+            // ---- Live leader → worker tree (real WorkerState signals only) ----
+            let mut tree_lines: Vec<Line> = Vec::new();
+            // Root line = the leader, annotated with the expected worker count.
+            tree_lines.push(Line::from(vec![
+                Span::styled("● ", Style::default().fg(Color::Rgb(0, 180, 216)).bold()),
+                Span::styled(
+                    "leader",
+                    Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                ),
+                Span::styled(
+                    format!("  (expecting {} workers)", app.swarm_size),
+                    Style::default().fg(fg_slate),
+                ),
+            ]));
+
+            if app.workers.is_empty() {
+                tree_lines.push(Line::from(Span::styled(
+                    "  └─ no workers yet — awaiting live signals",
+                    Style::default().fg(fg_slate).italic(),
+                )));
+            } else {
+                let last_idx = app.workers.len() - 1;
+                for (i, w) in app.workers.iter().enumerate() {
+                    let branch = if i == last_idx { "  └─ " } else { "  ├─ " };
+                    let (glyph, glyph_color) = match w.state {
+                        WorkerLifecycle::Spawning => {
+                            ("\u{22ef}", Color::Rgb(128, 142, 162))
+                        } // ⋯
+                        WorkerLifecycle::Running => ("\u{25b8}", Color::Rgb(0, 180, 216)), // ▸
+                        WorkerLifecycle::Ok => ("\u{2713}", Color::Rgb(165, 222, 103)), // ✓
+                        WorkerLifecycle::Crashed => ("\u{2717}", Color::Rgb(247, 37, 133)), // ✗
+                        WorkerLifecycle::TimedOut => ("\u{23f1}", Color::Rgb(255, 198, 109)), // ⏱
+                        WorkerLifecycle::SpawnError => ("!", Color::Rgb(247, 37, 133)),
+                    };
+                    // Short node id: keep it compact in the narrow column.
+                    let short_id: String = if w.node_id.len() > 14 {
+                        format!("{}…", &w.node_id[..13])
+                    } else {
+                        w.node_id.clone()
+                    };
+                    let mut spans = vec![
+                        Span::styled(branch, Style::default().fg(fg_slate)),
+                        Span::styled(
+                            format!("{} ", glyph),
+                            Style::default().fg(glyph_color).bold(),
+                        ),
+                        Span::styled(
+                            format!("{} ", w.persona),
+                            Style::default().fg(Color::Rgb(255, 255, 255)),
+                        ),
+                        Span::styled(
+                            format!("[{}] ", short_id),
+                            Style::default().fg(fg_slate),
+                        ),
+                        Span::styled(
+                            format!("{}ms", w.elapsed_ms),
+                            Style::default().fg(Color::Rgb(180, 180, 180)),
+                        ),
+                    ];
+                    if matches!(
+                        w.state,
+                        WorkerLifecycle::Crashed | WorkerLifecycle::TimedOut
+                    ) {
+                        spans.push(Span::styled(
+                            "  queued for recovery",
+                            Style::default().fg(Color::Rgb(255, 198, 109)).italic(),
+                        ));
+                    }
+                    tree_lines.push(Line::from(spans));
+                }
+            }
+
+            let tree_widget = Paragraph::new(tree_lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(fg_slate))
+                    .title(Span::styled(
+                        " [ live swarm tree ] ",
+                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                    )),
+            );
+            f.render_widget(tree_widget, tree_area);
 
             let input_border = if app.focus == TuiFocus::AgentConsole {
                 Style::default().fg(Color::Rgb(0, 180, 216))
@@ -4498,6 +4635,63 @@ fn format_invalidation(invalidates: &[u64]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_apply_worker_state_upserts_by_node_id() {
+        let mut app = KorgTui::default();
+        // Real-signals-only invariant: tree starts empty.
+        assert!(app.workers.is_empty());
+
+        // First signal for a node creates a row.
+        app.apply_worker_state(
+            "pkg-benjamin".to_string(),
+            "Benjamin".to_string(),
+            WorkerLifecycle::Spawning,
+            0,
+        );
+        assert_eq!(app.workers.len(), 1);
+
+        // Second signal for the SAME node_id must UPDATE in place, not duplicate.
+        app.apply_worker_state(
+            "pkg-benjamin".to_string(),
+            "Benjamin".to_string(),
+            WorkerLifecycle::Ok,
+            4200,
+        );
+        assert_eq!(app.workers.len(), 1, "same node_id must not duplicate rows");
+        let row = &app.workers[0];
+        assert_eq!(row.node_id, "pkg-benjamin");
+        assert!(
+            matches!(row.state, WorkerLifecycle::Ok),
+            "latest state must win"
+        );
+        assert_eq!(row.elapsed_ms, 4200, "latest elapsed must win");
+
+        // A DIFFERENT node_id adds a second row.
+        app.apply_worker_state(
+            "pkg-harper".to_string(),
+            "Harper".to_string(),
+            WorkerLifecycle::Crashed,
+            999,
+        );
+        assert_eq!(app.workers.len(), 2, "distinct node_ids create distinct rows");
+
+        // The first row stays at its latest values; the new row carries its own.
+        let benjamin = app
+            .workers
+            .iter()
+            .find(|r| r.node_id == "pkg-benjamin")
+            .expect("benjamin row present");
+        assert!(matches!(benjamin.state, WorkerLifecycle::Ok));
+        assert_eq!(benjamin.elapsed_ms, 4200);
+        let harper = app
+            .workers
+            .iter()
+            .find(|r| r.node_id == "pkg-harper")
+            .expect("harper row present");
+        assert!(matches!(harper.state, WorkerLifecycle::Crashed));
+        assert_eq!(harper.elapsed_ms, 999);
+    }
 
     #[test]
     fn test_playhead_scrubbing_boundaries() {
