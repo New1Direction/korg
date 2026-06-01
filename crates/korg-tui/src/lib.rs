@@ -3126,6 +3126,60 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             f.render_widget(input_widget, input_area);
         }
         TuiTab::CampaignObservability => {
+            // Headline GOAL band (claimed-done vs verified-done) sits ABOVE the grid.
+            // Real signals only — derived purely from the live verdict + rubric status.
+            let obs_rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Top: goal verdict band
+                    Constraint::Min(0),    // Below: existing observability grid
+                ])
+                .split(grid_area);
+            let goal_band_area = obs_rows[0];
+            let grid_area = obs_rows[1];
+
+            // Derive state from the same fields TuiUpdate::Verdict writes — never claims.
+            let goal_state =
+                derive_goal_state(&app.current_verdict, &app.rubric_status, app.progress);
+            let met = app.rubric_status.iter().filter(|(_, passed)| *passed).count();
+            let total = app.rubric_status.len();
+            // Pill color: only Verified earns green; a claim with failing criteria is amber.
+            let pill_color = match goal_state {
+                GoalState::Awaiting => Color::Rgb(100, 110, 125), // dim grey
+                GoalState::InProgress => Color::Rgb(0, 180, 216),  // cyan
+                GoalState::ClaimedUnverified => Color::Rgb(255, 198, 109), // amber
+                GoalState::Verified => Color::Rgb(165, 222, 103), // green
+            };
+            let goal_line = Line::from(vec![
+                Span::styled(
+                    format!(" {} ", goal_state_label(&goal_state)),
+                    Style::default()
+                        .fg(Color::Rgb(13, 17, 23))
+                        .bg(pill_color)
+                        .bold(),
+                ),
+                Span::styled("   ", Style::default()),
+                Span::styled(
+                    format!("{}/{} criteria met", met, total),
+                    Style::default().fg(Color::Rgb(240, 240, 240)).bold(),
+                ),
+                Span::styled("   •   ", Style::default().fg(Color::Rgb(128, 142, 162))),
+                Span::styled(
+                    format!("{:.0}%", app.progress * 100.0),
+                    Style::default().fg(Color::Rgb(240, 240, 240)).bold(),
+                ),
+            ]);
+            let goal_band = Paragraph::new(goal_line).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Rgb(128, 142, 162)))
+                    .title(Span::styled(
+                        " [ goal: claimed-done vs verified-done ] ",
+                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                    )),
+            );
+            f.render_widget(goal_band, goal_band_area);
+
             // Grid Columns (Left vs Right)
             let grid_cols = Layout::default()
                 .direction(Direction::Horizontal)
@@ -4370,6 +4424,56 @@ fn scope_badge(scope: &RewindScope) -> &'static str {
     }
 }
 
+/// Lifecycle of a goal as seen by the observability layer.
+///
+/// The honesty contract: a goal is only `Verified` when the acceptance
+/// criteria actually pass. A worker or leader merely *claiming* completion —
+/// no matter what the verdict text says — never advances past
+/// `ClaimedUnverified` while any criterion is still failing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoalState {
+    /// No evaluation has happened yet (no criteria, still waiting).
+    Awaiting,
+    /// Work is underway but no acceptance criteria are recorded yet.
+    InProgress,
+    /// Criteria exist and at least one is failing — completion is claimed
+    /// (or in progress) but NOT verified. This is the key honesty case.
+    ClaimedUnverified,
+    /// Every recorded acceptance criterion passes — genuinely done.
+    Verified,
+}
+
+/// Derive the goal state from real evaluation signals only.
+///
+/// Inputs map directly to `KorgTui` fields set by `TuiUpdate::Verdict`:
+/// `current_verdict`, `rubric_status`, `progress`. Nothing is fabricated.
+fn derive_goal_state(verdict: &str, rubrics: &[(String, bool)], _progress: f32) -> GoalState {
+    if rubrics.is_empty() {
+        // Nothing evaluated yet. Distinguish "haven't started" from "running".
+        if verdict.contains("Waiting") {
+            return GoalState::Awaiting;
+        }
+        return GoalState::InProgress;
+    }
+    // Criteria exist: verification is purely "do they ALL pass?".
+    // Verdict text is deliberately ignored here — claims don't count.
+    if rubrics.iter().all(|(_, passed)| *passed) {
+        GoalState::Verified
+    } else {
+        GoalState::ClaimedUnverified
+    }
+}
+
+/// Human-readable label for a `GoalState`.
+fn goal_state_label(s: &GoalState) -> &'static str {
+    match s {
+        GoalState::Awaiting => "Awaiting first round",
+        GoalState::InProgress => "In progress",
+        GoalState::ClaimedUnverified => "Claimed — not verified",
+        GoalState::Verified => "Verified",
+    }
+}
+
 /// Human "what will this rewind throw away" line for the invalidation preview.
 ///
 /// Built purely from the candidate's real `invalidates` seq_ids — never a guess:
@@ -4518,6 +4622,54 @@ mod tests {
     fn test_scope_badge_labels() {
         assert_eq!(scope_badge(&RewindScope::LocalUndo), "Surgical");
         assert_eq!(scope_badge(&RewindScope::StrategicReset), "Strategic");
+    }
+
+    #[test]
+    fn test_derive_goal_state_awaiting_when_empty_and_waiting() {
+        // Default startup signals: no criteria, verdict still "Waiting...".
+        let s = derive_goal_state("Waiting for first evaluation...", &[], 0.0);
+        assert_eq!(s, GoalState::Awaiting);
+    }
+
+    #[test]
+    fn test_derive_goal_state_in_progress_when_empty_but_not_waiting() {
+        // Running, but the evaluator hasn't recorded any criteria yet.
+        let s = derive_goal_state("Generating patch", &[], 0.4);
+        assert_eq!(s, GoalState::InProgress);
+    }
+
+    #[test]
+    fn test_derive_goal_state_verified_when_all_rubrics_pass() {
+        // Every acceptance criterion passes -> genuinely done.
+        let rubrics = vec![
+            ("compiles".to_string(), true),
+            ("tests pass".to_string(), true),
+        ];
+        let s = derive_goal_state("complete", &rubrics, 1.0);
+        assert_eq!(s, GoalState::Verified);
+    }
+
+    #[test]
+    fn test_derive_goal_state_claimed_unverified_when_any_rubric_fails() {
+        // The honesty rule: even a verdict that LOUDLY claims completion must
+        // NOT read as Verified while any criterion is still failing.
+        let rubrics = vec![
+            ("compiles".to_string(), true),
+            ("tests pass".to_string(), false),
+        ];
+        let s = derive_goal_state("DONE — all acceptance criteria met", &rubrics, 1.0);
+        assert_eq!(s, GoalState::ClaimedUnverified);
+    }
+
+    #[test]
+    fn test_goal_state_label_strings() {
+        assert_eq!(goal_state_label(&GoalState::Awaiting), "Awaiting first round");
+        assert_eq!(goal_state_label(&GoalState::InProgress), "In progress");
+        assert_eq!(
+            goal_state_label(&GoalState::ClaimedUnverified),
+            "Claimed — not verified"
+        );
+        assert_eq!(goal_state_label(&GoalState::Verified), "Verified");
     }
 
     #[test]
