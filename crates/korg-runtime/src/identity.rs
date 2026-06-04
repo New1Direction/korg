@@ -97,6 +97,10 @@ mod tests {
         load_or_create_identity_at(&path).unwrap();
         assert!(path.exists(), "the key file must be created");
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600, "the private key file must be mode 0o600");
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "the private key file must be mode 0o600"
+        );
     }
 }

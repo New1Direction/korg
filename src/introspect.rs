@@ -480,7 +480,11 @@ mod tests {
         let codes = exit_codes();
         assert_eq!(codes.get("0").map(|s| s.as_str()), Some("success"));
         for key in codes.keys() {
-            assert!(key.parse::<u32>().is_ok(), "non-numeric exit-code key: {}", key);
+            assert!(
+                key.parse::<u32>().is_ok(),
+                "non-numeric exit-code key: {}",
+                key
+            );
         }
     }
 
