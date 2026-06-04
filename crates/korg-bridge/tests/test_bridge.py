@@ -27,7 +27,7 @@ def _read_events(journal_path: Path) -> list[dict]:
 
 
 def test_module_version_present():
-    assert korg_bridge.__version__ == "0.3.2"
+    assert korg_bridge.__version__ == "0.3.3"
 
 
 def test_record_llm_call_assistant_text_optional(tmp_journal):
@@ -57,6 +57,60 @@ def test_record_llm_call_assistant_text_optional(tmp_journal):
         "completion_tokens": 8,
         "text": "here is what the model said",
     }
+
+
+def test_record_llm_call_cache_breakdown(tmp_journal):
+    """v0.3.3: the prompt-cache breakdown lands on the event args when caching is
+    active, so a cache hit is provable from the bridge-written journal too — parity
+    with the local-journal and HTTP transports."""
+    bridge = korg_bridge.Bridge(str(tmp_journal))
+    # 1. cold turn (no cache) → legacy two-field args, byte-identical to before
+    bridge.record_llm_call(
+        model="claude-sonnet-4-6",
+        prompt_tokens=500,
+        completion_tokens=5,
+        duration_ms=100,
+        triggered_by=None,
+    )
+    # 2. warm turn → disjoint breakdown folded in
+    bridge.record_llm_call(
+        model="claude-sonnet-4-6",
+        prompt_tokens=400,
+        completion_tokens=8,
+        duration_ms=120,
+        triggered_by=1,
+        cache_read_tokens=800,
+        cache_creation_tokens=50,
+        uncached_input_tokens=400,
+    )
+    events = _read_events(tmp_journal)
+    assert events[0]["event"]["args"] == {"model": "claude-sonnet-4-6", "prompt_tokens": 500}
+    assert events[1]["event"]["args"] == {
+        "model": "claude-sonnet-4-6",
+        "prompt_tokens": 400,
+        "cache_read_tokens": 800,
+        "cache_creation_tokens": 50,
+        "uncached_input_tokens": 400,
+    }
+
+
+def test_record_llm_call_cache_creation_only(tmp_journal):
+    """A cold turn that WRITES the cache (creation>0, read==0) is still a cache
+    event — the breakdown is recorded."""
+    bridge = korg_bridge.Bridge(str(tmp_journal))
+    bridge.record_llm_call(
+        model="claude-sonnet-4-6",
+        prompt_tokens=1000,
+        completion_tokens=8,
+        duration_ms=120,
+        triggered_by=None,
+        cache_read_tokens=0,
+        cache_creation_tokens=1000,
+        uncached_input_tokens=1000,
+    )
+    events = _read_events(tmp_journal)
+    assert events[0]["event"]["args"]["cache_creation_tokens"] == 1000
+    assert events[0]["event"]["args"]["uncached_input_tokens"] == 1000
 
 
 def test_repr_initial_state(tmp_journal):

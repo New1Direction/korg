@@ -136,6 +136,11 @@ impl Bridge {
     /// consumers (search, audit, replay) can find it. Token counts stay in
     /// the same places as before. Callers responsible for content-addressing
     /// large replies — the bridge writes whatever text it's given.
+    ///
+    /// v0.3.3: optional prompt-cache breakdown (`cache_read_tokens` /
+    /// `cache_creation_tokens` / `uncached_input_tokens`). Folded onto `args`
+    /// only when caching is active, so a cache hit is provable from the
+    /// bridge-written journal too. A cold turn keeps the legacy `args` shape.
     #[pyo3(signature = (
         model,
         prompt_tokens,
@@ -144,6 +149,9 @@ impl Bridge {
         triggered_by,
         source_agent = "agent:korgex@0.3.0",
         assistant_text = None,
+        cache_read_tokens = 0,
+        cache_creation_tokens = 0,
+        uncached_input_tokens = None,
     ))]
     fn record_llm_call(
         &self,
@@ -154,11 +162,39 @@ impl Bridge {
         triggered_by: Option<u64>,
         source_agent: &str,
         assistant_text: Option<&str>,
+        cache_read_tokens: u64,
+        cache_creation_tokens: u64,
+        uncached_input_tokens: Option<u64>,
     ) -> PyResult<u64> {
-        let args = serde_json::json!({
-            "model": model,
-            "prompt_tokens": prompt_tokens,
-        });
+        // Prompt-cache breakdown — mirrors src/korg_ledger.py::_llm_call_args so the
+        // bridge transport carries the same provable cache data as the local-journal
+        // and HTTP paths. Folded in ONLY when caching is active (a read or a write
+        // happened); a cold turn keeps the legacy two-field shape, so older readers
+        // and the hash-chain over historical events are undisturbed. Field order is
+        // irrelevant — args are canonicalised with sorted keys at hash time.
+        let mut args_map = serde_json::Map::new();
+        args_map.insert("model".to_string(), serde_json::Value::from(model));
+        args_map.insert(
+            "prompt_tokens".to_string(),
+            serde_json::Value::from(prompt_tokens),
+        );
+        if cache_read_tokens != 0 || cache_creation_tokens != 0 {
+            args_map.insert(
+                "cache_read_tokens".to_string(),
+                serde_json::Value::from(cache_read_tokens),
+            );
+            args_map.insert(
+                "cache_creation_tokens".to_string(),
+                serde_json::Value::from(cache_creation_tokens),
+            );
+            if let Some(uncached) = uncached_input_tokens {
+                args_map.insert(
+                    "uncached_input_tokens".to_string(),
+                    serde_json::Value::from(uncached),
+                );
+            }
+        }
+        let args = serde_json::Value::Object(args_map);
         // result carries completion_tokens + (since v0.3.2) optional text.
         // Keep the field name "text" — short, obvious, and matches what a
         // future content-addressed variant would also use as a key.
