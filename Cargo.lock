@@ -2209,6 +2209,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "korg-verify"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "hex",
+ "korg-registry",
+ "serde_json",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
