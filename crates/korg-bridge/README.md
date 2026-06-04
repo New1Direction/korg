@@ -17,6 +17,12 @@ byte-for-byte under both `korg_registry::ledger_chain::verify_chain` (Rust) and
 korgex's `src/ledger_spec.verify_chain` (Python): the two ledger paths
 (korgchat-via-bridge, korgex) collapse onto one chained substrate.
 
+`record_llm_call` also carries an optional prompt-cache breakdown
+(`cache_read_tokens` / `cache_creation_tokens` / `uncached_input_tokens`), folded
+onto the event `args` only when caching is active — so a cache hit is provable
+from the journal too, at parity with korgex's local-journal and HTTP transports.
+A cold turn keeps the legacy two-field `args`.
+
 Build the wheel and verify:
 
 ```bash

@@ -34,6 +34,13 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [bridge-v0.3.3] — 2026-06-04
+
+### Added
+- `record_llm_call` accepts the optional prompt-cache breakdown (`cache_read_tokens` / `cache_creation_tokens` / `uncached_input_tokens`) and folds it onto the event `args` — but only when caching is active. A prompt-cache hit is now provable from a bridge-written journal too, at parity with korgex's local-journal and HTTP transports. A cold turn keeps the legacy two-field `args`, so older readers and the hash-chain over historical events are undisturbed (field order is irrelevant — `args` canonicalize with sorted keys at hash time).
+
+---
+
 ## [bridge-v0.3.2] — 2026-05-27
 
 ### Added
@@ -117,3 +124,4 @@ See [ROADMAP.md](ROADMAP.md) for planned features.
 [bridge-v0.3.0]: https://github.com/New1Direction/korg/releases/tag/bridge-v0.3.0
 [bridge-v0.3.1]: https://github.com/New1Direction/korg/releases/tag/bridge-v0.3.1
 [bridge-v0.3.2]: https://github.com/New1Direction/korg/releases/tag/bridge-v0.3.2
+[bridge-v0.3.3]: https://github.com/New1Direction/korg/releases/tag/bridge-v0.3.3
