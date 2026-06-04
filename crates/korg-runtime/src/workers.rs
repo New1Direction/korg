@@ -153,6 +153,9 @@ pub async fn dispatch_level(
         }
     }
 
+    // Per-node spawn timestamps so the worker-lifecycle signal carries REAL elapsed.
+    let mut spawn_instants: HashMap<String, std::time::Instant> = HashMap::new();
+
     // Spawn all workers concurrently — each gets a workspace from the manager
     for node_id in level_node_ids {
         let pkg = match packages_map.get(node_id) {
@@ -172,6 +175,18 @@ pub async fn dispatch_level(
                 tracing::warn!(workspace_id = %ws_id, node_id = %node_id, error = %e,
                     "workspace_attach_failed_continuing");
             }
+        }
+
+        // Real lifecycle point: this worker is now being spawned. Emit the
+        // structured signal (feeds the live swarm tree) and stamp its start.
+        spawn_instants.insert(node_id.clone(), std::time::Instant::now());
+        if let Some(ref tx) = tui_tx {
+            let _ = tx.try_send(crate::tui_bridge::TuiUpdate::WorkerState {
+                node_id: node_id.clone(),
+                persona: pkg.persona.name().to_string(),
+                state: crate::tui_bridge::WorkerLifecycle::Spawning,
+                elapsed_ms: 0,
+            });
         }
 
         let bb = bb.clone();
@@ -331,6 +346,31 @@ pub async fn dispatch_level(
                                 WorkerOutcome::SpawnError(e) => format!("  [✗] {} spawn error: {}", slot.node_id, e),
                             };
                             let _ = tx.try_send(crate::tui_bridge::TuiUpdate::Trace(msg));
+
+                            // Same real lifecycle point: emit the structured signal
+                            // for the live swarm tree, with REAL elapsed since spawn.
+                            let state = match &slot.result {
+                                WorkerOutcome::Ok(_) => crate::tui_bridge::WorkerLifecycle::Ok,
+                                WorkerOutcome::Crashed(_) => {
+                                    crate::tui_bridge::WorkerLifecycle::Crashed
+                                }
+                                WorkerOutcome::TimedOut => {
+                                    crate::tui_bridge::WorkerLifecycle::TimedOut
+                                }
+                                WorkerOutcome::SpawnError(_) => {
+                                    crate::tui_bridge::WorkerLifecycle::SpawnError
+                                }
+                            };
+                            let elapsed_ms = spawn_instants
+                                .get(&slot.node_id)
+                                .map(|t| t.elapsed().as_millis() as u64)
+                                .unwrap_or(0);
+                            let _ = tx.try_send(crate::tui_bridge::TuiUpdate::WorkerState {
+                                node_id: slot.node_id.clone(),
+                                persona: slot.persona.name().to_string(),
+                                state,
+                                elapsed_ms,
+                            });
                         }
 
                         match slot.result {
