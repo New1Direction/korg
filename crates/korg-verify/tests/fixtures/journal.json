@@ -1,0 +1,35 @@
+[
+  {
+    "schema_version": "1.0",
+    "seq_id": 1,
+    "source_agent": "agent:korgex@0.14.1",
+    "tool_name": "user_prompt",
+    "args": {
+      "prompt": "add a healthz endpoint"
+    },
+    "result": {},
+    "payload_refs": [],
+    "success": true,
+    "duration_ms": 0,
+    "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "entry_hash": "923fb23bf6811fbb0d3b4e029a003f6b9000b14b963d88a1d32bee36fe94cdcb"
+  },
+  {
+    "schema_version": "1.0",
+    "seq_id": 2,
+    "source_agent": "agent:korgex@0.14.1",
+    "tool_name": "Edit",
+    "args": {
+      "file_path": "src/app.py"
+    },
+    "result": {
+      "ok": true
+    },
+    "payload_refs": [],
+    "success": true,
+    "duration_ms": 5,
+    "triggered_by": 1,
+    "prev_hash": "923fb23bf6811fbb0d3b4e029a003f6b9000b14b963d88a1d32bee36fe94cdcb",
+    "entry_hash": "5363cf88c69b48e7f401c7086dfd1acf05846a8d4968301df4e60beba119e473"
+  }
+]
