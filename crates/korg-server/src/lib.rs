@@ -2862,14 +2862,23 @@ mod tests {
         // 0.0.0.0, which exposed the (mostly unauthenticated) control + telemetry
         // routes to the whole local network.
         let addr = resolve_bind_addr(None);
-        assert!(addr.starts_with("127.0.0.1"), "default must be loopback, got {addr}");
-        assert!(!addr.starts_with("0.0.0.0"), "default must not bind all interfaces");
+        assert!(
+            addr.starts_with("127.0.0.1"),
+            "default must be loopback, got {addr}"
+        );
+        assert!(
+            !addr.starts_with("0.0.0.0"),
+            "default must not bind all interfaces"
+        );
     }
 
     #[test]
     fn bind_addr_honors_explicit_override() {
         // Intentional network exposure stays possible, but only by explicit opt-in.
-        assert_eq!(resolve_bind_addr(Some("0.0.0.0:9000".into())), "0.0.0.0:9000");
+        assert_eq!(
+            resolve_bind_addr(Some("0.0.0.0:9000".into())),
+            "0.0.0.0:9000"
+        );
     }
 
     #[tokio::test]

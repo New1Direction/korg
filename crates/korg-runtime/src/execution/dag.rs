@@ -493,7 +493,10 @@ mod tests {
     #[tokio::test]
     async fn run_command_reflects_real_exit_status() {
         assert!(run_command("true").await, "`true` exits 0 → success");
-        assert!(!run_command("false").await, "`false` exits non-zero → failure");
+        assert!(
+            !run_command("false").await,
+            "`false` exits non-zero → failure"
+        );
     }
 
     #[tokio::test]
@@ -522,7 +525,10 @@ mod tests {
         let key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
         let mut scheduler = SpeculativeScheduler::new(dag, key);
         let summary = scheduler.run(None).await.unwrap();
-        assert!(!summary.overall_success, "a real non-zero exit must fail the DAG");
+        assert!(
+            !summary.overall_success,
+            "a real non-zero exit must fail the DAG"
+        );
     }
 
     #[test]
