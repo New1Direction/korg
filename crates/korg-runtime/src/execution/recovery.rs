@@ -459,7 +459,10 @@ mod tests {
         // Without compiler stderr + a worktree path there is nothing real to
         // repair, so heal_node must report that honestly — no fake "healed".
         let healed = heal_node("thump test --fail", Some(tx)).await.unwrap();
-        assert!(!healed, "heal_node with no error/worktree context cannot heal");
+        assert!(
+            !healed,
+            "heal_node with no error/worktree context cannot heal"
+        );
         let mut logs = Vec::new();
         while let Ok(log) = rx.try_recv() {
             logs.push(log);

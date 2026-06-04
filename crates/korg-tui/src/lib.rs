@@ -1710,21 +1710,40 @@ async fn run_tui_event_loop(
                                     // Reset the working tree to HEAD.
                                     let terminal_tx_clone = terminal_tx.clone();
                                     tokio::spawn(async move {
-                                        let _ = terminal_tx_clone.send("[System] Resetting working tree to HEAD...".to_string()).await;
+                                        let _ = terminal_tx_clone
+                                            .send(
+                                                "[System] Resetting working tree to HEAD..."
+                                                    .to_string(),
+                                            )
+                                            .await;
                                         let output = tokio::process::Command::new("git")
                                             .args(["read-tree", "--reset", "-u", "HEAD"])
                                             .output()
                                             .await;
                                         match output {
                                             Ok(out) if out.status.success() => {
-                                                let _ = terminal_tx_clone.send("[System] Working tree reset to HEAD.".to_string()).await;
+                                                let _ = terminal_tx_clone
+                                                    .send(
+                                                        "[System] Working tree reset to HEAD."
+                                                            .to_string(),
+                                                    )
+                                                    .await;
                                             }
                                             Ok(out) => {
                                                 let err = String::from_utf8_lossy(&out.stderr);
-                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {}", err.trim())).await;
+                                                let _ = terminal_tx_clone
+                                                    .send(format!(
+                                                        "[System] git reversion failed: {}",
+                                                        err.trim()
+                                                    ))
+                                                    .await;
                                             }
                                             Err(e) => {
-                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {e}")).await;
+                                                let _ = terminal_tx_clone
+                                                    .send(format!(
+                                                        "[System] git reversion failed: {e}"
+                                                    ))
+                                                    .await;
                                             }
                                         }
                                     });
@@ -2448,21 +2467,40 @@ async fn run_tui_event_loop(
 
                                     let terminal_tx_clone = terminal_tx.clone();
                                     tokio::spawn(async move {
-                                        let _ = terminal_tx_clone.send("[System] Resetting working tree to HEAD...".to_string()).await;
+                                        let _ = terminal_tx_clone
+                                            .send(
+                                                "[System] Resetting working tree to HEAD..."
+                                                    .to_string(),
+                                            )
+                                            .await;
                                         let output = tokio::process::Command::new("git")
                                             .args(["read-tree", "--reset", "-u", "HEAD"])
                                             .output()
                                             .await;
                                         match output {
                                             Ok(out) if out.status.success() => {
-                                                let _ = terminal_tx_clone.send("[System] Working tree reset to HEAD.".to_string()).await;
+                                                let _ = terminal_tx_clone
+                                                    .send(
+                                                        "[System] Working tree reset to HEAD."
+                                                            .to_string(),
+                                                    )
+                                                    .await;
                                             }
                                             Ok(out) => {
                                                 let err = String::from_utf8_lossy(&out.stderr);
-                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {}", err.trim())).await;
+                                                let _ = terminal_tx_clone
+                                                    .send(format!(
+                                                        "[System] git reversion failed: {}",
+                                                        err.trim()
+                                                    ))
+                                                    .await;
                                             }
                                             Err(e) => {
-                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {e}")).await;
+                                                let _ = terminal_tx_clone
+                                                    .send(format!(
+                                                        "[System] git reversion failed: {e}"
+                                                    ))
+                                                    .await;
                                             }
                                         }
                                     });
@@ -3174,14 +3212,16 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             } else {
                 let last_idx = app.workers.len() - 1;
                 for (i, w) in app.workers.iter().enumerate() {
-                    let branch = if i == last_idx { "  └─ " } else { "  ├─ " };
+                    let branch = if i == last_idx {
+                        "  └─ "
+                    } else {
+                        "  ├─ "
+                    };
                     let (glyph, glyph_color) = match w.state {
-                        WorkerLifecycle::Spawning => {
-                            ("\u{22ef}", Color::Rgb(128, 142, 162))
-                        } // ⋯
-                        WorkerLifecycle::Running => ("\u{25b8}", Color::Rgb(0, 180, 216)), // ▸
-                        WorkerLifecycle::Ok => ("\u{2713}", Color::Rgb(165, 222, 103)), // ✓
-                        WorkerLifecycle::Crashed => ("\u{2717}", Color::Rgb(247, 37, 133)), // ✗
+                        WorkerLifecycle::Spawning => ("\u{22ef}", Color::Rgb(128, 142, 162)), // ⋯
+                        WorkerLifecycle::Running => ("\u{25b8}", Color::Rgb(0, 180, 216)),    // ▸
+                        WorkerLifecycle::Ok => ("\u{2713}", Color::Rgb(165, 222, 103)),       // ✓
+                        WorkerLifecycle::Crashed => ("\u{2717}", Color::Rgb(247, 37, 133)),   // ✗
                         WorkerLifecycle::TimedOut => ("\u{23f1}", Color::Rgb(255, 198, 109)), // ⏱
                         WorkerLifecycle::SpawnError => ("!", Color::Rgb(247, 37, 133)),
                     };
@@ -3201,10 +3241,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                             format!("{} ", w.persona),
                             Style::default().fg(Color::Rgb(255, 255, 255)),
                         ),
-                        Span::styled(
-                            format!("[{}] ", short_id),
-                            Style::default().fg(fg_slate),
-                        ),
+                        Span::styled(format!("[{}] ", short_id), Style::default().fg(fg_slate)),
                         Span::styled(
                             format!("{}ms", w.elapsed_ms),
                             Style::default().fg(Color::Rgb(180, 180, 180)),
@@ -3278,12 +3315,16 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             // Derive state from the same fields TuiUpdate::Verdict writes — never claims.
             let goal_state =
                 derive_goal_state(&app.current_verdict, &app.rubric_status, app.progress);
-            let met = app.rubric_status.iter().filter(|(_, passed)| *passed).count();
+            let met = app
+                .rubric_status
+                .iter()
+                .filter(|(_, passed)| *passed)
+                .count();
             let total = app.rubric_status.len();
             // Pill color: only Verified earns green; a claim with failing criteria is amber.
             let pill_color = match goal_state {
                 GoalState::Awaiting => Color::Rgb(100, 110, 125), // dim grey
-                GoalState::InProgress => Color::Rgb(0, 180, 216),  // cyan
+                GoalState::InProgress => Color::Rgb(0, 180, 216), // cyan
                 GoalState::ClaimedUnverified => Color::Rgb(255, 198, 109), // amber
                 GoalState::Verified => Color::Rgb(165, 222, 103), // green
             };
@@ -4674,7 +4715,11 @@ mod tests {
             WorkerLifecycle::Crashed,
             999,
         );
-        assert_eq!(app.workers.len(), 2, "distinct node_ids create distinct rows");
+        assert_eq!(
+            app.workers.len(),
+            2,
+            "distinct node_ids create distinct rows"
+        );
 
         // The first row stays at its latest values; the new row carries its own.
         let benjamin = app
@@ -4857,7 +4902,10 @@ mod tests {
 
     #[test]
     fn test_goal_state_label_strings() {
-        assert_eq!(goal_state_label(&GoalState::Awaiting), "Awaiting first round");
+        assert_eq!(
+            goal_state_label(&GoalState::Awaiting),
+            "Awaiting first round"
+        );
         assert_eq!(goal_state_label(&GoalState::InProgress), "In progress");
         assert_eq!(
             goal_state_label(&GoalState::ClaimedUnverified),
