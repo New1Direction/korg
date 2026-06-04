@@ -2091,6 +2091,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "korg-ledger"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "korg-llm"
 version = "0.1.0"
 dependencies = [
@@ -2120,6 +2129,7 @@ dependencies = [
  "fs2",
  "hmac",
  "korg-core",
+ "korg-ledger",
  "serde",
  "serde_json",
  "sha2",
@@ -2214,7 +2224,7 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
- "korg-registry",
+ "korg-ledger",
  "serde_json",
 ]
 

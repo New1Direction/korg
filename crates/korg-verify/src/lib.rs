@@ -1,7 +1,7 @@
 //! korg-verify — an independent, dependency-light verifier for korg receipts and
 //! journals.
 //!
-//! It reuses the conformance-tested chain primitives in `korg-registry`
+//! It reuses the conformance-tested chain primitives in `korg-ledger`
 //! (`canonicalize` / `chain_hash` / `verify_chain` / `verify_dag` — proven
 //! byte-identical to the Python and JS implementations against the frozen
 //! korg-ledger@v1 vectors) and adds the receipt envelope plus the Ed25519
@@ -15,7 +15,7 @@
 //! that the key maps to a real-world identity (the relying party pins that — see
 //! `--pubkey`).
 
-use korg_registry::ledger_chain::{verify_chain, verify_dag};
+use korg_ledger::{verify_chain, verify_dag};
 use serde_json::Value;
 
 /// The outcome of verifying a receipt or journal. `valid` is the conjunction of every
