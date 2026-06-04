@@ -26,7 +26,18 @@ use syntect::parsing::SyntaxSet;
 // Wire types defined in korg-runtime so the orchestration layer can reference
 // them without depending on this module.
 pub use korg_runtime::recovery::{RewindCandidate, RewindScope};
-pub use korg_runtime::tui_bridge::{ContractResponse, TuiUpdate};
+pub use korg_runtime::tui_bridge::{ContractResponse, TuiUpdate, WorkerLifecycle};
+
+/// One row in the live swarm tree: a single worker's real, last-known lifecycle
+/// state. Rows are only ever created/updated from an emitted
+/// `TuiUpdate::WorkerState` — never seeded or fabricated.
+#[derive(Debug, Clone)]
+pub struct WorkerRow {
+    pub node_id: String,
+    pub persona: String,
+    pub state: WorkerLifecycle,
+    pub elapsed_ms: u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TuiTab {
@@ -71,6 +82,33 @@ pub struct GitCommit {
     pub author: String,
     pub date: String,
     pub message: String,
+}
+
+/// Parse `git log` output where each line is
+/// `hash\u{1f}author\u{1f}date\u{1f}subject` (unit-separator delimited).
+///
+/// Lines missing any of the four fields, or with an empty hash, are skipped.
+/// Empty or garbage input yields an empty `Vec` — this NEVER fabricates commits.
+fn parse_git_log(output: &str) -> Vec<GitCommit> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\u{1f}');
+            let hash = parts.next()?;
+            let author = parts.next()?;
+            let date = parts.next()?;
+            let message = parts.next()?;
+            if hash.is_empty() {
+                return None;
+            }
+            Some(GitCommit {
+                hash: hash.to_string(),
+                author: author.to_string(),
+                date: date.to_string(),
+                message: message.to_string(),
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,6 +241,10 @@ pub struct KorgTui {
     pub rewind_mode: bool,
     pub rewind_cursor: usize,
     pub rewind_prompt: String,
+
+    // Live leader → worker tree (Swarm Console). Populated only from real
+    // `TuiUpdate::WorkerState` signals; defaults empty (never fabricated).
+    pub workers: Vec<WorkerRow>,
 }
 
 impl Default for KorgTui {
@@ -212,16 +254,10 @@ impl Default for KorgTui {
             command_palette_input: String::new(),
             command_palette_selected_idx: 0,
             swarm_size: 4,
-            h_sem: 0.42,
-            h_sem_history: vec![42, 43, 41, 44, 45, 42, 40, 43, 46, 42],
+            h_sem: 0.0,
+            h_sem_history: vec![],
             current_verdict: "Waiting for first evaluation...".to_string(),
-            rubric_status: vec![
-                ("Trajectory Efficiency".to_string(), true),
-                ("Epistemic Integrity".to_string(), true),
-                ("Tool-Use Precision".to_string(), false),
-                ("Semantic Adherence".to_string(), true),
-                ("Resource Utilization".to_string(), true),
-            ],
+            rubric_status: vec![],
             arena_history: vec!["Round 0: No winner yet".to_string()],
             trace_events: vec!["No TraceEvents yet".to_string()],
             ktrans_log: vec!["No .ktrans yet".to_string()],
@@ -237,49 +273,24 @@ impl Default for KorgTui {
             feedback_tx: None,
 
             // Enriched health defaults
-            velocity: 85.0,
-            risk: 0.35,
+            velocity: 0.0,
+            risk: 0.0,
             progress: 0.0,
             doom_prob: 0.0,
 
             // Enriched telemetry defaults
-            persona_scores: [0.92, 0.87, 0.83, 0.89],
+            persona_scores: [0.0, 0.0, 0.0, 0.0],
             telemetry_merges: 0,
-            crdt_sync_frequency: 1.2,
+            crdt_sync_frequency: 0.0,
             conflicts_count: 0,
-            provenance_chain_length: 1,
-            lock_states: vec![
-                (
-                    "Captain".to_string(),
-                    "READ".to_string(),
-                    "0.15ms".to_string(),
-                    "Active".to_string(),
-                ),
-                (
-                    "Harper".to_string(),
-                    "IDLE".to_string(),
-                    "-".to_string(),
-                    "Idle".to_string(),
-                ),
-                (
-                    "Benjamin".to_string(),
-                    "IDLE".to_string(),
-                    "-".to_string(),
-                    "Idle".to_string(),
-                ),
-                (
-                    "Lucas".to_string(),
-                    "IDLE".to_string(),
-                    "-".to_string(),
-                    "Idle".to_string(),
-                ),
-            ],
+            provenance_chain_length: 0,
+            lock_states: vec![],
 
             // Persona sparkline histories
-            captain_score_history: vec![92, 91, 93, 92, 94, 93, 92, 92, 93, 92],
-            harper_score_history: vec![87, 86, 88, 87, 89, 87, 86, 87, 88, 87],
-            benjamin_score_history: vec![83, 82, 84, 83, 85, 83, 82, 83, 84, 83],
-            lucas_score_history: vec![89, 88, 90, 89, 91, 89, 88, 89, 90, 89],
+            captain_score_history: vec![],
+            harper_score_history: vec![],
+            benjamin_score_history: vec![],
+            lucas_score_history: vec![],
 
             playhead: 0,
             fork_modal_open: false,
@@ -326,6 +337,9 @@ impl Default for KorgTui {
             rewind_mode: false,
             rewind_cursor: 0,
             rewind_prompt: String::new(),
+
+            // Live swarm tree starts empty — rows appear only from real signals.
+            workers: vec![],
         };
 
         app.rebuild_file_tree();
@@ -340,6 +354,32 @@ impl Default for KorgTui {
 }
 
 impl KorgTui {
+    /// Upsert a worker row in the live swarm tree from a real `WorkerState`
+    /// signal. If a row with this `node_id` already exists, its state/elapsed
+    /// (and persona) are replaced in place; otherwise a new row is pushed.
+    /// This is the only path that ever creates a worker row — rows are never
+    /// seeded or fabricated, so the tree reflects only emitted lifecycle events.
+    pub fn apply_worker_state(
+        &mut self,
+        node_id: String,
+        persona: String,
+        state: WorkerLifecycle,
+        elapsed_ms: u64,
+    ) {
+        if let Some(row) = self.workers.iter_mut().find(|r| r.node_id == node_id) {
+            row.persona = persona;
+            row.state = state;
+            row.elapsed_ms = elapsed_ms;
+        } else {
+            self.workers.push(WorkerRow {
+                node_id,
+                persona,
+                state,
+                elapsed_ms,
+            });
+        }
+    }
+
     pub fn save_current_tab_state(&mut self) {
         if let Some(idx) = self.active_tab_idx {
             if idx < self.open_tabs.len() {
@@ -681,48 +721,30 @@ impl KorgTui {
         }
     }
 
+    /// Load recent git commits into the ledger view.
+    ///
+    /// Reads real `git log` metadata (hash, author, date, subject). On any
+    /// failure — non-zero exit, no git, or empty output — the ledger is left
+    /// empty rather than fabricating commits.
     pub fn load_git_commits(&mut self) {
-        let mut commits = vec![];
         let output = std::process::Command::new("git")
-            .args(&["log", "--oneline", "-n", "20"])
+            .args([
+                "log",
+                "--pretty=format:%h\u{1f}%an\u{1f}%ad\u{1f}%s",
+                "--date=short",
+                "-n",
+                "20",
+            ])
             .output();
-        if let Ok(out) = output {
-            if out.status.success() {
+        match output {
+            Ok(out) if out.status.success() => {
                 let log_str = String::from_utf8_lossy(&out.stdout);
-                for line in log_str.lines() {
-                    let parts: Vec<&str> = line.splitn(2, ' ').collect();
-                    if parts.len() == 2 {
-                        commits.push(GitCommit {
-                            hash: parts[0].to_string(),
-                            author: "Operator".to_string(),
-                            date: "Now".to_string(),
-                            message: parts[1].to_string(),
-                        });
-                    }
-                }
+                self.git_commits = parse_git_log(&log_str);
+            }
+            _ => {
+                self.git_commits = vec![];
             }
         }
-        if commits.is_empty() {
-            commits.push(GitCommit {
-                hash: "019e4cd1".to_string(),
-                author: "Lucas".to_string(),
-                date: "2026-05-21".to_string(),
-                message: "feat: Integrate real semantic merge & synthetic live loops".to_string(),
-            });
-            commits.push(GitCommit {
-                hash: "ae8720b7".to_string(),
-                author: "Benjamin".to_string(),
-                date: "2026-05-21".to_string(),
-                message: "fix: playhead steering fork campaign reset loops".to_string(),
-            });
-            commits.push(GitCommit {
-                hash: "a4c2ef0d".to_string(),
-                author: "Captain".to_string(),
-                date: "2026-05-20".to_string(),
-                message: "chore: establish zero-trust validation sandbox limits".to_string(),
-            });
-        }
-        self.git_commits = commits;
     }
 
     pub fn open_selected_file(&mut self) {
@@ -996,10 +1018,6 @@ impl KorgTui {
                 self.ktrans_log.remove(0);
             }
         }
-    }
-
-    pub fn update_from_leader(&mut self, _leader: &LeaderOrchestrator) {
-        // Real integration would pull live data here
     }
 }
 
@@ -1689,25 +1707,24 @@ async fn run_tui_event_loop(
                                             )]));
                                     }
 
-                                    // Trigger actual playhead steering fork! (Revert git tree)
-                                    let playhead_tx = app.playhead;
-                                    let dir = app
-                                        .opened_file_path
-                                        .clone()
-                                        .unwrap_or_else(|| "HEAD".to_string());
+                                    // Reset the working tree to HEAD.
                                     let terminal_tx_clone = terminal_tx.clone();
                                     tokio::spawn(async move {
-                                        let _ = terminal_tx_clone.send(format!("[System] Visual Steering Fork requested for commit/tx position {}", playhead_tx)).await;
+                                        let _ = terminal_tx_clone.send("[System] Resetting working tree to HEAD...".to_string()).await;
                                         let output = tokio::process::Command::new("git")
-                                            .args(&["read-tree", "--reset", "-u", "HEAD"])
+                                            .args(["read-tree", "--reset", "-u", "HEAD"])
                                             .output()
                                             .await;
                                         match output {
                                             Ok(out) if out.status.success() => {
-                                                let _ = terminal_tx_clone.send("[System] Codebase workspace successfully reverted to snapshot HEAD.".to_string()).await;
+                                                let _ = terminal_tx_clone.send("[System] Working tree reset to HEAD.".to_string()).await;
                                             }
-                                            _ => {
-                                                let _ = terminal_tx_clone.send("[System] WARNING: Bypassed physical git reversion for mock/local branch.".to_string()).await;
+                                            Ok(out) => {
+                                                let err = String::from_utf8_lossy(&out.stderr);
+                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {}", err.trim())).await;
+                                            }
+                                            Err(e) => {
+                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {e}")).await;
                                             }
                                         }
                                     });
@@ -2427,26 +2444,25 @@ async fn run_tui_event_loop(
                                     }
                                 }
                                 KeyCode::Enter | KeyCode::Char('f') | KeyCode::Char('F') => {
-                                    let target_commit =
-                                        app.git_commits[app.selected_commit_idx].hash.clone();
-                                    app.log(format!(
-                                        "Visual Replay checkout requested for commit {}",
-                                        target_commit
-                                    ));
+                                    app.log("Working-tree reset to HEAD requested");
 
                                     let terminal_tx_clone = terminal_tx.clone();
                                     tokio::spawn(async move {
-                                        let _ = terminal_tx_clone.send(format!("[System] Time-Traveling codebase working directory to tree commit {}...", target_commit)).await;
+                                        let _ = terminal_tx_clone.send("[System] Resetting working tree to HEAD...".to_string()).await;
                                         let output = tokio::process::Command::new("git")
-                                            .args(&["read-tree", "--reset", "-u", "HEAD"])
+                                            .args(["read-tree", "--reset", "-u", "HEAD"])
                                             .output()
                                             .await;
                                         match output {
                                             Ok(out) if out.status.success() => {
-                                                let _ = terminal_tx_clone.send(format!("✓ Codebase working directory successfully reset to tree: {}", target_commit)).await;
+                                                let _ = terminal_tx_clone.send("[System] Working tree reset to HEAD.".to_string()).await;
                                             }
-                                            _ => {
-                                                let _ = terminal_tx_clone.send(format!("[System] Simulated playhead reversion success to tree hash {}", target_commit)).await;
+                                            Ok(out) => {
+                                                let err = String::from_utf8_lossy(&out.stderr);
+                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {}", err.trim())).await;
+                                            }
+                                            Err(e) => {
+                                                let _ = terminal_tx_clone.send(format!("[System] git reversion failed: {e}")).await;
                                             }
                                         }
                                     });
@@ -2589,16 +2605,14 @@ async fn run_tui_event_loop(
                         "campaign failure detected — choose a recovery point".to_string();
                     app.rewind_mode = true;
                 }
-            }
-        }
-
-        // Light demo heartbeat if no real data yet
-        if app.current_verdict.contains("Waiting") {
-            app.h_sem = (app.h_sem + 0.015) % 1.0;
-            let scaled = (app.h_sem * 100.0) as u64;
-            app.h_sem_history.push(scaled);
-            if app.h_sem_history.len() > 30 {
-                app.h_sem_history.remove(0);
+                TuiUpdate::WorkerState {
+                    node_id,
+                    persona,
+                    state,
+                    elapsed_ms,
+                } => {
+                    app.apply_worker_state(node_id, persona, state, elapsed_ms);
+                }
             }
         }
     }
@@ -3003,13 +3017,15 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let columns_layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(50), // Left: Chat
-                    Constraint::Percentage(50), // Right: Shell subprocess terminal
+                    Constraint::Percentage(38), // Left: Chat
+                    Constraint::Percentage(32), // Middle: Shell subprocess terminal
+                    Constraint::Percentage(30), // Right: live swarm tree
                 ])
                 .split(console_layout[0]);
 
             let chat_area = columns_layout[0];
             let term_area = columns_layout[1];
+            let tree_area = columns_layout[2];
             let input_area = console_layout[1];
 
             let height = chat_area.height as usize;
@@ -3135,6 +3151,89 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             );
             f.render_widget(term_block, term_area);
 
+            // ---- Live leader → worker tree (real WorkerState signals only) ----
+            let mut tree_lines: Vec<Line> = Vec::new();
+            // Root line = the leader, annotated with the expected worker count.
+            tree_lines.push(Line::from(vec![
+                Span::styled("● ", Style::default().fg(Color::Rgb(0, 180, 216)).bold()),
+                Span::styled(
+                    "leader",
+                    Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                ),
+                Span::styled(
+                    format!("  (expecting {} workers)", app.swarm_size),
+                    Style::default().fg(fg_slate),
+                ),
+            ]));
+
+            if app.workers.is_empty() {
+                tree_lines.push(Line::from(Span::styled(
+                    "  └─ no workers yet — awaiting live signals",
+                    Style::default().fg(fg_slate).italic(),
+                )));
+            } else {
+                let last_idx = app.workers.len() - 1;
+                for (i, w) in app.workers.iter().enumerate() {
+                    let branch = if i == last_idx { "  └─ " } else { "  ├─ " };
+                    let (glyph, glyph_color) = match w.state {
+                        WorkerLifecycle::Spawning => {
+                            ("\u{22ef}", Color::Rgb(128, 142, 162))
+                        } // ⋯
+                        WorkerLifecycle::Running => ("\u{25b8}", Color::Rgb(0, 180, 216)), // ▸
+                        WorkerLifecycle::Ok => ("\u{2713}", Color::Rgb(165, 222, 103)), // ✓
+                        WorkerLifecycle::Crashed => ("\u{2717}", Color::Rgb(247, 37, 133)), // ✗
+                        WorkerLifecycle::TimedOut => ("\u{23f1}", Color::Rgb(255, 198, 109)), // ⏱
+                        WorkerLifecycle::SpawnError => ("!", Color::Rgb(247, 37, 133)),
+                    };
+                    // Short node id: keep it compact in the narrow column.
+                    let short_id: String = if w.node_id.len() > 14 {
+                        format!("{}…", &w.node_id[..13])
+                    } else {
+                        w.node_id.clone()
+                    };
+                    let mut spans = vec![
+                        Span::styled(branch, Style::default().fg(fg_slate)),
+                        Span::styled(
+                            format!("{} ", glyph),
+                            Style::default().fg(glyph_color).bold(),
+                        ),
+                        Span::styled(
+                            format!("{} ", w.persona),
+                            Style::default().fg(Color::Rgb(255, 255, 255)),
+                        ),
+                        Span::styled(
+                            format!("[{}] ", short_id),
+                            Style::default().fg(fg_slate),
+                        ),
+                        Span::styled(
+                            format!("{}ms", w.elapsed_ms),
+                            Style::default().fg(Color::Rgb(180, 180, 180)),
+                        ),
+                    ];
+                    if matches!(
+                        w.state,
+                        WorkerLifecycle::Crashed | WorkerLifecycle::TimedOut
+                    ) {
+                        spans.push(Span::styled(
+                            "  queued for recovery",
+                            Style::default().fg(Color::Rgb(255, 198, 109)).italic(),
+                        ));
+                    }
+                    tree_lines.push(Line::from(spans));
+                }
+            }
+
+            let tree_widget = Paragraph::new(tree_lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(fg_slate))
+                    .title(Span::styled(
+                        " [ live swarm tree ] ",
+                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                    )),
+            );
+            f.render_widget(tree_widget, tree_area);
+
             let input_border = if app.focus == TuiFocus::AgentConsole {
                 Style::default().fg(Color::Rgb(0, 180, 216))
             } else {
@@ -3164,6 +3263,60 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             f.render_widget(input_widget, input_area);
         }
         TuiTab::CampaignObservability => {
+            // Headline GOAL band (claimed-done vs verified-done) sits ABOVE the grid.
+            // Real signals only — derived purely from the live verdict + rubric status.
+            let obs_rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Top: goal verdict band
+                    Constraint::Min(0),    // Below: existing observability grid
+                ])
+                .split(grid_area);
+            let goal_band_area = obs_rows[0];
+            let grid_area = obs_rows[1];
+
+            // Derive state from the same fields TuiUpdate::Verdict writes — never claims.
+            let goal_state =
+                derive_goal_state(&app.current_verdict, &app.rubric_status, app.progress);
+            let met = app.rubric_status.iter().filter(|(_, passed)| *passed).count();
+            let total = app.rubric_status.len();
+            // Pill color: only Verified earns green; a claim with failing criteria is amber.
+            let pill_color = match goal_state {
+                GoalState::Awaiting => Color::Rgb(100, 110, 125), // dim grey
+                GoalState::InProgress => Color::Rgb(0, 180, 216),  // cyan
+                GoalState::ClaimedUnverified => Color::Rgb(255, 198, 109), // amber
+                GoalState::Verified => Color::Rgb(165, 222, 103), // green
+            };
+            let goal_line = Line::from(vec![
+                Span::styled(
+                    format!(" {} ", goal_state_label(&goal_state)),
+                    Style::default()
+                        .fg(Color::Rgb(13, 17, 23))
+                        .bg(pill_color)
+                        .bold(),
+                ),
+                Span::styled("   ", Style::default()),
+                Span::styled(
+                    format!("{}/{} criteria met", met, total),
+                    Style::default().fg(Color::Rgb(240, 240, 240)).bold(),
+                ),
+                Span::styled("   •   ", Style::default().fg(Color::Rgb(128, 142, 162))),
+                Span::styled(
+                    format!("{:.0}%", app.progress * 100.0),
+                    Style::default().fg(Color::Rgb(240, 240, 240)).bold(),
+                ),
+            ]);
+            let goal_band = Paragraph::new(goal_line).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Rgb(128, 142, 162)))
+                    .title(Span::styled(
+                        " [ goal: claimed-done vs verified-done ] ",
+                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                    )),
+            );
+            f.render_widget(goal_band, goal_band_area);
+
             // Grid Columns (Left vs Right)
             let grid_cols = Layout::default()
                 .direction(Direction::Horizontal)
@@ -3795,22 +3948,31 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             Line::from(""),
         ];
         for (i, candidate) in app.rewind_candidates.iter().enumerate() {
-            let scope_label = match candidate.scope {
-                RewindScope::LocalUndo => "Local Undo",
-                RewindScope::StrategicReset => "Strategic Reset",
-            };
-            let prefix = if i == app.rewind_cursor { "▶ " } else { "  " };
-            let style = if i == app.rewind_cursor {
+            let scope_label = scope_badge(&candidate.scope);
+            let selected = i == app.rewind_cursor;
+            let prefix = if selected { "▶ " } else { "  " };
+            let style = if selected {
                 Style::default().fg(Color::Rgb(0, 240, 255)).bold()
             } else {
                 Style::default().fg(Color::Rgb(160, 165, 175))
             };
+            // Scope badge + rationale on the candidate's primary line.
             lines.push(Line::from(Span::styled(
                 format!(
                     "{}[{}]  seq {}  — {}",
                     prefix, scope_label, candidate.seq_id, candidate.rationale
                 ),
                 style,
+            )));
+            // Invalidation preview: exactly what this rewind discards, from real seq_ids.
+            let preview_style = if selected {
+                Style::default().fg(Color::Rgb(255, 140, 90))
+            } else {
+                Style::default().fg(Color::Rgb(120, 110, 110))
+            };
+            lines.push(Line::from(Span::styled(
+                format!("     ↳ {}", format_invalidation(&candidate.invalidates)),
+                preview_style,
             )));
             if i < app.rewind_candidates.len() - 1 {
                 lines.push(Line::from(""));
@@ -4387,9 +4549,149 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
+/// Short label for a rewind's blast radius, for the scope badge in the overlay.
+///
+/// `LocalUndo` is a surgical rollback of the immediate failure; `StrategicReset`
+/// abandons the whole causal chain. Labels are operator-facing and intentionally
+/// vendor-neutral.
+fn scope_badge(scope: &RewindScope) -> &'static str {
+    match scope {
+        RewindScope::LocalUndo => "Surgical",
+        RewindScope::StrategicReset => "Strategic",
+    }
+}
+
+/// Lifecycle of a goal as seen by the observability layer.
+///
+/// The honesty contract: a goal is only `Verified` when the acceptance
+/// criteria actually pass. A worker or leader merely *claiming* completion —
+/// no matter what the verdict text says — never advances past
+/// `ClaimedUnverified` while any criterion is still failing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoalState {
+    /// No evaluation has happened yet (no criteria, still waiting).
+    Awaiting,
+    /// Work is underway but no acceptance criteria are recorded yet.
+    InProgress,
+    /// Criteria exist and at least one is failing — completion is claimed
+    /// (or in progress) but NOT verified. This is the key honesty case.
+    ClaimedUnverified,
+    /// Every recorded acceptance criterion passes — genuinely done.
+    Verified,
+}
+
+/// Derive the goal state from real evaluation signals only.
+///
+/// Inputs map directly to `KorgTui` fields set by `TuiUpdate::Verdict`:
+/// `current_verdict`, `rubric_status`, `progress`. Nothing is fabricated.
+fn derive_goal_state(verdict: &str, rubrics: &[(String, bool)], _progress: f32) -> GoalState {
+    if rubrics.is_empty() {
+        // Nothing evaluated yet. Distinguish "haven't started" from "running".
+        if verdict.contains("Waiting") {
+            return GoalState::Awaiting;
+        }
+        return GoalState::InProgress;
+    }
+    // Criteria exist: verification is purely "do they ALL pass?".
+    // Verdict text is deliberately ignored here — claims don't count.
+    if rubrics.iter().all(|(_, passed)| *passed) {
+        GoalState::Verified
+    } else {
+        GoalState::ClaimedUnverified
+    }
+}
+
+/// Human-readable label for a `GoalState`.
+fn goal_state_label(s: &GoalState) -> &'static str {
+    match s {
+        GoalState::Awaiting => "Awaiting first round",
+        GoalState::InProgress => "In progress",
+        GoalState::ClaimedUnverified => "Claimed — not verified",
+        GoalState::Verified => "Verified",
+    }
+}
+
+/// Human "what will this rewind throw away" line for the invalidation preview.
+///
+/// Built purely from the candidate's real `invalidates` seq_ids — never a guess:
+///   - `[]`        -> "nothing to discard"
+///   - `[7]`       -> "will discard 1 step (seq 7)"
+///   - `[3,4,5]`   -> "will discard 3 steps (seq 3–5)"   (min–max of the slice, en-dash)
+///
+/// The range uses the min and max of the slice, so it is correct regardless of
+/// ordering and reads honestly even if the discarded set is sparse.
+fn format_invalidation(invalidates: &[u64]) -> String {
+    match invalidates.len() {
+        0 => "nothing to discard".to_string(),
+        1 => format!("will discard 1 step (seq {})", invalidates[0]),
+        n => {
+            let lo = invalidates.iter().min().copied().unwrap_or(0);
+            let hi = invalidates.iter().max().copied().unwrap_or(0);
+            format!("will discard {} steps (seq {}\u{2013}{})", n, lo, hi)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_apply_worker_state_upserts_by_node_id() {
+        let mut app = KorgTui::default();
+        // Real-signals-only invariant: tree starts empty.
+        assert!(app.workers.is_empty());
+
+        // First signal for a node creates a row.
+        app.apply_worker_state(
+            "pkg-benjamin".to_string(),
+            "Benjamin".to_string(),
+            WorkerLifecycle::Spawning,
+            0,
+        );
+        assert_eq!(app.workers.len(), 1);
+
+        // Second signal for the SAME node_id must UPDATE in place, not duplicate.
+        app.apply_worker_state(
+            "pkg-benjamin".to_string(),
+            "Benjamin".to_string(),
+            WorkerLifecycle::Ok,
+            4200,
+        );
+        assert_eq!(app.workers.len(), 1, "same node_id must not duplicate rows");
+        let row = &app.workers[0];
+        assert_eq!(row.node_id, "pkg-benjamin");
+        assert!(
+            matches!(row.state, WorkerLifecycle::Ok),
+            "latest state must win"
+        );
+        assert_eq!(row.elapsed_ms, 4200, "latest elapsed must win");
+
+        // A DIFFERENT node_id adds a second row.
+        app.apply_worker_state(
+            "pkg-harper".to_string(),
+            "Harper".to_string(),
+            WorkerLifecycle::Crashed,
+            999,
+        );
+        assert_eq!(app.workers.len(), 2, "distinct node_ids create distinct rows");
+
+        // The first row stays at its latest values; the new row carries its own.
+        let benjamin = app
+            .workers
+            .iter()
+            .find(|r| r.node_id == "pkg-benjamin")
+            .expect("benjamin row present");
+        assert!(matches!(benjamin.state, WorkerLifecycle::Ok));
+        assert_eq!(benjamin.elapsed_ms, 4200);
+        let harper = app
+            .workers
+            .iter()
+            .find(|r| r.node_id == "pkg-harper")
+            .expect("harper row present");
+        assert!(matches!(harper.state, WorkerLifecycle::Crashed));
+        assert_eq!(harper.elapsed_ms, 999);
+    }
 
     #[test]
     fn test_playhead_scrubbing_boundaries() {
@@ -4457,5 +4759,125 @@ mod tests {
         app.policy_violation_alert = None;
         app.pending_approval = None;
         assert!(app.policy_violation_alert.is_none());
+    }
+
+    #[test]
+    fn test_parse_git_log_real_input() {
+        let us = '\u{1f}';
+        let input = format!(
+            "a1b2c3d{us}Ada Lovelace{us}2026-05-31{us}feat: add ledger\n\
+             e4f5g6h{us}Alan Turing{us}2026-05-30{us}fix: honest defaults"
+        );
+        let commits = parse_git_log(&input);
+        assert_eq!(commits.len(), 2);
+
+        assert_eq!(commits[0].hash, "a1b2c3d");
+        assert_eq!(commits[0].author, "Ada Lovelace");
+        assert_eq!(commits[0].date, "2026-05-31");
+        assert_eq!(commits[0].message, "feat: add ledger");
+
+        assert_eq!(commits[1].hash, "e4f5g6h");
+        assert_eq!(commits[1].author, "Alan Turing");
+        assert_eq!(commits[1].date, "2026-05-30");
+        assert_eq!(commits[1].message, "fix: honest defaults");
+
+        // Garbage / empty input must NEVER fabricate commits.
+        assert!(parse_git_log("").is_empty());
+        assert!(parse_git_log("garbage").is_empty());
+    }
+
+    #[test]
+    fn test_format_invalidation_nothing_to_discard() {
+        // No seq_ids invalidated -> the rewind discards nothing.
+        assert_eq!(format_invalidation(&[]), "nothing to discard");
+    }
+
+    #[test]
+    fn test_format_invalidation_single_step() {
+        // A single seq_id reads as one step, singular.
+        assert_eq!(format_invalidation(&[7]), "will discard 1 step (seq 7)");
+    }
+
+    #[test]
+    fn test_format_invalidation_multi_step_range() {
+        // Multiple seq_ids collapse to a min–max range (en-dash), plural.
+        assert_eq!(
+            format_invalidation(&[3, 4, 5]),
+            "will discard 3 steps (seq 3–5)"
+        );
+        // Range is derived from min/max of the slice, not assumed contiguous/sorted.
+        assert_eq!(
+            format_invalidation(&[9, 4, 7]),
+            "will discard 3 steps (seq 4–9)"
+        );
+    }
+
+    #[test]
+    fn test_scope_badge_labels() {
+        assert_eq!(scope_badge(&RewindScope::LocalUndo), "Surgical");
+        assert_eq!(scope_badge(&RewindScope::StrategicReset), "Strategic");
+    }
+
+    #[test]
+    fn test_derive_goal_state_awaiting_when_empty_and_waiting() {
+        // Default startup signals: no criteria, verdict still "Waiting...".
+        let s = derive_goal_state("Waiting for first evaluation...", &[], 0.0);
+        assert_eq!(s, GoalState::Awaiting);
+    }
+
+    #[test]
+    fn test_derive_goal_state_in_progress_when_empty_but_not_waiting() {
+        // Running, but the evaluator hasn't recorded any criteria yet.
+        let s = derive_goal_state("Generating patch", &[], 0.4);
+        assert_eq!(s, GoalState::InProgress);
+    }
+
+    #[test]
+    fn test_derive_goal_state_verified_when_all_rubrics_pass() {
+        // Every acceptance criterion passes -> genuinely done.
+        let rubrics = vec![
+            ("compiles".to_string(), true),
+            ("tests pass".to_string(), true),
+        ];
+        let s = derive_goal_state("complete", &rubrics, 1.0);
+        assert_eq!(s, GoalState::Verified);
+    }
+
+    #[test]
+    fn test_derive_goal_state_claimed_unverified_when_any_rubric_fails() {
+        // The honesty rule: even a verdict that LOUDLY claims completion must
+        // NOT read as Verified while any criterion is still failing.
+        let rubrics = vec![
+            ("compiles".to_string(), true),
+            ("tests pass".to_string(), false),
+        ];
+        let s = derive_goal_state("DONE — all acceptance criteria met", &rubrics, 1.0);
+        assert_eq!(s, GoalState::ClaimedUnverified);
+    }
+
+    #[test]
+    fn test_goal_state_label_strings() {
+        assert_eq!(goal_state_label(&GoalState::Awaiting), "Awaiting first round");
+        assert_eq!(goal_state_label(&GoalState::InProgress), "In progress");
+        assert_eq!(
+            goal_state_label(&GoalState::ClaimedUnverified),
+            "Claimed — not verified"
+        );
+        assert_eq!(goal_state_label(&GoalState::Verified), "Verified");
+    }
+
+    #[test]
+    fn test_default_is_honest_no_fabricated_telemetry() {
+        let app = KorgTui::default();
+        assert_eq!(app.persona_scores, [0.0; 4]);
+        assert!(app.captain_score_history.is_empty());
+        assert!(app.harper_score_history.is_empty());
+        assert!(app.benjamin_score_history.is_empty());
+        assert!(app.lucas_score_history.is_empty());
+        assert!(app.h_sem_history.is_empty());
+        assert!(app.rubric_status.is_empty());
+        assert!(app.lock_states.is_empty());
+        assert_eq!(app.velocity, 0.0);
+        assert_eq!(app.risk, 0.0);
     }
 }

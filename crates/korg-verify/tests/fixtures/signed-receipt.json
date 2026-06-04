@@ -1,0 +1,60 @@
+{
+  "schema": "korgex-receipt@v1",
+  "spec": "korg-ledger@v1",
+  "claim": "demo healthz",
+  "generated_at": 1.0,
+  "event_count": 2,
+  "tip": "5363cf88c69b48e7f401c7086dfd1acf05846a8d4968301df4e60beba119e473",
+  "summary": {
+    "prompts": 1,
+    "inferences": 0,
+    "tool_calls": 1,
+    "files": [
+      "src/app.py"
+    ],
+    "by_tool": {
+      "Edit": 1
+    },
+    "cost_usd": 0.0
+  },
+  "events": [
+    {
+      "schema_version": "1.0",
+      "seq_id": 1,
+      "source_agent": "agent:korgex@0.14.1",
+      "tool_name": "user_prompt",
+      "args": {
+        "prompt": "add a healthz endpoint"
+      },
+      "result": {},
+      "payload_refs": [],
+      "success": true,
+      "duration_ms": 0,
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "entry_hash": "923fb23bf6811fbb0d3b4e029a003f6b9000b14b963d88a1d32bee36fe94cdcb"
+    },
+    {
+      "schema_version": "1.0",
+      "seq_id": 2,
+      "source_agent": "agent:korgex@0.14.1",
+      "tool_name": "Edit",
+      "args": {
+        "file_path": "src/app.py"
+      },
+      "result": {
+        "ok": true
+      },
+      "payload_refs": [],
+      "success": true,
+      "duration_ms": 5,
+      "triggered_by": 1,
+      "prev_hash": "923fb23bf6811fbb0d3b4e029a003f6b9000b14b963d88a1d32bee36fe94cdcb",
+      "entry_hash": "5363cf88c69b48e7f401c7086dfd1acf05846a8d4968301df4e60beba119e473"
+    }
+  ],
+  "signature": {
+    "alg": "ed25519",
+    "pubkey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+    "sig": "cc7cbe27ea1c73663a2d9b1eb6cf61dfb7d78d01cc15915bc64031c755f1c3e37b8429b487d68e3879305601c76e73823f8cfa2a4cdf48563d16e985dfb8370a"
+  }
+}

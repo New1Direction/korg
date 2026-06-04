@@ -4,7 +4,7 @@
 //!   - GET `/api/events` (SSE stream broadcasting TuiUpdate JSONs)
 //!   - POST `/api/override` (forwards ContractResponse user overrides back to the leader)
 //!   - GET `/api/state` (exposes active blackboard.json snapshot)
-//!   - Static embedding of the sleek glassmorphism HTML dashboard
+//!   - Serves a static landing page (LANDING_HTML); no SPA or WASM frontend is bundled
 //!   - Auto-opens browser upon starting.
 
 use ax_sse::{Event, Sse};
@@ -53,6 +53,21 @@ fn open_browser(url: &str) {
 
     #[cfg(target_os = "linux")]
     let _ = std::process::Command::new("xdg-open").arg(url).status();
+}
+
+/// The address the dashboard server binds to. Defaults to loopback
+/// (`127.0.0.1:8080`) so the (mostly unauthenticated) control/telemetry routes
+/// aren't exposed to the network; set `KORG_SERVER_ADDR` to bind elsewhere on purpose.
+fn server_bind_addr() -> String {
+    resolve_bind_addr(std::env::var("KORG_SERVER_ADDR").ok())
+}
+
+/// Pure resolution of the bind address from an optional override — loopback
+/// unless an explicit, non-empty override is given.
+fn resolve_bind_addr(override_addr: Option<String>) -> String {
+    override_addr
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "127.0.0.1:8080".to_string())
 }
 
 /// Runs a web dashboard campaign.
@@ -188,7 +203,7 @@ pub async fn run_web_with_campaign(
         )
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    let listener = tokio::net::TcpListener::bind(server_bind_addr()).await?;
     println!("\n\x1b[1m[korg] Axum server listening on http://localhost:8080\x1b[0m");
 
     // Auto-open browser in a separate thread
@@ -311,7 +326,7 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
         )
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    let listener = tokio::net::TcpListener::bind(server_bind_addr()).await?;
     println!("\n\x1b[1m[korg] Axum server listening on http://localhost:8080\x1b[0m");
 
     tokio::spawn(async {
@@ -323,17 +338,25 @@ pub async fn run_web_with_leader(mut leader: LeaderOrchestrator) -> anyhow::Resu
     Ok(())
 }
 
-/// Serves the embedded glassmorphism SPA index.html
+/// Serves the static landing page (LANDING_HTML).
 async fn index_handler() -> impl IntoResponse {
     Html(LANDING_HTML)
 }
 
 async fn wasm_js_handler() -> impl IntoResponse {
-    ([("content-type", "application/javascript")], "")
+    // No WASM frontend is bundled in this build — 404 honestly rather than
+    // serving an empty 200 that looks like a real (but empty) asset.
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        "korg WASM frontend is not bundled in this build",
+    )
 }
 
 async fn wasm_bytes_handler() -> impl IntoResponse {
-    ([("content-type", "application/wasm")], &[] as &[u8])
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        "korg WASM frontend is not bundled in this build",
+    )
 }
 
 /// Serves the premium monochrome landing page
@@ -2832,6 +2855,33 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
     use tokio::sync::Mutex as TokioMutex;
+
+    #[test]
+    fn default_bind_addr_is_loopback_not_all_interfaces() {
+        // Security: with no override the server must bind loopback only — never
+        // 0.0.0.0, which exposed the (mostly unauthenticated) control + telemetry
+        // routes to the whole local network.
+        let addr = resolve_bind_addr(None);
+        assert!(addr.starts_with("127.0.0.1"), "default must be loopback, got {addr}");
+        assert!(!addr.starts_with("0.0.0.0"), "default must not bind all interfaces");
+    }
+
+    #[test]
+    fn bind_addr_honors_explicit_override() {
+        // Intentional network exposure stays possible, but only by explicit opt-in.
+        assert_eq!(resolve_bind_addr(Some("0.0.0.0:9000".into())), "0.0.0.0:9000");
+    }
+
+    #[tokio::test]
+    async fn wasm_routes_404_when_no_frontend_is_bundled() {
+        // No WASM frontend ships in this build — the routes must 404 honestly,
+        // not serve an empty 200 that masquerades as a real (empty) asset.
+        use axum::response::IntoResponse;
+        let js = wasm_js_handler().await.into_response();
+        assert_eq!(js.status(), axum::http::StatusCode::NOT_FOUND);
+        let wasm = wasm_bytes_handler().await.into_response();
+        assert_eq!(wasm.status(), axum::http::StatusCode::NOT_FOUND);
+    }
 
     /// Set KORG_MASTER_KEY once for the whole test binary so the auth store's
     /// production-mode `expect()` doesn't panic in tests. Anything that touches
