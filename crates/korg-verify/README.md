@@ -10,7 +10,7 @@ Exit code: `0` valid · `1` invalid/tampered · `2` usage/parse error.
 
 ## What it checks
 
-- **Hash chain** — every event's `entry_hash` recomputes and links unbroken from genesis (tamper-evident). Reuses `korg-registry`'s conformance-tested `verify_chain`.
+- **Hash chain** — every event's `entry_hash` recomputes and links unbroken from genesis (tamper-evident). Reuses `korg-ledger`'s conformance-tested `verify_chain`.
 - **Causal DAG** — `triggered_by` links are well-formed (`verify_dag`).
 - **Tip** — a receipt's recorded `tip` matches the chain head.
 - **Signature** — if the receipt is signed, the Ed25519 signature over the tip is valid. `--pubkey <hex>` *pins* the expected signer and rejects any other key (so a green check proves authorship against a key you trust, not merely against the one the receipt carries).
