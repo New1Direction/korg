@@ -1,0 +1,16 @@
+[package]
+name = "korg-ledger"
+version = "0.1.0"
+edition = "2021"
+description = "korg-ledger@v1 — the tamper-evident hash-chain spec implementation (canonicalize, chain_hash, verify_chain, verify_dag). Byte-identical to the Python and JS references; SHA-256 or HMAC-keyed."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/New1Direction/korg"
+homepage = "https://github.com/New1Direction/korg"
+keywords = ["ledger", "hash-chain", "tamper-evident", "audit", "verification"]
+categories = ["cryptography", "data-structures"]
+readme = false
+
+[dependencies]
+serde_json = { workspace = true }
+sha2 = "0.10"
+hmac = "0.12"

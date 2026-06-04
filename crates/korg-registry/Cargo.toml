@@ -6,7 +6,8 @@ description = "Capability journal, ledger, and plan execution for korg"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-korg-core  = { path = "../korg-core" }
+korg-core   = { path = "../korg-core" }
+korg-ledger = { path = "../korg-ledger", version = "0.1.0" }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 uuid       = { workspace = true }

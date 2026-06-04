@@ -5,6 +5,7 @@ members = [
     "crates/korg-auth",
     "crates/korg-llm",
     "crates/korg-embeddings",
+    "crates/korg-ledger",
     "crates/korg-registry",
     "crates/korg-runtime",
     "crates/korg-tui",
