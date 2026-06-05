@@ -103,8 +103,10 @@ truncation sound (cutting at seq N never orphans a survivor).
 - the HMAC vector uses key `"korg-conformance-key"`; verifying it with no key
   MUST fail.
 
-Run the reference harness: `python3 spec/korg-ledger-v1/conformance.py`
-(exit 0 = conformant). Regenerate vectors: `python3 spec/korg-ledger-v1/_generate_vectors.py`.
+Run a conformance harness (exit 0 = conformant): `python3 spec/korg-ledger-v1/conformance.py`
+(Python), `node spec/korg-ledger-v1/js/conformance.mjs` (JavaScript), or
+`cargo test -p korg-verify` (Rust). Regenerate vectors:
+`python3 spec/korg-ledger-v1/_generate_vectors.py`.
 
 ## 7. v1 scope / non-goals
 
