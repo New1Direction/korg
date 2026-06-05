@@ -64,9 +64,12 @@ raw/
 # ── Frontend / desktop (not in OSS release) ──────────────────────────────────
 frontend/
 src-tauri/
-node_modules/
-package.json
-package-lock.json
+# Note: the workspace-root package.json + package-lock.json belong to the
+# (gitignored) desktop frontend. Adapter packages under adapters/ DO ship
+# their own package.json — those are caught by the more-specific
+# !adapters/ unignore rules below.
+/package.json
+/package-lock.json
 
 # Editable-install metadata (pip install -e)
 *.egg-info/

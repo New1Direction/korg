@@ -431,7 +431,12 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    korg_core::telemetry::init_tracing();
+    // When launching the full-screen TUI, route tracing to a log file so it
+    // doesn't render on top of the ratatui dashboard.
+    let argv: Vec<String> = std::env::args().collect();
+    if let Some(log_path) = korg_core::telemetry::init_tracing_for(&argv) {
+        eprintln!("[korg] TUI mode — logs → {}", log_path.display());
+    }
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "korg starting");
 
     let mut cli = Cli::parse();

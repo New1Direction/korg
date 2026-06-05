@@ -2705,14 +2705,26 @@ pub fn highlight_line(line: &str, ext: Option<&str>) -> Line<'static> {
 }
 
 fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
-    // 24-bit TrueColor Palette Definitions
-    let fg_cyan = Color::Rgb(240, 240, 240); // High-Contrast Pure White/Gray
-    let fg_pink = Color::Rgb(160, 160, 160); // Clean Medium Zinc
-    let fg_green = Color::Rgb(220, 220, 220); // Off-White
-    let fg_gold = Color::Rgb(180, 180, 180); // Muted Gray
-    let fg_crimson = Color::Rgb(140, 140, 140); // Darker Slate
-    let fg_slate = Color::Rgb(64, 64, 64); // Deep Zinc Gray (Grok Border)
-    let fg_white = Color::Rgb(255, 255, 255); // Pure White
+    // ── Calm mission-control palette ── one coherent set, used everywhere here.
+    // Colour signals STATE, never decoration: ink-on-default-bg, one amber accent.
+    const INK: Color = Color::Rgb(235, 237, 240); // primary text, near-white
+    const DIM: Color = Color::Rgb(120, 128, 138); // secondary text / labels
+    const FAINT: Color = Color::Rgb(70, 76, 84); // borders, rules, gutter, inactive
+    const BG: Color = Color::Rgb(12, 13, 16); // near-black (badge inverse only)
+    const ACCENT: Color = Color::Rgb(255, 184, 0); // amber — the ONE accent: active/live/selected
+    const OK: Color = Color::Rgb(120, 200, 120); // status: pass
+    const WARN: Color = Color::Rgb(235, 180, 70); // status: caution
+    const BAD: Color = Color::Rgb(230, 90, 90); // status: fail
+
+    // Legacy local names mapped onto the calm palette so every existing
+    // reference resolves to a coherent color (no ad-hoc tints left behind).
+    let fg_pink = DIM;
+    let fg_green = INK;
+    let fg_gold = DIM;
+    let fg_slate = FAINT;
+    let fg_white = INK;
+
+    use ratatui::widgets::BorderType;
 
     // korg workspace layout splitting
     let main_layout = Layout::default()
@@ -2729,57 +2741,62 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     let bottom_track_area = main_layout[2];
 
     // ==========================================
-    // 0. Top Bar Dashboard Header with Tab Selectors
+    // 0. Header — calm wordmark + tab words, hairline rule beneath (no bar).
     // ==========================================
-    let mut tab_spans = vec![Span::styled(
-        " 🛡️  k o r g  │  ",
-        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
-    )];
+    // Split the top region into a single header line and a thin rule line;
+    // a blank trailing row keeps the header breathing. No background fills.
+    let header_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // wordmark + tabs
+            Constraint::Length(1), // hairline rule
+            Constraint::Min(0),    // breathing room
+        ])
+        .split(top_bar_area);
+    let header_line_area = header_rows[0];
+    let header_rule_area = header_rows[1];
 
-    let tabs = [
-        (TuiTab::Workspace, " [1] Workspace IDE "),
-        (TuiTab::AgentConsole, " [2] Swarm Console "),
-        (TuiTab::CampaignObservability, " [3] Observability "),
-        (TuiTab::GitTimeline, " [4] Git Ledger "),
+    let mut tab_spans = vec![
+        Span::styled(" korg ", Style::default().fg(INK).bold()),
+        Span::styled("  ", Style::default()),
     ];
 
-    for (t, name) in tabs.iter() {
-        let is_active = app.active_tab == *t;
-        if is_active {
-            tab_spans.push(Span::styled(
-                *name,
-                Style::default()
-                    .bg(Color::Rgb(255, 117, 181))
-                    .fg(Color::Rgb(10, 10, 12))
-                    .bold(),
-            ));
-        } else {
-            tab_spans.push(Span::styled(
-                *name,
-                Style::default().fg(Color::Rgb(180, 180, 180)),
-            ));
+    let tabs = [
+        (TuiTab::Workspace, "workspace"),
+        (TuiTab::AgentConsole, "swarm"),
+        (TuiTab::CampaignObservability, "observability"),
+        (TuiTab::GitTimeline, "ledger"),
+    ];
+
+    for (i, (t, name)) in tabs.iter().enumerate() {
+        if i > 0 {
+            // Two-space gap between tab words — whitespace, not separators.
+            tab_spans.push(Span::styled("  ", Style::default()));
         }
-        tab_spans.push(Span::styled("  ", Style::default()));
+        let is_active = app.active_tab == *t;
+        let style = if is_active {
+            Style::default().fg(ACCENT).bold()
+        } else {
+            Style::default().fg(DIM)
+        };
+        tab_spans.push(Span::styled(*name, style));
     }
 
     tab_spans.push(Span::styled(
-        format!(
-            "│  swarm: {}  │  entropy: {:.3} ",
-            app.swarm_size, app.h_sem
-        ),
-        Style::default().fg(Color::Rgb(180, 180, 180)),
+        format!("   · swarm:{} · entropy:{:.3}", app.swarm_size, app.h_sem),
+        Style::default().fg(DIM),
     ));
 
-    let top = Paragraph::new(Line::from(tab_spans)).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_slate))
-            .title(Span::styled(
-                " [ heavy-tier command center ] ",
-                Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
-            )),
+    let top = Paragraph::new(Line::from(tab_spans));
+    f.render_widget(ratatui::widgets::Clear, top_bar_area);
+    f.render_widget(top, header_line_area);
+
+    // Single hairline rule under the header (a run of ─ in FAINT) — no box.
+    let rule = "─".repeat(header_rule_area.width as usize);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(rule, Style::default().fg(FAINT)))),
+        header_rule_area,
     );
-    f.render_widget(top, top_bar_area);
 
     // Render the grid area depending on active tab
     match app.active_tab {
@@ -2823,34 +2840,35 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     "📄 "
                 };
 
-                let text_style = if is_selected {
-                    Style::default()
-                        .bg(Color::Rgb(40, 40, 45))
-                        .fg(Color::Rgb(255, 117, 181))
-                        .bold()
+                // Selected row: 2-char ▸ focus marker + ACCENT bold (no bg fill).
+                let (marker, text_style) = if is_selected {
+                    ("▸ ", Style::default().fg(ACCENT).bold())
                 } else {
-                    Style::default().fg(Color::Rgb(240, 240, 240))
+                    ("  ", Style::default().fg(INK))
                 };
 
                 tree_items.push(ListItem::new(Line::from(vec![
+                    Span::styled(marker, Style::default().fg(ACCENT)),
                     Span::raw(indent),
                     Span::styled(format!("{}{}", icon, entry.name), text_style),
                 ])));
             }
 
-            let file_tree_border = if app.focus == TuiFocus::FileTree {
-                Style::default().fg(Color::Rgb(255, 117, 181)) // Neon Pink active border
-            } else {
-                Style::default().fg(fg_slate)
-            };
-
+            let tree_focused = app.focus == TuiFocus::FileTree;
             let file_tree_block = List::new(tree_items).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(file_tree_border)
+                    .border_type(if tree_focused {
+                        BorderType::Rounded
+                    } else {
+                        BorderType::Plain
+                    })
+                    .border_style(Style::default().fg(if tree_focused { ACCENT } else { FAINT }))
                     .title(Span::styled(
-                        " [ file tree ] ",
-                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                        " files ",
+                        Style::default()
+                            .fg(if tree_focused { ACCENT } else { DIM })
+                            .bold(),
                     )),
             );
             f.render_widget(file_tree_block, file_tree_area);
@@ -2866,24 +2884,20 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     let mod_indicator = if tab.is_modified { " ●" } else { "" };
 
                     if i > 0 {
-                        spans.push(Span::styled(
-                            " │ ",
-                            Style::default().fg(Color::Rgb(60, 65, 75)),
-                        ));
+                        spans.push(Span::styled("  ", Style::default()));
                     }
 
+                    // Active tab = ACCENT bold (+ marker), inactive = DIM. No bg.
                     if is_active {
+                        spans.push(Span::styled("▸ ", Style::default().fg(ACCENT)));
                         spans.push(Span::styled(
-                            format!(" {} {} ", filename, mod_indicator),
-                            Style::default()
-                                .fg(Color::Rgb(0, 180, 216))
-                                .bg(Color::Rgb(35, 35, 45))
-                                .bold(),
+                            format!("{}{}", filename, mod_indicator),
+                            Style::default().fg(ACCENT).bold(),
                         ));
                     } else {
                         spans.push(Span::styled(
-                            format!(" {} {} ", filename, mod_indicator),
-                            Style::default().fg(Color::Rgb(140, 150, 165)),
+                            format!("{}{}", filename, mod_indicator),
+                            Style::default().fg(DIM),
                         ));
                     }
                 }
@@ -2891,24 +2905,21 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 let tab_bar = Paragraph::new(Line::from(spans)).block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Rgb(45, 48, 56)))
-                        .title(Span::styled(
-                            " 📑 [ tabs ] ",
-                            Style::default().fg(Color::Rgb(150, 160, 175)).bold(),
-                        )),
+                        .border_type(BorderType::Plain)
+                        .border_style(Style::default().fg(FAINT))
+                        .title(Span::styled(" tabs ", Style::default().fg(DIM).bold())),
                 );
                 f.render_widget(tab_bar, tabs_area);
             }
 
-            let editor_border = if app.focus == TuiFocus::Editor {
-                if app.editor_insert_mode {
-                    Style::default().fg(Color::Rgb(255, 117, 181)) // Neon Pink for insert mode
-                } else {
-                    Style::default().fg(Color::Rgb(0, 180, 216)) // Neon Cyan for normal mode
-                }
+            let editor_focused = app.focus == TuiFocus::Editor;
+            let editor_border = Style::default().fg(if editor_focused { ACCENT } else { FAINT });
+            let editor_border_type = if editor_focused {
+                BorderType::Rounded
             } else {
-                Style::default().fg(fg_slate)
+                BorderType::Plain
             };
+            let editor_title_color = if editor_focused { ACCENT } else { DIM };
 
             let editor_title = if let Some(ref path) = app.opened_file_path {
                 let mode = if app.editor_insert_mode {
@@ -2916,15 +2927,9 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 } else {
                     "NORMAL"
                 };
-                format!(
-                    " 📝 {} [{}] ({}:{}) ",
-                    path,
-                    mode,
-                    app.cursor_y + 1,
-                    app.cursor_x + 1
-                )
+                format!(" {} [{}] ({}:{}) ", path, mode, app.cursor_y + 1, app.cursor_x + 1)
             } else {
-                " [ editor ] ".to_string()
+                " editor ".to_string()
             };
 
             if let Some(ref lines) = app.opened_file_content {
@@ -2946,7 +2951,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     let highlighted = highlight_line(line_content, file_ext);
                     let mut line_spans = vec![Span::styled(
                         format!("{:>3} │ ", line_no + 1),
-                        Style::default().fg(Color::Rgb(128, 142, 162)),
+                        Style::default().fg(DIM),
                     )];
                     line_spans.extend(highlighted.spans);
                     editor_lines.push(Line::from(line_spans));
@@ -2955,10 +2960,11 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 let editor_widget = Paragraph::new(editor_lines).block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_type(editor_border_type)
                         .border_style(editor_border)
                         .title(Span::styled(
                             editor_title,
-                            Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                            Style::default().fg(editor_title_color).bold(),
                         )),
                 );
                 f.render_widget(editor_widget, editor_area);
@@ -2978,27 +2984,50 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 let empty_msg = vec![
                     Line::from(""),
                     Line::from(""),
-                    Line::from("        🛡️   k o r g   w o r k s p a c e   🛡️"),
-                    Line::from("        ───────────────────────────────────"),
+                    Line::from(Span::styled(
+                        "        korg workspace",
+                        Style::default().fg(INK).bold(),
+                    )),
+                    Line::from(Span::styled(
+                        "        ──────────────",
+                        Style::default().fg(FAINT),
+                    )),
                     Line::from(""),
-                    Line::from("   no active file open in current Operator session."),
-                    Line::from("   please use ↑/↓ to navigate the file explorer tree on the left."),
-                    Line::from("   press [enter] to expand folders or open files."),
+                    Line::from(Span::styled(
+                        "   no file open in this session.",
+                        Style::default().fg(DIM),
+                    )),
+                    Line::from(Span::styled(
+                        "   use ↑/↓ to move through the file tree on the left.",
+                        Style::default().fg(DIM),
+                    )),
+                    Line::from(Span::styled(
+                        "   press [enter] to expand folders or open files.",
+                        Style::default().fg(DIM),
+                    )),
                     Line::from(""),
-                    Line::from("   Operator Keybindings:"),
-                    Line::from("     Tab : switch focus between tree explorer and editor panel"),
-                    Line::from(
-                        "     1-4 : navigate tabs (Workspace, Swarm Console, Observability, Git)",
-                    ),
-                    Line::from("     esc : terminate active TUI session"),
+                    Line::from(Span::styled("   keybindings", Style::default().fg(DIM).bold())),
+                    Line::from(Span::styled(
+                        "     tab : switch focus between tree and editor",
+                        Style::default().fg(DIM),
+                    )),
+                    Line::from(Span::styled(
+                        "     1-4 : switch tabs (workspace, swarm, observability, ledger)",
+                        Style::default().fg(DIM),
+                    )),
+                    Line::from(Span::styled(
+                        "     esc : quit the session",
+                        Style::default().fg(DIM),
+                    )),
                 ];
                 let empty_widget = Paragraph::new(empty_msg).block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_type(editor_border_type)
                         .border_style(editor_border)
                         .title(Span::styled(
                             editor_title,
-                            Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                            Style::default().fg(editor_title_color).bold(),
                         )),
                 );
                 f.render_widget(empty_widget, editor_area);
@@ -3035,74 +3064,55 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 0
             };
 
+            // Each finished activity renders as one calm ┊-gutter column:
+            //   ┊ {glyph} {verb:<9} {detail}
+            // Verb + glyph are derived from the line's own tag/first token; the
+            // rest is the detail. Durations aren't tracked here, so we omit them
+            // rather than fabricate. Failures (Error/failed) get the BAD marker.
             let mut chat_lines = vec![];
             for line in app.console_logs.iter().skip(chat_start) {
-                let l_span = if line.starts_with("korg >") {
-                    Line::from(vec![
-                        Span::styled(
-                            "korg > ",
-                            Style::default().fg(Color::Rgb(0, 180, 216)).bold(),
-                        ),
-                        Span::styled(
-                            &line["korg >".len()..],
-                            Style::default().fg(Color::Rgb(255, 255, 255)),
-                        ),
-                    ])
-                } else if line.starts_with("[Swarm Agent]") {
-                    Line::from(vec![
-                        Span::styled(
-                            "🤖 Swarm ",
-                            Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
-                        ),
-                        Span::styled(
-                            &line["[Swarm Agent]".len()..],
-                            Style::default().fg(Color::Rgb(165, 222, 103)),
-                        ),
-                    ])
-                } else if line.starts_with("[Benjamin]") {
-                    Line::from(vec![
-                        Span::styled(
-                            "📝 Benjamin ",
-                            Style::default().fg(Color::Rgb(255, 198, 109)).bold(),
-                        ),
-                        Span::styled(
-                            &line["[Benjamin]".len()..],
-                            Style::default().fg(Color::Rgb(240, 240, 240)),
-                        ),
-                    ])
-                } else if line.starts_with("[System]") {
-                    Line::from(vec![
-                        Span::styled(
-                            "⚙️  system: ",
-                            Style::default().fg(Color::Rgb(128, 142, 162)).italic(),
-                        ),
-                        Span::styled(
-                            &line["[System]".len()..],
-                            Style::default().fg(Color::Rgb(128, 142, 162)).italic(),
-                        ),
-                    ])
+                let lower = line.to_lowercase();
+                let failed = lower.contains("error") || lower.contains("fail");
+                let l_span = if let Some(rest) = line.strip_prefix("korg >") {
+                    // Operator prompt echo — keep its own accent prompt glyph.
+                    activity_line("›", "prompt", rest, None, failed)
+                } else if let Some(open) = line.strip_prefix('[') {
+                    // Bracketed agent/system tag: [Swarm Agent] msg → verb=swarm.
+                    if let Some(close) = open.find(']') {
+                        let tag = &open[..close];
+                        let detail = open[close + 1..].trim_start();
+                        let verb = tag.split_whitespace().next().unwrap_or(tag).to_lowercase();
+                        let glyph = if failed { "✗" } else { "◇" };
+                        activity_line(glyph, &verb, detail, None, failed)
+                    } else {
+                        activity_line("·", "log", line, None, failed)
+                    }
                 } else {
-                    Line::from(Span::styled(
-                        line,
-                        Style::default().fg(Color::Rgb(240, 240, 240)),
-                    ))
+                    // Bare line: first token becomes the verb, the rest detail.
+                    let mut parts = line.splitn(2, char::is_whitespace);
+                    let verb = parts.next().unwrap_or("log");
+                    let detail = parts.next().unwrap_or("");
+                    activity_line("·", verb, detail, None, failed)
                 };
                 chat_lines.push(l_span);
             }
 
-            let chat_border = if app.focus == TuiFocus::AgentConsole {
-                Style::default().fg(Color::Rgb(255, 117, 181)) // active Console border
-            } else {
-                Style::default().fg(fg_slate)
-            };
+            let chat_focused = app.focus == TuiFocus::AgentConsole;
 
             let chat_widget = Paragraph::new(chat_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(chat_border)
+                    .border_type(if chat_focused {
+                        BorderType::Rounded
+                    } else {
+                        BorderType::Plain
+                    })
+                    .border_style(Style::default().fg(if chat_focused { ACCENT } else { FAINT }))
                     .title(Span::styled(
-                        " [ swarm agent console ] ",
-                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                        " swarm console ",
+                        Style::default()
+                            .fg(if chat_focused { ACCENT } else { DIM })
+                            .bold(),
                     )),
             );
             f.render_widget(chat_widget, chat_area);
@@ -3114,28 +3124,18 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 0
             };
 
+            // Same calm ┊-gutter spine for the subprocess transcript: a `$ cmd`
+            // is a `run`, an `Error:` is a failed row, everything else is output.
             let mut term_lines = vec![];
             for line in app.terminal_logs.iter().skip(term_start) {
-                let t_span = if line.starts_with('$') {
-                    Line::from(vec![
-                        Span::styled("$ ", Style::default().fg(Color::Rgb(165, 222, 103)).bold()),
-                        Span::styled(&line[1..], Style::default().fg(Color::Rgb(255, 255, 255))),
-                    ])
-                } else if line.starts_with("Error:") {
-                    Line::from(Span::styled(
-                        line,
-                        Style::default().fg(Color::Rgb(247, 37, 133)).bold(),
-                    ))
-                } else if line.starts_with("[System]") {
-                    Line::from(Span::styled(
-                        line,
-                        Style::default().fg(Color::Rgb(128, 142, 162)).italic(),
-                    ))
+                let t_span = if let Some(cmd) = line.strip_prefix('$') {
+                    activity_line("›", "run", cmd.trim_start(), None, false)
+                } else if let Some(err) = line.strip_prefix("Error:") {
+                    activity_line("✗", "error", err.trim_start(), None, true)
+                } else if let Some(rest) = line.strip_prefix("[System]") {
+                    activity_line("·", "system", rest.trim_start(), None, false)
                 } else {
-                    Line::from(Span::styled(
-                        line,
-                        Style::default().fg(Color::Rgb(180, 180, 180)),
-                    ))
+                    activity_line("·", "out", line, None, false)
                 };
                 term_lines.push(t_span);
             }
@@ -3143,10 +3143,11 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let term_block = Paragraph::new(term_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(fg_slate))
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
                     .title(Span::styled(
-                        " [ async background executor ] ",
-                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                        " async executor ",
+                        Style::default().fg(DIM).bold(),
                     )),
             );
             f.render_widget(term_block, term_area);
@@ -3155,14 +3156,11 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let mut tree_lines: Vec<Line> = Vec::new();
             // Root line = the leader, annotated with the expected worker count.
             tree_lines.push(Line::from(vec![
-                Span::styled("● ", Style::default().fg(Color::Rgb(0, 180, 216)).bold()),
-                Span::styled(
-                    "leader",
-                    Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
-                ),
+                Span::styled("● ", Style::default().fg(ACCENT).bold()),
+                Span::styled("leader", Style::default().fg(INK).bold()),
                 Span::styled(
                     format!("  (expecting {} workers)", app.swarm_size),
-                    Style::default().fg(fg_slate),
+                    Style::default().fg(DIM),
                 ),
             ]));
 
@@ -3177,13 +3175,13 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     let branch = if i == last_idx { "  └─ " } else { "  ├─ " };
                     let (glyph, glyph_color) = match w.state {
                         WorkerLifecycle::Spawning => {
-                            ("\u{22ef}", Color::Rgb(128, 142, 162))
+                            ("\u{22ef}", DIM)
                         } // ⋯
-                        WorkerLifecycle::Running => ("\u{25b8}", Color::Rgb(0, 180, 216)), // ▸
-                        WorkerLifecycle::Ok => ("\u{2713}", Color::Rgb(165, 222, 103)), // ✓
-                        WorkerLifecycle::Crashed => ("\u{2717}", Color::Rgb(247, 37, 133)), // ✗
-                        WorkerLifecycle::TimedOut => ("\u{23f1}", Color::Rgb(255, 198, 109)), // ⏱
-                        WorkerLifecycle::SpawnError => ("!", Color::Rgb(247, 37, 133)),
+                        WorkerLifecycle::Running => ("\u{25b8}", ACCENT), // ▸
+                        WorkerLifecycle::Ok => ("\u{2713}", OK), // ✓
+                        WorkerLifecycle::Crashed => ("\u{2717}", BAD), // ✗
+                        WorkerLifecycle::TimedOut => ("\u{23f1}", WARN), // ⏱
+                        WorkerLifecycle::SpawnError => ("!", BAD),
                     };
                     // Short node id: keep it compact in the narrow column.
                     let short_id: String = if w.node_id.len() > 14 {
@@ -3192,23 +3190,14 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                         w.node_id.clone()
                     };
                     let mut spans = vec![
-                        Span::styled(branch, Style::default().fg(fg_slate)),
+                        Span::styled(branch, Style::default().fg(FAINT)),
                         Span::styled(
                             format!("{} ", glyph),
                             Style::default().fg(glyph_color).bold(),
                         ),
-                        Span::styled(
-                            format!("{} ", w.persona),
-                            Style::default().fg(Color::Rgb(255, 255, 255)),
-                        ),
-                        Span::styled(
-                            format!("[{}] ", short_id),
-                            Style::default().fg(fg_slate),
-                        ),
-                        Span::styled(
-                            format!("{}ms", w.elapsed_ms),
-                            Style::default().fg(Color::Rgb(180, 180, 180)),
-                        ),
+                        Span::styled(format!("{} ", w.persona), Style::default().fg(INK)),
+                        Span::styled(format!("[{}] ", short_id), Style::default().fg(FAINT)),
+                        Span::styled(format!("{}ms", w.elapsed_ms), Style::default().fg(DIM)),
                     ];
                     if matches!(
                         w.state,
@@ -3216,7 +3205,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     ) {
                         spans.push(Span::styled(
                             "  queued for recovery",
-                            Style::default().fg(Color::Rgb(255, 198, 109)).italic(),
+                            Style::default().fg(WARN).italic(),
                         ));
                     }
                     tree_lines.push(Line::from(spans));
@@ -3226,38 +3215,36 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let tree_widget = Paragraph::new(tree_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(fg_slate))
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
                     .title(Span::styled(
-                        " [ live swarm tree ] ",
-                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                        " live swarm tree ",
+                        Style::default().fg(DIM).bold(),
                     )),
             );
             f.render_widget(tree_widget, tree_area);
 
-            let input_border = if app.focus == TuiFocus::AgentConsole {
-                Style::default().fg(Color::Rgb(0, 180, 216))
-            } else {
-                Style::default().fg(fg_slate)
-            };
+            let input_focused = app.focus == TuiFocus::AgentConsole;
 
             let input_widget = Paragraph::new(Line::from(vec![
-                Span::styled(
-                    " korg > ",
-                    Style::default().fg(Color::Rgb(0, 180, 216)).bold(),
-                ),
-                Span::styled(
-                    &app.console_input,
-                    Style::default().fg(Color::Rgb(255, 255, 255)),
-                ),
-                Span::styled("▍", Style::default().fg(Color::Rgb(0, 180, 216))),
+                Span::styled(" korg › ", Style::default().fg(ACCENT).bold()),
+                Span::styled(&app.console_input, Style::default().fg(INK)),
+                Span::styled("▍", Style::default().fg(ACCENT)),
             ]))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(input_border)
+                    .border_type(if input_focused {
+                        BorderType::Rounded
+                    } else {
+                        BorderType::Plain
+                    })
+                    .border_style(Style::default().fg(if input_focused { ACCENT } else { FAINT }))
                     .title(Span::styled(
-                        " [ operator console prompt (type /run <cmd> or /edit <file> <inst>) ] ",
-                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                        " prompt  ·  /run <cmd>  /edit <file> <inst> ",
+                        Style::default()
+                            .fg(if input_focused { ACCENT } else { DIM })
+                            .bold(),
                     )),
             );
             f.render_widget(input_widget, input_area);
@@ -3282,37 +3269,38 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let total = app.rubric_status.len();
             // Pill color: only Verified earns green; a claim with failing criteria is amber.
             let pill_color = match goal_state {
-                GoalState::Awaiting => Color::Rgb(100, 110, 125), // dim grey
-                GoalState::InProgress => Color::Rgb(0, 180, 216),  // cyan
-                GoalState::ClaimedUnverified => Color::Rgb(255, 198, 109), // amber
-                GoalState::Verified => Color::Rgb(165, 222, 103), // green
+                GoalState::Awaiting => DIM,                 // dim grey
+                GoalState::InProgress => ACCENT,            // active/live
+                GoalState::ClaimedUnverified => WARN,       // amber, unverified
+                GoalState::Verified => OK,                  // green
             };
+            // State badge reads as a single bracketed/reversed pill in the
+            // state's color — the same calm idiom as the footer mode badge.
             let goal_line = Line::from(vec![
+                Span::styled(" ", Style::default()),
                 Span::styled(
-                    format!(" {} ", goal_state_label(&goal_state)),
-                    Style::default()
-                        .fg(Color::Rgb(13, 17, 23))
-                        .bg(pill_color)
-                        .bold(),
+                    format!("[ {} ]", goal_state_label(&goal_state)),
+                    Style::default().fg(pill_color).reversed().bold(),
                 ),
                 Span::styled("   ", Style::default()),
                 Span::styled(
                     format!("{}/{} criteria met", met, total),
-                    Style::default().fg(Color::Rgb(240, 240, 240)).bold(),
+                    Style::default().fg(INK).bold(),
                 ),
-                Span::styled("   •   ", Style::default().fg(Color::Rgb(128, 142, 162))),
+                Span::styled("   ·   ", Style::default().fg(FAINT)),
                 Span::styled(
                     format!("{:.0}%", app.progress * 100.0),
-                    Style::default().fg(Color::Rgb(240, 240, 240)).bold(),
+                    Style::default().fg(INK).bold(),
                 ),
             ]);
             let goal_band = Paragraph::new(goal_line).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Rgb(128, 142, 162)))
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
                     .title(Span::styled(
-                        " [ goal: claimed-done vs verified-done ] ",
-                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                        " goal · claimed vs verified ",
+                        Style::default().fg(DIM).bold(),
                     )),
             );
             f.render_widget(goal_band, goal_band_area);
@@ -3394,7 +3382,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                         Span::styled("12:     ", Style::default().fg(fg_slate)),
                         Span::styled(
                             "[locked by captain: read-lock active 👁️]",
-                            Style::default().fg(fg_white).bold().reversed(),
+                            Style::default().fg(ACCENT).bold(),
                         ),
                     ]),
                     Line::from(Span::styled(
@@ -3428,7 +3416,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                         Span::styled("23:     ", Style::default().fg(fg_slate)),
                         Span::styled(
                             "[locked by benjamin: write-lock active 🔒]",
-                            Style::default().fg(fg_white).bold().reversed(),
+                            Style::default().fg(ACCENT).bold(),
                         ),
                     ]),
                     Line::from(Span::styled(
@@ -3470,7 +3458,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                         Span::styled("42:     ", Style::default().fg(fg_slate)),
                         Span::styled(
                             "[locked by evaluator: critic-intercept active 🛡️]",
-                            Style::default().fg(fg_white).bold().reversed(),
+                            Style::default().fg(ACCENT).bold(),
                         ),
                     ]),
                     Line::from(Span::styled(
@@ -3479,7 +3467,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     )),
                     Line::from(Span::styled(
                         "44:         return Err(\"CONTESTED: Policy Violation\".into());",
-                        Style::default().fg(Color::Rgb(247, 37, 133)).bold(),
+                        Style::default().fg(BAD).bold(),
                     )),
                     Line::from(Span::styled("45:     }", Style::default().fg(fg_white))),
                     Line::from(Span::styled(
@@ -3493,8 +3481,12 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let editor_block = Paragraph::new(code_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(fg_slate))
-                    .title(" [ workspace snapshot ] "),
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
+                    .title(Span::styled(
+                        " workspace snapshot ",
+                        Style::default().fg(DIM).bold(),
+                    )),
             );
             f.render_widget(editor_block, editor_pane_area);
 
@@ -3503,7 +3495,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 0 => vec![
                     Line::from(Span::styled(
                         "$ korg campaign init",
-                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                        Style::default().fg(OK),
                     )),
                     Line::from(Span::styled(
                         "[System] Initializing heavy-tier swarm workspace...",
@@ -3524,7 +3516,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 1 | 2 => vec![
                     Line::from(Span::styled(
                         "$ korg negotiate --contract-rounds 3",
-                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                        Style::default().fg(OK),
                     )),
                     Line::from(Span::styled(
                         "[Leader] Formulating task decomposition into 4 work packages...",
@@ -3532,17 +3524,17 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     )),
                     Line::from(Span::styled(
                         "[Captain] Negotiating Swarm Agreement (BERT similarity targeting 0.85)...",
-                        Style::default().fg(Color::Rgb(0, 180, 216)),
+                        Style::default().fg(INK),
                     )),
                     Line::from(Span::styled(
                         "[Evaluator] Epistemic and Trajectory Rubrics active.",
-                        Style::default().fg(Color::Rgb(255, 117, 181)),
+                        Style::default().fg(INK),
                     )),
                 ],
                 3 | 4 => vec![
                     Line::from(Span::styled(
                         "$ cargo test --lib tools",
-                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                        Style::default().fg(OK),
                     )),
                     Line::from(Span::styled(
                         format!(
@@ -3561,21 +3553,21 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     )),
                     Line::from(Span::styled(
                         "test tools::tests::test_apply_unified_diff_fuzzy ... ok",
-                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                        Style::default().fg(OK),
                     )),
                     Line::from(Span::styled(
                         "test tools::tests::test_apply_unified_diff_multi_hunk ... ok",
-                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                        Style::default().fg(OK),
                     )),
                     Line::from(Span::styled(
                         "test result: ok. 18 passed; 0 failed; 0 ignored;",
-                        Style::default().fg(Color::Rgb(165, 222, 103)).bold(),
+                        Style::default().fg(OK).bold(),
                     )),
                 ],
                 _ => vec![
                     Line::from(Span::styled(
                         "$ cargo run -- campaign --tui",
-                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                        Style::default().fg(OK),
                     )),
                     Line::from(Span::styled(
                         "[PolicyEngine] Intercepted shell command: 'cargo run'",
@@ -3583,15 +3575,15 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     )),
                     Line::from(Span::styled(
                         "[PolicyEngine] Command matched whitelisted patterns in POLICY.md",
-                        Style::default().fg(Color::Rgb(165, 222, 103)),
+                        Style::default().fg(OK),
                     )),
                     Line::from(Span::styled(
                         "[Evaluator] Running 5-Rubric Critic Guardrail on live trace telemetry...",
-                        Style::default().fg(Color::Rgb(255, 117, 181)),
+                        Style::default().fg(INK),
                     )),
                     Line::from(Span::styled(
                         "[Leader] Swarm scaled to 16 workers concurrently.",
-                        Style::default().fg(Color::Rgb(0, 180, 216)),
+                        Style::default().fg(INK),
                     )),
                 ],
             };
@@ -3599,8 +3591,12 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let terminal_block = Paragraph::new(terminal_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(fg_slate))
-                    .title(" [ console snapshots ] "),
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
+                    .title(Span::styled(
+                        " console snapshots ",
+                        Style::default().fg(DIM).bold(),
+                    )),
             );
             f.render_widget(terminal_block, terminal_pane_area);
 
@@ -3624,7 +3620,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 Line::from(vec![
                     Span::styled(
                         " ⚠️  risk:     ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(WARN).bold(),
                     ),
                     Span::styled(
                         format!("{:.2}", app.risk),
@@ -3634,7 +3630,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 Line::from(vec![
                     Span::styled(
                         " 📈 progress: ",
-                        Style::default().fg(Color::Rgb(165, 222, 103)).bold(),
+                        Style::default().fg(OK).bold(),
                     ),
                     Span::styled(
                         format!("{:.1}%", app.progress),
@@ -3646,8 +3642,9 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let metrics_block = Paragraph::new(metrics_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(fg_slate))
-                    .title(" [ metrics ] "),
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
+                    .title(Span::styled(" metrics ", Style::default().fg(DIM).bold())),
             );
             f.render_widget(metrics_block, ht_sub[0]);
 
@@ -3671,27 +3668,20 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             // Live Swarm Timeline DAG (Right Center)
             let mut timeline_items = vec![];
             let nodes = [
-                ("tx_00: genesis", "orchestration", fg_white),
-                ("tx_01: negotiate_contract", "orchestration", fg_white),
-                (
-                    "tx_02: dispatch_concurrent",
-                    "worker",
-                    Color::Rgb(255, 117, 181),
-                ),
-                ("tx_03: generate_patch", "worker", Color::Rgb(255, 117, 181)),
-                (
-                    "tx_04: evaluate_verdict",
-                    "evaluator",
-                    Color::Rgb(247, 37, 133),
-                ),
-                ("tx_05: operator_steer", "operator", fg_gold),
+                ("tx_00: genesis", "orchestration", INK),
+                ("tx_01: negotiate_contract", "orchestration", INK),
+                ("tx_02: dispatch_concurrent", "worker", ACCENT),
+                ("tx_03: generate_patch", "worker", ACCENT),
+                ("tx_04: evaluate_verdict", "evaluator", WARN),
+                ("tx_05: operator_steer", "operator", DIM),
             ];
 
             for (i, (title, channel, color)) in nodes.iter().enumerate() {
                 let is_current = app.playhead == i;
-                let prefix = if is_current { "▶ " } else { "  " };
+                let prefix = if is_current { "▸ " } else { "  " };
+                // Current node = ACCENT bold (the live position), no bg/reverse.
                 let node_style = if is_current {
-                    Style::default().fg(*color).bold().reversed()
+                    Style::default().fg(ACCENT).bold()
                 } else {
                     Style::default().fg(*color)
                 };
@@ -3703,12 +3693,17 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 };
 
                 timeline_items.push(ListItem::new(Line::from(vec![
-                    Span::styled(prefix, Style::default().fg(fg_gold).bold()),
-                    Span::styled(branch_char, Style::default().fg(fg_slate)),
+                    Span::styled(
+                        prefix,
+                        Style::default()
+                            .fg(if is_current { ACCENT } else { DIM })
+                            .bold(),
+                    ),
+                    Span::styled(branch_char, Style::default().fg(FAINT)),
                     Span::styled(*title, node_style),
                     Span::styled(
                         format!(" [{}]", channel),
-                        Style::default().fg(fg_slate).italic(),
+                        Style::default().fg(FAINT).italic(),
                     ),
                 ])));
             }
@@ -3716,33 +3711,31 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let timeline_block = List::new(timeline_items).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(fg_slate))
-                    .title(" [ timeline ] "),
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
+                    .title(Span::styled(" timeline ", Style::default().fg(DIM).bold())),
             );
             f.render_widget(timeline_block, dag_timeline_area);
 
             // Provenance & Cryptographic Diff Viewer (Right Bottom)
             let prov_lines = vec![
                 Line::from(vec![
-                    Span::styled(" ed25519 key: ", Style::default().fg(fg_white)),
+                    Span::styled(" ed25519 key: ", Style::default().fg(DIM)),
                     Span::styled(
                         "8f3c29a2b7e5... [verified ✓]",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(OK).bold(),
                     ),
                 ]),
                 Line::from(vec![
-                    Span::styled(" merkle root: ", Style::default().fg(fg_gold)),
-                    Span::styled("a7b8c9d0e1f2...", Style::default().fg(fg_white)),
+                    Span::styled(" merkle root: ", Style::default().fg(DIM)),
+                    Span::styled("a7b8c9d0e1f2...", Style::default().fg(INK)),
                 ]),
                 Line::from(vec![
-                    Span::styled(
-                        " file impact: ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)),
-                    ),
-                    Span::styled("src/llm.rs (L20-L30)", Style::default().fg(fg_white)),
+                    Span::styled(" file impact: ", Style::default().fg(DIM)),
+                    Span::styled("src/llm.rs (L20-L30)", Style::default().fg(INK)),
                 ]),
                 Line::from(vec![
-                    Span::styled(" authority:   ", Style::default().fg(fg_slate)),
+                    Span::styled(" authority:   ", Style::default().fg(FAINT)),
                     Span::styled(
                         "swarmauthority-v1-signed",
                         Style::default().fg(fg_slate).italic(),
@@ -3753,8 +3746,12 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let provenance_block = Paragraph::new(prov_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(fg_slate))
-                    .title(" [ provenance ] "),
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
+                    .title(Span::styled(
+                        " provenance ",
+                        Style::default().fg(DIM).bold(),
+                    )),
             );
             f.render_widget(provenance_block, provenance_area);
         }
@@ -3775,21 +3772,23 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             for (i, commit) in app.git_commits.iter().enumerate() {
                 let is_selected = i == app.selected_commit_idx;
 
-                let bullet = if is_selected { "● " } else { "○ " };
+                // Selected commit: ▸ focus marker; unselected: an aligned ○.
+                let bullet = if is_selected { "▸ " } else { "  ○ " };
                 let bullet_style = if is_selected {
-                    Style::default().fg(Color::Rgb(255, 117, 181)).bold()
+                    Style::default().fg(ACCENT).bold()
                 } else {
-                    Style::default().fg(Color::Rgb(128, 142, 162))
+                    Style::default().fg(DIM)
                 };
 
-                let hash_style = Style::default().fg(Color::Rgb(255, 198, 109)).bold();
-                let text_style = if is_selected {
-                    Style::default()
-                        .fg(Color::Rgb(255, 255, 255))
-                        .bold()
-                        .bg(Color::Rgb(40, 40, 45))
+                let hash_style = if is_selected {
+                    Style::default().fg(ACCENT).bold()
                 } else {
-                    Style::default().fg(Color::Rgb(240, 240, 240))
+                    Style::default().fg(DIM).bold()
+                };
+                let text_style = if is_selected {
+                    Style::default().fg(ACCENT).bold()
+                } else {
+                    Style::default().fg(INK)
                 };
 
                 commit_items.push(ListItem::new(Line::from(vec![
@@ -3799,66 +3798,70 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 ])));
             }
 
-            let git_border = if app.focus == TuiFocus::GitTimeline {
-                Style::default().fg(Color::Rgb(255, 117, 181))
-            } else {
-                Style::default().fg(fg_slate)
-            };
+            let git_focused = app.focus == TuiFocus::GitTimeline;
 
             let commits_block = List::new(commit_items).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(git_border)
+                    .border_type(if git_focused {
+                        BorderType::Rounded
+                    } else {
+                        BorderType::Plain
+                    })
+                    .border_style(Style::default().fg(if git_focused { ACCENT } else { FAINT }))
                     .title(Span::styled(
-                        " [ git ledger timeline ] ",
-                        Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                        " ledger timeline ",
+                        Style::default()
+                            .fg(if git_focused { ACCENT } else { DIM })
+                            .bold(),
                     )),
             );
             f.render_widget(commits_block, commits_area);
 
-            let details_border = Style::default().fg(fg_slate);
+            let details_border = Style::default().fg(FAINT);
             if app.selected_commit_idx < app.git_commits.len() {
                 let commit = &app.git_commits[app.selected_commit_idx];
                 let details_lines = vec![
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("  Commit Hash:  ", Style::default().fg(Color::Rgb(255, 198, 109)).bold()),
-                        Span::styled(commit.hash.clone(), Style::default().fg(Color::Rgb(255, 255, 255)).bold()),
+                        Span::styled("  Commit Hash:  ", Style::default().fg(ACCENT).bold()),
+                        Span::styled(commit.hash.clone(), Style::default().fg(INK).bold()),
                     ]),
                     Line::from(vec![
-                        Span::styled("  Author:       ", Style::default().fg(Color::Rgb(255, 117, 181)).bold()),
-                        Span::styled(commit.author.clone(), Style::default().fg(Color::Rgb(240, 240, 240))),
+                        Span::styled("  Author:       ", Style::default().fg(ACCENT).bold()),
+                        Span::styled(commit.author.clone(), Style::default().fg(INK)),
                     ]),
                     Line::from(vec![
-                        Span::styled("  Timestamp:    ", Style::default().fg(Color::Rgb(165, 222, 103)).bold()),
-                        Span::styled(commit.date.clone(), Style::default().fg(Color::Rgb(240, 240, 240))),
+                        Span::styled("  Timestamp:    ", Style::default().fg(ACCENT).bold()),
+                        Span::styled(commit.date.clone(), Style::default().fg(INK)),
                     ]),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("  Signature verification:   ", Style::default().fg(Color::Rgb(128, 142, 162))),
-                        Span::styled("Verified Cryptographic Swarm Chain ✓", Style::default().fg(Color::Rgb(165, 222, 103)).bold().reversed()),
+                        Span::styled("  Signature verification:   ", Style::default().fg(DIM)),
+                        Span::styled("Verified Cryptographic Swarm Chain ✓", Style::default().fg(OK).bold()),
                     ]),
                     Line::from(vec![
-                        Span::styled("  Swarm Authority Key:      ", Style::default().fg(Color::Rgb(128, 142, 162))),
-                        Span::styled("ed25519::korg_ops_root_pubkey_77aef92a83c7d1882c9e...", Style::default().fg(Color::Rgb(180, 180, 180))),
+                        Span::styled("  Swarm Authority Key:      ", Style::default().fg(DIM)),
+                        Span::styled("ed25519::korg_ops_root_pubkey_77aef92a83c7d1882c9e...", Style::default().fg(DIM)),
                     ]),
                     Line::from(""),
                     Line::from("  ─── [ simulated code diff ] ───"),
-                    Line::from(Span::styled("  src/main.rs: L40-L45", Style::default().fg(Color::Rgb(128, 142, 162)))),
-                    Line::from(Span::styled("  -     let value = old_method();", Style::default().fg(Color::Rgb(247, 37, 133)).bold())),
-                    Line::from(Span::styled("  +     let value = new_swarm_steered_algorithm();", Style::default().fg(Color::Rgb(165, 222, 103)).bold())),
+                    Line::from(Span::styled("  src/main.rs: L40-L45", Style::default().fg(DIM))),
+                    Line::from(Span::styled("  -     let value = old_method();", Style::default().fg(BAD).bold())),
+                    Line::from(Span::styled("  +     let value = new_swarm_steered_algorithm();", Style::default().fg(OK).bold())),
                     Line::from(""),
                     Line::from("  ──────────────────────────────────────────────────"),
-                    Line::from(Span::styled("  Press [enter] or [F] to checkout working tree to this commit (Visual Playhead Time-Travel).", Style::default().fg(Color::Rgb(255, 198, 109)).italic())),
+                    Line::from(Span::styled("  Press [enter] or [F] to checkout working tree to this commit (Visual Playhead Time-Travel).", Style::default().fg(DIM).italic())),
                 ];
 
                 let details_widget = Paragraph::new(details_lines).block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Plain)
                         .border_style(details_border)
                         .title(Span::styled(
-                            " [ commit details & cryptosec telemetry ] ",
-                            Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                            " commit details ",
+                            Style::default().fg(DIM).bold(),
                         )),
                 );
                 f.render_widget(details_widget, details_area);
@@ -3867,10 +3870,11 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
+                            .border_type(BorderType::Plain)
                             .border_style(details_border)
                             .title(Span::styled(
-                                " [ commit details & cryptosec telemetry ] ",
-                                Style::default().fg(Color::Rgb(255, 255, 255)).bold(),
+                                " commit details ",
+                                Style::default().fg(DIM).bold(),
                             )),
                     );
                 f.render_widget(details_widget, details_area);
@@ -3879,59 +3883,99 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     }
 
     // ==========================================
-    // 6. Playback Scrubber Track (Bottom Track)
+    // 6. Bottom track — calm replay scrubber + status line + dim hints.
     // ==========================================
     let bottom_panes = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2), // Playhead Scrubber Track
-            Constraint::Length(1), // Bottom Status Bar
+            Constraint::Length(1), // replay playhead scrubber
+            Constraint::Length(1), // status line: mode badge · telemetry · verdict
+            Constraint::Length(1), // dim keybinding hints
         ])
         .split(bottom_track_area);
 
     let scrubber_track_area = bottom_panes[0];
     let status_bar_area = bottom_panes[1];
+    let hint_bar_area = bottom_panes[2];
 
     let filled_ticks = app.playhead.min(10);
     let unfilled_ticks = 10 - filled_ticks;
-    let slider_bar = format!(
-        "◄ ─── {}{} [ tx_{:02} ] ─── ►",
-        "█".repeat(filled_ticks),
-        "░".repeat(unfilled_ticks),
-        app.playhead
-    );
+    // Filled portion in ACCENT (where the playhead has been), the rest FAINT.
+    let scrubber_line = Line::from(vec![
+        Span::styled(" replay ", Style::default().fg(DIM)),
+        Span::styled("◄ ", Style::default().fg(FAINT)),
+        Span::styled("█".repeat(filled_ticks), Style::default().fg(ACCENT)),
+        Span::styled("░".repeat(unfilled_ticks), Style::default().fg(FAINT)),
+        Span::styled(format!(" tx_{:02} ", app.playhead), Style::default().fg(INK)),
+        Span::styled("►", Style::default().fg(FAINT)),
+    ]);
+    f.render_widget(ratatui::widgets::Clear, scrubber_track_area);
+    f.render_widget(Paragraph::new(scrubber_line), scrubber_track_area);
 
-    let scrubber_text = vec![Line::from(vec![
-        Span::styled(" [ replay playhead ] ", Style::default().fg(fg_gold).bold()),
-        Span::styled(slider_bar, Style::default().fg(fg_white).bold()),
+    // ── Mode badge: a single reversed/bracketed pill in the state's color. ──
+    let (mode_label, mode_color) = if app.pending_approval.is_some() {
+        ("AWAITING-APPROVAL", WARN)
+    } else if app.rewind_mode {
+        ("REWIND", ACCENT)
+    } else {
+        ("NORMAL", DIM)
+    };
+
+    // ── A campaign is "live" when real worker signals are in flight, or the
+    //    goal is mid-flight. Drives the working spinner; no fabricated state. ──
+    let working = app
+        .workers
+        .iter()
+        .any(|w| matches!(w.state, WorkerLifecycle::Running | WorkerLifecycle::Spawning))
+        || matches!(
+            derive_goal_state(&app.current_verdict, &app.rubric_status, app.progress),
+            GoalState::InProgress | GoalState::ClaimedUnverified
+        );
+
+    // Short verdict for the footer: first line, clamped — never wraps the bar.
+    let verdict_short = {
+        let first = app.current_verdict.lines().next().unwrap_or("").trim();
+        if first.chars().count() > 40 {
+            let clipped: String = first.chars().take(39).collect();
+            format!("{clipped}…")
+        } else {
+            first.to_string()
+        }
+    };
+
+    let mut status_spans = vec![
+        Span::styled(" ", Style::default()),
         Span::styled(
-            "  (use left/right arrow keys to scrub) ",
-            Style::default().fg(fg_slate).italic(),
+            format!("[ {mode_label} ]"),
+            Style::default().fg(mode_color).reversed().bold(),
         ),
-    ])];
+        Span::styled(" · ", Style::default().fg(FAINT)),
+        Span::styled("swarm:", Style::default().fg(DIM)),
+        Span::styled(format!("{}", app.swarm_size), Style::default().fg(INK)),
+        Span::styled(" · ", Style::default().fg(FAINT)),
+        Span::styled("entropy:", Style::default().fg(DIM)),
+        Span::styled(format!("{:.3}", app.h_sem), Style::default().fg(INK)),
+        Span::styled(" · ", Style::default().fg(FAINT)),
+    ];
+    if working {
+        // Spinner frame derived from existing log length — no new state field.
+        let frame = SPINNER_DOTS[app.console_logs.len() % SPINNER_DOTS.len()];
+        status_spans.push(Span::styled(format!("{frame} "), Style::default().fg(ACCENT)));
+    }
+    status_spans.push(Span::styled(
+        verdict_short,
+        Style::default().fg(if working { ACCENT } else { DIM }),
+    ));
+    f.render_widget(ratatui::widgets::Clear, status_bar_area);
+    f.render_widget(Paragraph::new(Line::from(status_spans)), status_bar_area);
 
-    let scrubber_block = Paragraph::new(scrubber_text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(fg_slate))
-            .title(" [ replay ] "),
-    );
-    f.render_widget(scrubber_block, scrubber_track_area);
-
-    // ==========================================
-    // 7. Bottom Status Bar (Bottom Track Footer)
-    // ==========================================
-    let status_text = format!(
-        " ⚙️  [esc] quit │ [1-4] change tab │ [tab] switch focus │ [p] pause │ [f] steer fork │ playhead: tx_{:02} │ zero-trust engine ok ✓",
-        app.playhead
-    );
-    let status_paragraph = Paragraph::new(status_text).style(
-        Style::default()
-            .bg(Color::Rgb(15, 15, 15))
-            .fg(fg_white)
-            .bold(),
-    );
-    f.render_widget(status_paragraph, status_bar_area);
+    // Separate dim hint line — keybindings on the default background.
+    let hint_line = Line::from(Span::styled(
+        " [esc] quit · [1-4] tab · [tab] focus · [p] pause · [f] steer fork · [←/→] scrub",
+        Style::default().fg(DIM),
+    ));
+    f.render_widget(ratatui::widgets::Clear, hint_bar_area);
+    f.render_widget(Paragraph::new(hint_line), hint_bar_area);
 
     // ==========================================
     // Modal Overlays
@@ -3940,10 +3984,11 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // Rewind-on-failure prompt
     if app.rewind_mode && !app.rewind_candidates.is_empty() {
         let area = centered_rect(72, 40, f.size());
+        f.render_widget(ratatui::widgets::Clear, area);
         let mut lines: Vec<Line> = vec![
             Line::from(Span::styled(
                 format!("  {}", app.rewind_prompt),
-                Style::default().fg(Color::Rgb(255, 215, 0)).bold(),
+                Style::default().fg(ACCENT).bold(),
             )),
             Line::from(""),
         ];
@@ -3952,9 +3997,9 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             let selected = i == app.rewind_cursor;
             let prefix = if selected { "▶ " } else { "  " };
             let style = if selected {
-                Style::default().fg(Color::Rgb(0, 240, 255)).bold()
+                Style::default().fg(ACCENT).bold()
             } else {
-                Style::default().fg(Color::Rgb(160, 165, 175))
+                Style::default().fg(DIM)
             };
             // Scope badge + rationale on the candidate's primary line.
             lines.push(Line::from(Span::styled(
@@ -3966,9 +4011,9 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             )));
             // Invalidation preview: exactly what this rewind discards, from real seq_ids.
             let preview_style = if selected {
-                Style::default().fg(Color::Rgb(255, 140, 90))
+                Style::default().fg(WARN)
             } else {
-                Style::default().fg(Color::Rgb(120, 110, 110))
+                Style::default().fg(DIM)
             };
             lines.push(Line::from(Span::styled(
                 format!("     ↳ {}", format_invalidation(&candidate.invalidates)),
@@ -3981,16 +4026,20 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "  [↑/↓] move   [enter] rewind   [esc] dismiss",
-            Style::default().fg(Color::Rgb(100, 105, 115)),
+            Style::default().fg(DIM),
         )));
         let modal = Paragraph::new(lines)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_type(ratatui::widgets::BorderType::Plain)
-                    .border_style(Style::default().fg(Color::Rgb(255, 50, 80)))
-                    .title(" [ korg rewind — pick a recovery point ] "),
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
+                    .title(Span::styled(
+                        " REWIND — PICK A RECOVERY POINT ",
+                        Style::default().fg(ACCENT).bold(),
+                    )),
             )
+            .style(Style::default().bg(BG).fg(INK))
             .wrap(Wrap { trim: false });
         f.render_widget(modal, area);
     }
@@ -3998,6 +4047,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // Approval Modal
     if let Some(reason) = &app.pending_approval {
         let area = centered_rect(60, 35, f.size());
+        f.render_widget(ratatui::widgets::Clear, area);
         let modal = Paragraph::new(format!(
             "  human in the loop approval mandate required\n\n  {}\n\n  [y] approve   [n] reject   [e] override   [q] terminate swarm",
             reason
@@ -4005,17 +4055,21 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Plain)
-                .border_style(Style::default().fg(fg_slate))
-                .title(" [ human security approval gate ] "),
+                .border_type(BorderType::Plain)
+                .border_style(Style::default().fg(FAINT))
+                .title(Span::styled(
+                    " HUMAN APPROVAL GATE ",
+                    Style::default().fg(ACCENT).bold(),
+                )),
         )
-        .style(Style::default().fg(fg_white));
+        .style(Style::default().bg(BG).fg(INK));
         f.render_widget(modal, area);
     }
 
     // Policy Violation Alert Modal (Thick Double Border Visuals)
     if let Some(reason) = &app.policy_violation_alert {
         let area = centered_rect(65, 35, f.size());
+        f.render_widget(ratatui::widgets::Clear, area);
         let modal = Paragraph::new(format!(
             "\n  ❗ ZERO-TRUST SECURITY POLICY INTERCEPT INTERRUPT\n\n\
               ──────────────────────────────────────────────────────────\n\n  \
@@ -4030,17 +4084,21 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Double)
-                .border_style(Style::default().fg(fg_white))
-                .title(" [ zero-trust policy engine intercept ] "),
+                .border_type(BorderType::Double)
+                .border_style(Style::default().fg(BAD))
+                .title(Span::styled(
+                    " ZERO-TRUST POLICY INTERCEPT ",
+                    Style::default().fg(BAD).bold(),
+                )),
         )
-        .style(Style::default().fg(fg_white));
+        .style(Style::default().bg(BG).fg(INK));
         f.render_widget(modal, area);
     }
 
     // Fork/Steer Modal
     if app.fork_modal_open {
         let area = centered_rect(60, 30, f.size());
+        f.render_widget(ratatui::widgets::Clear, area);
         let modal = Paragraph::new(format!(
             "  time-travel playhead fork & steer terminal\n\n  forking workspace at playhead position tx_{:02}.\n  enter custom steering directive for the branched swarm:\n\n  > {}▍\n\n  [enter] deploy swarm fork   [esc] cancel",
             app.playhead, app.steering_buffer
@@ -4048,11 +4106,14 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Plain)
-                .border_style(Style::default().fg(fg_slate))
-                .title(" [ branching playhead & swarm steering ] "),
+                .border_type(BorderType::Plain)
+                .border_style(Style::default().fg(FAINT))
+                .title(Span::styled(
+                    " PLAYHEAD FORK & STEER ",
+                    Style::default().fg(ACCENT).bold(),
+                )),
         )
-        .style(Style::default().fg(fg_white));
+        .style(Style::default().bg(BG).fg(INK));
         f.render_widget(modal, area);
     }
 
@@ -4068,11 +4129,11 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             Line::from(vec![
                 Span::styled(
                     "  Search Command or File: ",
-                    Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                    Style::default().fg(ACCENT).bold(),
                 ),
                 Span::styled(
                     format!("{}▍", app.command_palette_input),
-                    Style::default().fg(fg_white),
+                    Style::default().fg(INK),
                 ),
             ]),
             Line::from(Span::styled(
@@ -4102,26 +4163,17 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
 
                 if is_selected {
                     lines.push(Line::from(vec![
-                        Span::styled(
-                            "  > ",
-                            Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
-                        ),
+                        Span::styled("  > ", Style::default().fg(ACCENT).bold()),
                         Span::styled(
                             format!("{}{}", icon, label),
-                            Style::default()
-                                .bg(Color::Rgb(255, 117, 181))
-                                .fg(Color::Rgb(10, 10, 12))
-                                .bold(),
+                            Style::default().bg(ACCENT).fg(BG).bold(),
                         ),
                     ]));
                 } else {
                     lines.push(Line::from(vec![
                         Span::styled("    ", Style::default()),
-                        Span::styled(
-                            icon.to_string(),
-                            Style::default().fg(Color::Rgb(255, 117, 181)),
-                        ),
-                        Span::styled(label, Style::default().fg(Color::Rgb(180, 180, 180))),
+                        Span::styled(icon.to_string(), Style::default().fg(DIM)),
+                        Span::styled(label, Style::default().fg(INK)),
                     ]));
                 }
             }
@@ -4144,14 +4196,14 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_type(ratatui::widgets::BorderType::Plain)
-                    .border_style(Style::default().fg(Color::Rgb(255, 117, 181)))
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
                     .title(Span::styled(
-                        " ⚙️  k o r g   c o m m a n d   p a l e t t e ",
-                        Style::default().fg(fg_white).bold(),
+                        " COMMAND PALETTE ",
+                        Style::default().fg(ACCENT).bold(),
                     )),
             )
-            .style(Style::default().bg(Color::Rgb(15, 15, 20)));
+            .style(Style::default().bg(BG).fg(INK));
 
         f.render_widget(ratatui::widgets::Clear, area);
         f.render_widget(modal, area);
@@ -4160,49 +4212,50 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
     // Contract Approval Modal (Thick Double Border Visuals)
     if let Some((round, description, criteria)) = &app.pending_contract_approval {
         let area = centered_rect(70, 50, f.size());
+        f.render_widget(ratatui::widgets::Clear, area);
 
         let mut lines = vec![
             Line::from(vec![
                 Span::styled(
                     "  proposed swarm contract criteria (round ",
-                    Style::default().fg(Color::Rgb(255, 117, 181)),
+                    Style::default().fg(DIM),
                 ),
-                Span::styled(round.to_string(), Style::default().fg(fg_white)),
-                Span::styled(")", Style::default().fg(Color::Rgb(255, 117, 181))),
+                Span::styled(round.to_string(), Style::default().fg(INK).bold()),
+                Span::styled(")", Style::default().fg(DIM)),
             ]),
             Line::from(""),
             Line::from(Span::styled(
                 "  task prompt description:",
-                Style::default().fg(Color::Rgb(255, 117, 181)),
+                Style::default().fg(DIM),
             )),
             Line::from(Span::styled(
                 format!("    {}", description),
-                Style::default().fg(fg_white),
+                Style::default().fg(INK),
             )),
             Line::from(""),
             Line::from(Span::styled(
                 "  consensus acceptance criteria:",
-                Style::default().fg(Color::Rgb(255, 117, 181)),
+                Style::default().fg(DIM),
             )),
         ];
 
         for (i, (desc, sim)) in criteria.iter().enumerate() {
             let sim_color = if *sim >= 0.85 {
-                fg_white
+                OK
             } else if *sim >= 0.70 {
-                Color::Rgb(165, 222, 103)
+                WARN
             } else {
-                fg_gold
+                DIM
             };
             lines.push(Line::from(vec![
-                Span::styled(format!("    [{}] ", i + 1), Style::default().fg(fg_gold)),
+                Span::styled(format!("    [{}] ", i + 1), Style::default().fg(DIM)),
                 Span::styled(
                     format!("{:<50} ", desc.to_lowercase()),
-                    Style::default().fg(fg_white),
+                    Style::default().fg(INK),
                 ),
-                Span::styled("  [ cons: ", Style::default().fg(fg_slate)),
+                Span::styled("  [ cons: ", Style::default().fg(FAINT)),
                 Span::styled(format!("{:.3}", sim), Style::default().fg(sim_color)),
-                Span::styled(" ]", Style::default().fg(fg_slate)),
+                Span::styled(" ]", Style::default().fg(FAINT)),
             ]));
         }
 
@@ -4211,36 +4264,42 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         if app.editing_custom_criterion {
             lines.push(Line::from(Span::styled(
                 "  ▍ operator override terminal active",
-                Style::default().fg(Color::Rgb(255, 117, 181)),
+                Style::default().fg(ACCENT).bold(),
             )));
-            lines.push(Line::from(Span::styled("    type custom criteria below and press enter to inject. press esc to escape override.", Style::default().fg(fg_slate))));
+            lines.push(Line::from(Span::styled("    type custom criteria below and press enter to inject. press esc to escape override.", Style::default().fg(DIM))));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled(
                     "    injected criterion: ",
-                    Style::default().fg(Color::Rgb(255, 117, 181)),
+                    Style::default().fg(DIM),
                 ),
                 Span::styled(
                     format!("{}▍", app.input_buffer),
-                    Style::default().fg(fg_white),
+                    Style::default().fg(INK),
                 ),
             ]));
         } else {
             lines.push(Line::from(Span::styled(
                 "  consensus actions:",
-                Style::default().fg(Color::Rgb(255, 117, 181)),
+                Style::default().fg(DIM),
             )));
-            lines.push(Line::from(Span::styled("    [y] approve swarm contract   [n] demand revision   [e] override and add custom   [f] force cons   [q] cancel", Style::default().fg(fg_white))));
+            lines.push(Line::from(Span::styled("    [y] approve swarm contract   [n] demand revision   [e] override and add custom   [f] force cons   [q] cancel", Style::default().fg(INK))));
         }
 
         let text = Text::from(lines);
-        let modal = Paragraph::new(text).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Plain)
-                .border_style(Style::default().fg(fg_slate))
-                .title(" [ swarm contract consensus & negotiation gate ] "),
-        );
+        let modal = Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
+                    .title(Span::styled(
+                        " CONTRACT CONSENSUS GATE ",
+                        Style::default().fg(ACCENT).bold(),
+                    )),
+            )
+            .style(Style::default().bg(BG).fg(INK));
         f.render_widget(modal, area);
     }
 
@@ -4251,14 +4310,14 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
         let mut lines = vec![];
         lines.push(Line::from(vec![
             Span::styled(
-                "   k o r g   o n b o a r d i n g   g u i d e   (slide ",
-                Style::default().fg(Color::Rgb(255, 117, 181)),
+                "  ONBOARDING GUIDE  (slide ",
+                Style::default().fg(DIM),
             ),
             Span::styled(
                 format!("{}/3", app.help_slide + 1),
-                Style::default().fg(fg_white).bold(),
+                Style::default().fg(INK).bold(),
             ),
-            Span::styled(")", Style::default().fg(Color::Rgb(255, 117, 181))),
+            Span::styled(")", Style::default().fg(DIM)),
         ]));
         lines.push(Line::from(Span::styled(
             "  ────────────────────────────────────────────────────────────",
@@ -4281,7 +4340,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    [1] Workspace IDE: ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Main code exploration canvas, file tree, and code editor.",
@@ -4291,7 +4350,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    [2] Swarm Console: ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Chat with and steer the Lucas, Captain, Harper, or Benjamin personas.",
@@ -4301,7 +4360,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    [3] Observability: ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Real-time telemetry, semantic metrics, score history, and memory locks.",
@@ -4311,7 +4370,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    [4] Git Ledger:    ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Analyze commits, check status, verify provenance, and explore branches.",
@@ -4333,7 +4392,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    [ / ] Keys:         ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Scrub backward and forward through playhead commit states.",
@@ -4343,7 +4402,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    s Key:              ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Branch/Fork the playhead into a new active execution timeline.",
@@ -4353,7 +4412,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    y / n / f Keys:     ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Approve/Demand Revision/Force security and negotiation contracts.",
@@ -4363,7 +4422,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    Zero-Trust Gateway: ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Autonomously intercepts credential leaks or destructive commands.",
@@ -4385,7 +4444,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    Ctrl+P:             ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Toggle searchable Command/File search palette.",
@@ -4395,7 +4454,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    Ctrl+S:             ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Save modifications in the open file editor tab.",
@@ -4405,7 +4464,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    Tab:                ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Shift focus panel (e.g. switch between File Tree and Editor).",
@@ -4415,7 +4474,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    Alt+Left/Right:     ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Cycle active editor tabs in Workspace view.",
@@ -4425,7 +4484,7 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         "    Esc:                ",
-                        Style::default().fg(Color::Rgb(255, 117, 181)).bold(),
+                        Style::default().fg(ACCENT).bold(),
                     ),
                     Span::styled(
                         "Close help slides, command palette, custom criterion, or normal mode.",
@@ -4451,14 +4510,14 @@ fn draw_dashboard(f: &mut Frame, app: &KorgTui) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_type(ratatui::widgets::BorderType::Double)
-                    .border_style(Style::default().fg(Color::Rgb(255, 117, 181)))
+                    .border_type(BorderType::Plain)
+                    .border_style(Style::default().fg(FAINT))
                     .title(Span::styled(
-                        " 🛡️  k o r g   u x   o n b o a r d i n g   ",
-                        Style::default().fg(fg_white).bold(),
+                        " KORG — ONBOARDING ",
+                        Style::default().fg(ACCENT).bold(),
                     )),
             )
-            .style(Style::default().bg(Color::Rgb(15, 15, 20)));
+            .style(Style::default().bg(BG).fg(INK));
 
         f.render_widget(ratatui::widgets::Clear, area);
         f.render_widget(modal, area);
@@ -4527,6 +4586,62 @@ pub fn fuzzy_match(query: &str, target: &str) -> Option<i32> {
     } else {
         None
     }
+}
+
+/// Braille spinner frames for the status-line "working" indicator.
+/// Indexed by any monotonically-advancing counter the app already keeps
+/// (we derive a frame from existing log length — no new state is added).
+const SPINNER_DOTS: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Render one calm activity-log row — the visual spine of the swarm console.
+///
+/// Layout: `┊ {glyph} {verb:<9} {detail}   {duration}`
+///   - `┊` (U+250A) left gutter — one per line, in FAINT (BAD on failure).
+///   - a small `glyph`, then a left-aligned 9-char `verb`, then `detail` (INK).
+///   - `dur`, when present, is right-padded-into a trailing DIM column (e.g. `1.2s`).
+///   - on `failed`: the gutter/glyph/verb turn BAD and a ` [failed]` suffix is
+///     appended; an overlong `detail` is trimmed and any path collapsed to its
+///     filename so the row stays a single calm column.
+///
+/// Pure formatting — colours come from the same palette used in `draw_dashboard`.
+fn activity_line(glyph: &str, verb: &str, detail: &str, dur: Option<&str>, failed: bool) -> Line<'static> {
+    const INK: Color = Color::Rgb(235, 237, 240);
+    const DIM: Color = Color::Rgb(120, 128, 138);
+    const FAINT: Color = Color::Rgb(70, 76, 84);
+    const BAD: Color = Color::Rgb(230, 90, 90);
+
+    // Collapse a long path-ish detail to its final component, then clamp length
+    // so a finished row never wraps the narrow console column.
+    let mut detail = detail.trim().to_string();
+    if detail.len() > 48 {
+        if let Some(tail) = detail.rsplit(['/', '\\']).next() {
+            if tail.len() < detail.len() {
+                detail = tail.to_string();
+            }
+        }
+    }
+    if detail.chars().count() > 48 {
+        let clipped: String = detail.chars().take(47).collect();
+        detail = format!("{clipped}…");
+    }
+
+    let gutter_color = if failed { BAD } else { FAINT };
+    let verb_color = if failed { BAD } else { INK };
+
+    let mut spans = vec![
+        Span::styled("┊ ", Style::default().fg(gutter_color)),
+        Span::styled(format!("{glyph} "), Style::default().fg(gutter_color)),
+        Span::styled(format!("{:<9}", verb), Style::default().fg(verb_color).bold()),
+        Span::styled(" ", Style::default()),
+        Span::styled(detail, Style::default().fg(INK)),
+    ];
+    if failed {
+        spans.push(Span::styled(" [failed]", Style::default().fg(BAD).bold()));
+    }
+    if let Some(d) = dur {
+        spans.push(Span::styled(format!("   {d}"), Style::default().fg(DIM)));
+    }
+    Line::from(spans)
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -4635,6 +4750,39 @@ fn format_invalidation(invalidates: &[u64]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Flatten a rendered `Line` into its plain text for format-only assertions.
+    fn line_text(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn test_activity_line_pads_verb_to_at_least_nine() {
+        let line = activity_line("✓", "edit", "src/llm.rs", Some("1.2s"), false);
+        let text = line_text(&line);
+        // The verb column is left-aligned and padded to >= 9 chars: "edit" (4)
+        // plus at least 5 spaces of padding must appear before the detail.
+        assert!(
+            text.contains("edit     "),
+            "verb must be padded to >=9 chars, got: {text:?}"
+        );
+        // Calm spine gutter is always present, duration rides the tail.
+        assert!(text.starts_with("┊ "), "row must start with the ┊ gutter");
+        assert!(text.contains("1.2s"), "duration should be rendered when present");
+    }
+
+    #[test]
+    fn test_activity_line_failed_carries_marker_and_omits_unknown_duration() {
+        let line = activity_line("✗", "run", "cargo test", None, true);
+        let text = line_text(&line);
+        // A failed row surfaces the bracketed failure marker text.
+        assert!(
+            text.contains("[failed]"),
+            "failed row must contain the failure marker, got: {text:?}"
+        );
+        // Verb stays padded even on the failure path.
+        assert!(text.contains("run      "), "verb still padded on failure");
+    }
 
     #[test]
     fn test_apply_worker_state_upserts_by_node_id() {

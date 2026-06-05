@@ -18,6 +18,49 @@ use tracing_subscriber::{
     EnvFilter,
 };
 
+/// Whether the given process args will launch the full-screen TUI, in which case
+/// tracing must NOT write to the terminal (it would render on top of ratatui).
+///
+/// True for the `tui` subcommand or any `--tui` flag; an explicit `--headless`
+/// always wins (false). Pure + arg-driven so it's testable without a real argv.
+pub fn args_launch_tui(args: &[String]) -> bool {
+    if args.iter().any(|a| a == "--headless") {
+        return false;
+    }
+    args.iter().any(|a| a == "tui" || a == "--tui")
+}
+
+/// Initialize tracing, routing output to a log FILE instead of the terminal when
+/// `args` indicate the TUI will take over the screen. Returns the log path if one
+/// was opened, so the caller can tell the user where logs went.
+pub fn init_tracing_for(args: &[String]) -> Option<std::path::PathBuf> {
+    if args_launch_tui(args) {
+        let dir = crate::paths::cache_dir().join("logs");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("korg-tui.log");
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let env_filter =
+                EnvFilter::try_from_env("KORG_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+            let file_layer = fmt::layer()
+                .with_ansi(false) // never write escape codes into a log file
+                .with_writer(file)
+                .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE);
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(file_layer)
+                .try_init()
+                .ok();
+            return Some(path);
+        }
+    }
+    init_tracing();
+    None
+}
+
 /// Initialize the global tracing subscriber.
 ///
 /// Must be called exactly once, at the top of `main()`, before any async tasks are spawned.
@@ -98,6 +141,23 @@ mod tests {
         // Multiple init calls should not panic (try_init silently fails on second call)
         init_tracing();
         init_tracing();
+    }
+
+    #[test]
+    fn tui_subcommand_routes_logs_off_the_terminal() {
+        assert!(args_launch_tui(&["korg".into(), "tui".into()]));
+    }
+
+    #[test]
+    fn tui_flag_routes_logs_off_the_terminal() {
+        assert!(args_launch_tui(&["korg".into(), "campaign".into(), "--tui".into()]));
+    }
+
+    #[test]
+    fn headless_keeps_logs_on_the_terminal() {
+        // Explicit headless wins even if --tui is also present.
+        assert!(!args_launch_tui(&["korg".into(), "campaign".into()]));
+        assert!(!args_launch_tui(&["korg".into(), "--tui".into(), "--headless".into()]));
     }
 
     #[test]
