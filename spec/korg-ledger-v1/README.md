@@ -19,7 +19,8 @@ the key), not merely tamper-evident.
 |---|---|
 | [`SPEC.md`](./SPEC.md) | the normative specification (canonicalization, preimage, chaining, HMAC, verify + DAG algorithms) |
 | [`vectors/`](./vectors/) + [`conformance.json`](./conformance.json) | the golden conformance vectors with **frozen tip hashes** — the cross-language oracle |
-| [`conformance.py`](./conformance.py) | a dependency-free reference verifier (the executable oracle) |
+| [`conformance.py`](./conformance.py) | a dependency-free Python reference verifier (the executable oracle) |
+| [`js/`](./js/) | a dependency-free JavaScript verifier (`verify.mjs`) + its conformance harness, for Node and the browser |
 
 ## Conformance
 
@@ -31,22 +32,35 @@ An implementation in any language is **conformant** iff, given the vectors in
 2. flags each tampered vector at the named `seq`;
 3. fails an HMAC vector verified without the key.
 
-Run the reference: `python3 conformance.py` (exit 0 = conformant).
+Run a reference — each is one command, exit 0 = conformant:
+
+```sh
+python3 conformance.py        # Python
+node js/conformance.mjs        # JavaScript
+cargo test -p korg-verify      # Rust (from the korg workspace root)
+```
 
 ## Conformant implementations
 
-Four independent implementations reproduce the frozen tips — the spec is real
-and multi-language, not one app's detail:
+**Three genuinely independent implementations** — three languages, three separate
+codepaths written from this spec — reproduce the frozen tips. That is what makes
+the spec real and multi-language rather than one app's internal detail:
 
-| Implementation | Language | Where |
-|---|---|---|
-| **korg-registry** | Rust | `korg/crates/korg-registry/src/ledger_chain.rs` — chains every `CapabilityJournal` event on append |
-| **korgex** | Python | `korgex/src/ledger_spec.py` — `korgex verify` over agent journals |
-| **thumper** | Rust | `thumper/src/ledger/chain.rs` — chains every self-heal recovery session |
-| **Ledger Explorer** | JavaScript | the launch site — recomputes the chain in-browser; tamper a journal and watch it break |
+| Implementation | Language | Where | Conformance |
+|---|---|---|---|
+| **Python reference** | Python | [`conformance.py`](./conformance.py) — dependency-free, stdlib only | `python3 conformance.py` |
+| **JavaScript** | JavaScript | [`js/verify.mjs`](./js/verify.mjs) — dependency-free, Web Crypto, Node + browser | `node js/conformance.mjs` |
+| **Rust** | Rust | [`korg-verify`](../../crates/korg-verify) (`cargo install korg-verify`), built on the publishable [`korg-ledger`](../../crates/korg-ledger) crate | `cargo test -p korg-verify` |
 
-The PyO3 `korg-bridge` writes through the chained `korg-registry` journal, so
-any Python caller (korgex, KorgChat) inherits a conformant journal for free.
+Each reproduces every intact vector's frozen `tip_entry_hash` and flags every
+tampered vector — so a green check on one is corroborated by two independent
+others. The same Ed25519-signed receipt verifies under all three: Python mints
+the signature, Rust and JavaScript re-verify it.
+
+The repo's writers conform by construction: the Rust core
+(`crates/korg-registry`, `crates/korg-ledger`) chains every `CapabilityJournal`
+event on append, and the PyO3 `korg-bridge` writes through it, so any Python
+caller (korgex, KorgChat) inherits a conformant journal for free.
 
 ## Implementing it (5 steps)
 
