@@ -1,10 +1,15 @@
 [package]
 name = "korg-verify"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Independent, dependency-light verifier for korg receipts and journals (hash chain + causal DAG + Ed25519 tip signature). No network, no Python."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/New1Direction/korg"
+homepage = "https://github.com/New1Direction/korg/tree/main/crates/korg-verify"
+documentation = "https://docs.rs/korg-verify"
+readme = "README.md"
+keywords = ["verification", "tamper-evident", "hash-chain", "audit", "provenance"]
+categories = ["command-line-utilities", "cryptography", "development-tools"]
 
 [lib]
 name = "korg_verify"
@@ -15,10 +20,8 @@ name = "korg-verify"
 path = "src/main.rs"
 
 [dependencies]
-korg-registry = { path = "../korg-registry" }
-serde_json = { workspace = true }
+serde_json = "1"
+sha2 = "0.10"
+hmac = "0.12"
 ed25519-dalek = "2"
 hex = "0.4"
-
-[dev-dependencies]
-serde_json = { workspace = true }

@@ -6,11 +6,9 @@ use korg_verify::verify_text;
 use std::path::PathBuf;
 
 fn read(name: &str) -> String {
-    let p = PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../korg-registry/tests/conformance"
-    ))
-    .join(name);
+    // Vendored local copy of the SHARED frozen vectors — keeps this crate
+    // self-contained and publishable (no sibling-crate path dependency).
+    let p = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/conformance")).join(name);
     std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
 }
 

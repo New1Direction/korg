@@ -2210,12 +2210,13 @@ dependencies = [
 
 [[package]]
 name = "korg-verify"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ed25519-dalek",
  "hex",
- "korg-registry",
+ "hmac",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
