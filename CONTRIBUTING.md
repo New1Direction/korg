@@ -1,6 +1,6 @@
 # Contributing to Korg
 
-Thank you for your interest in contributing to **Korg — the first deterministic cognitive runtime**.
+Thank you for your interest in contributing to **Korg — a tamper-evident, verifiable ledger for AI agent cognition**.
 
 ---
 

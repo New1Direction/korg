@@ -32,12 +32,12 @@ axum       = { version = "0.7", features = ["macros"] }
 name = "korg"
 version = "0.1.0"
 edition = "2021"
-description = "The first deterministic cognitive runtime. Every AI agent decision is logged, causally ordered, and reversible — like Git, but for cognition."
+description = "A tamper-evident, verifiable ledger for AI agent cognition: every decision is recorded in a hash-chained, causally-ordered journal that anyone can independently verify — no blockchain, no trust in the tool that produced it."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/New1Direction/korg"
 homepage = "https://github.com/New1Direction/korg"
 documentation = "https://github.com/New1Direction/korg#readme"
-keywords = ["ai", "agents", "runtime", "deterministic", "autonomous"]
+keywords = ["ai", "agents", "verifiable", "tamper-evident", "ledger"]
 categories = ["command-line-utilities", "development-tools", "asynchronous"]
 readme = "README.md"
 exclude = [
