@@ -1,0 +1,41 @@
+{
+  "name": "@korgg/ledger-verify",
+  "version": "0.1.0",
+  "description": "Independent, dependency-free verifier for korg-ledger@v1 receipts and journals (hash chain + causal DAG + Ed25519 tip signature). Runs in Node and the browser via Web Crypto.",
+  "type": "module",
+  "main": "verify.mjs",
+  "exports": {
+    ".": "./verify.mjs"
+  },
+  "bin": {
+    "korg-verify-js": "bin.mjs"
+  },
+  "files": [
+    "verify.mjs",
+    "bin.mjs",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node conformance.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "korg",
+    "korg-ledger",
+    "tamper-evident",
+    "hash-chain",
+    "verification",
+    "ed25519",
+    "audit",
+    "provenance"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/New1Direction/korg",
+    "directory": "spec/korg-ledger-v1/js"
+  },
+  "homepage": "https://github.com/New1Direction/korg/tree/main/spec/korg-ledger-v1"
+}
