@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Current release:** [v0.1.0](https://github.com/New1Direction/korg/releases/tag/v0.1.0) — The first deterministic cognitive runtime.
+> **Current release:** [v0.1.0](https://github.com/New1Direction/korg/releases/tag/v0.1.0) — a tamper-evident, verifiable ledger for AI agent cognition.
 
 ---
 
