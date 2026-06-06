@@ -34,7 +34,7 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/New1Direction/korg",
+    "url": "git+https://github.com/New1Direction/korg.git",
     "directory": "spec/korg-ledger-v1/js"
   },
   "homepage": "https://github.com/New1Direction/korg/tree/main/spec/korg-ledger-v1"
