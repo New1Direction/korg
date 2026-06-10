@@ -7,6 +7,10 @@
 [![Rust 2021](https://img.shields.io/badge/rust-2021-93450a.svg?style=flat-square)](https://www.rust-lang.org)
 [![Tests](https://img.shields.io/badge/tests-175%20passing-brightgreen.svg?style=flat-square)](https://github.com/New1Direction/korg)
 
+<p align="center">
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a>
+</p>
+
 ---
 
 ![korg demo — rewind, fork, and replay AI agent decisions in real time](demo.gif)
