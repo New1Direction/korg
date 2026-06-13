@@ -19,6 +19,11 @@ use sha2::{Digest, Sha256};
 /// The chain anchor: `prev_hash` of the first event in a journal (64 zero hex chars).
 pub const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
+/// Reserved (Phase 2): out-of-band external-anchor sidecar file name. Holds
+/// `{seq_id, entry_hash, anchor_proof, anchored_at}` records that notarize chain
+/// tips. Kept OUTSIDE the chain preimage so it never affects `entry_hash`.
+pub const ANCHORS_FILE: &str = "anchors.jsonl";
+
 /// Fields that ARE the hash/signature and so are excluded from the preimage.
 /// `event_sig` is the reserved Phase-2 per-event signature slot: excluding it
 /// in lockstep across all implementations means a signed event hashes the same
