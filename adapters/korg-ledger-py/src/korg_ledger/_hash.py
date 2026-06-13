@@ -13,9 +13,9 @@ import json
 GENESIS = "0" * 64
 
 #: Fields that ARE the hash/signature and so are excluded from the preimage.
-#: korg-ledger@v1 ships ("entry_hash",); "event_sig" is added in a coordinated
-#: Rust + Python + JS change (Plan 2), never alone.
-HASH_FIELDS = ("entry_hash",)
+#: "event_sig" is the reserved Phase-2 per-event signature slot — excluded in
+#: lockstep across the Rust, Python (this + the spec oracle), and JS impls.
+HASH_FIELDS = ("entry_hash", "event_sig")
 
 
 def canonicalize(value) -> bytes:

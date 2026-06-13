@@ -12,7 +12,7 @@
 //       exit 0 = valid · 1 = invalid/tampered · 2 = usage/parse error
 
 const GENESIS = "0".repeat(64);
-const HASH_FIELDS = ["entry_hash"]; // fields excluded from the hash preimage
+const HASH_FIELDS = ["entry_hash", "event_sig"]; // excluded from preimage (event_sig = reserved Phase-2 signature slot)
 
 const subtle = globalThis.crypto && globalThis.crypto.subtle;
 const enc = new TextEncoder();

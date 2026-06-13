@@ -31,6 +31,13 @@ def test_reproduces_frozen_tip_hashes():
         assert chain_hash(events[-1], key) == v["tip_entry_hash"], v["file"]
 
 
+def test_event_sig_is_excluded_from_preimage():
+    from korg_ledger import chain_hash
+    base = {"seq_id": 1, "prev_hash": "0" * 64, "x": "y"}
+    signed = {**base, "event_sig": "ZmFrZS1zaWc="}
+    assert chain_hash(base) == chain_hash(signed)
+
+
 @pytest.mark.skipif(not SPEC.exists(), reason="spec vectors not present")
 def test_detects_tampering():
     for v in _vectors():

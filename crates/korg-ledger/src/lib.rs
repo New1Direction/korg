@@ -20,7 +20,11 @@ use sha2::{Digest, Sha256};
 pub const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Fields that ARE the hash/signature and so are excluded from the preimage.
-const HASH_FIELDS: &[&str] = &["entry_hash"];
+/// `event_sig` is the reserved Phase-2 per-event signature slot: excluding it
+/// in lockstep across all implementations means a signed event hashes the same
+/// as the unsigned one, and unsigned events (which omit the field) are
+/// unaffected.
+const HASH_FIELDS: &[&str] = &["entry_hash", "event_sig"];
 
 /// Canonical byte encoding of a JSON value (korg-ledger@v1 §2).
 ///
@@ -207,6 +211,16 @@ pub fn verify_dag(events: &[Value]) -> Vec<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn event_sig_is_excluded_from_the_preimage() {
+        // An event carrying an event_sig hashes identically to the same event
+        // without it — the reserved signature field is not part of the chain.
+        let base = json!({"seq_id": 1, "prev_hash": GENESIS_HASH, "x": "y"});
+        let mut signed = base.clone();
+        signed["event_sig"] = json!("ZmFrZS1zaWc=");
+        assert_eq!(chain_hash(&base, None), chain_hash(&signed, None));
+    }
 
     #[test]
     fn canonicalize_sorts_keys_and_is_compact() {
