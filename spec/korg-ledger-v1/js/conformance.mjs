@@ -38,6 +38,15 @@ async function run() {
   failures += assertCanon({ a: "é" }, '{"a":"\\u00e9"}', "non-ascii");
   failures += assertCanon({ a: "𝄞" }, '{"a":"\\ud834\\udd1e"}', "astral surrogate-pair");
 
+  // event_sig is reserved and excluded from the preimage (Phase-2 signature slot).
+  {
+    const base = { seq_id: 1, prev_hash: "0".repeat(64), x: "y" };
+    const signed = { ...base, event_sig: "ZmFrZS1zaWc=" };
+    const ok = (await chainHash(base)) === (await chainHash(signed));
+    console.log(`  [${ok ? "PASS" : "FAIL"}] event_sig excluded from preimage`);
+    if (!ok) failures++;
+  }
+
   // The frozen vectors — the cross-impl oracle.
   const manifest = JSON.parse(readFileSync(here("../conformance.json"), "utf8"));
   if (manifest.spec_version !== "korg-ledger@v1") throw new Error("unexpected spec_version");
