@@ -25,6 +25,11 @@ from korg_setup.claude_config import (
     McpServerSpec,
     ensure_mcp_server_registered,
 )
+from korg_setup.claude_settings import (
+    DEFAULT_SETTINGS_PATH,
+    HookSpec,
+    ensure_hook_registered,
+)
 from korg_setup.discovery import (
     DEFAULT_CANDIDATES,
     IntrospectableBinary,
@@ -66,6 +71,7 @@ class SetupReport:
     backup_path: Optional[Path] = None
     plist_status: Optional[PlistChangeStatus] = None
     config_status: Optional[ChangeStatus] = None
+    hook_status: Optional[str] = None
     # Bridge entries written this run, name → (binary_path, status).
     bridge_entries: dict[str, tuple[Path, ChangeStatus]] = field(default_factory=dict)
     overall_ok: bool = True
@@ -85,8 +91,10 @@ def run_setup(
     ledger_file: Path = DEFAULT_LEDGER_FILE,
     tail_state: Path = DEFAULT_TAIL_STATE,
     claude_config_path: Path = DEFAULT_CONFIG_PATH,
+    claude_settings_path: Path = DEFAULT_SETTINGS_PATH,
     mcp_server_name: str = DEFAULT_MCP_SERVER_NAME,
-    install_daemon: bool = True,
+    register_hook: bool = True,
+    install_daemon: bool = False,  # the korg-hook is now the default capture; daemon is opt-in
     register_introspect_bridges: bool = True,
     introspect_candidates: Optional[tuple[str, ...]] = None,
     bridge_allow: str = DEFAULT_BRIDGE_ALLOW,
@@ -95,16 +103,13 @@ def run_setup(
     """Run the full setup. Each step is idempotent; safe to re-run."""
     report = SetupReport()
 
-    # 1. Binaries on PATH
-    ingest_bin = shutil.which("korg-ingest-claude")
+    # 1. Binaries on PATH. korg-recall-mcp is the hard requirement (the MCP
+    # recall server). The korg-hook capture command is strongly wanted but a
+    # missing hook is a warning (see step 3.4), not a hard failure.
+    # korg-ingest-claude is optional — only the legacy launchd daemon uses it.
     recall_bin = shutil.which("korg-recall-mcp")
-    if not ingest_bin:
-        report.add(
-            "binaries",
-            "fail",
-            "korg-ingest-claude not on PATH. Install the claude-code adapter "
-            "(pip install -e adapters/claude-code) and re-run.",
-        )
+    hook_bin = shutil.which("korg-hook")
+    ingest_bin = shutil.which("korg-ingest-claude")
     if not recall_bin:
         report.add(
             "binaries",
@@ -112,15 +117,13 @@ def run_setup(
             "korg-recall-mcp not on PATH. Install the recall-mcp adapter "
             "(pip install -e 'adapters/recall-mcp[semantic]') and re-run.",
         )
-    if ingest_bin and recall_bin:
-        report.add(
-            "binaries",
-            "ok",
-            f"korg-ingest-claude={ingest_bin}; korg-recall-mcp={recall_bin}",
-        )
-    if not report.overall_ok:
-        # Bail early — none of the next steps make sense without binaries.
         return report
+    detail = f"korg-recall-mcp={recall_bin}"
+    detail += (
+        f"; korg-hook={hook_bin}" if hook_bin
+        else "; korg-hook=NOT FOUND (capture won't auto-register)"
+    )
+    report.add("binaries", "ok", detail)
 
     # 2. Ledger dir
     if dry_run:
@@ -172,6 +175,32 @@ def run_setup(
                 f"could not edit {claude_config_path}: {e}",
             )
             return report
+
+    # 3.4. ~/.claude/settings.json — register the korg-hook capture command.
+    if register_hook:
+        if not hook_bin:
+            report.add(
+                "hooks",
+                "warn",
+                "korg-hook not on PATH; capture won't auto-register. Install the "
+                "claude-code adapter (pip install -e adapters/claude-code) and re-run.",
+            )
+        elif dry_run:
+            report.add("hooks", "ok", f"would register korg-hook in {claude_settings_path}")
+            report.hook_status = "added"
+        else:
+            try:
+                status, _ = ensure_hook_registered(HookSpec(command=hook_bin), claude_settings_path)
+                report.hook_status = status
+                if status == "added":
+                    report.add("hooks", "ok", f"registered korg-hook in {claude_settings_path}")
+                else:
+                    report.add("hooks", "skip", f"korg-hook already registered in {claude_settings_path}")
+            except Exception as e:
+                report.add("hooks", "fail", f"could not edit {claude_settings_path}: {e}")
+                return report
+    else:
+        report.add("hooks", "skip", "register_hook=False")
 
     # 3.5. Auto-register introspect-bridge MCP servers for every binary on
     # PATH that supports --introspect. Idempotent and conservative — the
@@ -322,7 +351,7 @@ def run_setup(
         # Linux + other: print the one-liner the user should run.
         # systemd-user support is a follow-up.
         hint = (
-            f"{ingest_bin} --tail --state {tail_state} --out {ledger_file}"
+            f"{ingest_bin or 'korg-ingest-claude'} --tail --state {tail_state} --out {ledger_file}"
         )
         report.add(
             "daemon",
@@ -349,12 +378,13 @@ def format_report(report: SetupReport) -> str:
             lines.append(f"                   {r}")
     if report.overall_ok:
         lines.append("")
-        lines.append("Setup complete. Restart Claude Code to load the new MCP server.")
-        if report.plist_status in {"created", "updated"}:
+        lines.append("Setup complete. Restart Claude Code to load the MCP server + capture hook.")
+        if report.hook_status in {"added", "unchanged"}:
             lines.append(
-                "Tail capture is now running in the background (launchd). "
-                "Check status with: korg-setup status"
+                "Verifiable capture is now ON for new Claude Code sessions (PostToolUse hook)."
             )
+        if report.plist_status in {"created", "updated"}:
+            lines.append("Legacy tail daemon also running (launchd).")
     else:
         lines.append("")
         lines.append("Setup did not complete cleanly. Fix the issues above and re-run.")
