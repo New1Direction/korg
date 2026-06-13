@@ -79,3 +79,18 @@ def test_run_hook_never_raises_on_bad_input(tmp_path):
     run_hook({"session_id": "x", "hook_event_name": "Stop"}, korg_home=tmp_path / ".korg")
     run_hook({"session_id": "y", "transcript_path": str(tmp_path / "nope.jsonl")},
              korg_home=tmp_path / ".korg")
+
+
+def test_captured_ledger_verifies_under_spec_oracle(tmp_path):
+    # the spec's INDEPENDENT reference verifier (not our own verify_chain)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "spec" / "korg-ledger-v1"))
+    import conformance as oracle
+
+    korg_home = tmp_path / ".korg"
+    transcript = tmp_path / "sess-z.jsonl"
+    _write_transcript(transcript, SESSION)
+    run_hook({"session_id": "sess-z", "transcript_path": str(transcript),
+              "hook_event_name": "PostToolUse"}, korg_home=korg_home)
+    events = _ledger(korg_home, "sess-z")
+    assert oracle.verify_chain(events, None) == []
+    assert oracle.chain_hash(events[-1]) == events[-1]["entry_hash"]

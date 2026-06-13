@@ -19,13 +19,17 @@ classifiers     = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
-dependencies    = []
+# korg-ledger-py is the verifiable-ledger writer the hook/canonical-emit path
+# depends on. In dev it is installed from the sibling path
+# (`pip install -e adapters/korg-ledger-py`); it resolves from PyPI once published.
+dependencies    = ["korg-ledger-py"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0,<9.0.0"]
 
 [project.scripts]
 korg-ingest-claude = "claude_code_adapter.__main__:main"
+korg-hook          = "claude_code_adapter.hook:main"
 
 [tool.setuptools.packages.find]
 where   = ["src"]
