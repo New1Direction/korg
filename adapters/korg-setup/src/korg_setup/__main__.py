@@ -12,12 +12,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
 from korg_setup.claude_config import (
     DEFAULT_CONFIG_PATH,
     remove_mcp_server,
+)
+from korg_setup.claude_settings import (
+    DEFAULT_SETTINGS_PATH,
+    remove_hook,
 )
 from korg_setup.launchd import (
     LABEL,
@@ -43,7 +48,9 @@ def _cmd_setup(args: argparse.Namespace) -> int:
             "korg-setup will:\n"
             f"  · ensure {args.ledger_dir} exists\n"
             f"  · register MCP server '{args.mcp_name}' in {args.claude_config}\n"
-            f"  · install the launchd agent {LABEL} (macOS only)\n",
+            + ("" if args.no_hook else
+               f"  · register the korg-hook capture hook in {args.claude_settings}\n")
+            + (f"  · install the launchd agent {LABEL} (macOS)\n" if args.daemon else ""),
             file=sys.stderr,
         )
         confirm = input("Proceed? [y/N] ").strip().lower()
@@ -55,8 +62,10 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         ledger_dir=args.ledger_dir,
         ledger_file=args.ledger_file,
         claude_config_path=args.claude_config,
+        claude_settings_path=args.claude_settings,
         mcp_server_name=args.mcp_name,
-        install_daemon=not args.no_daemon,
+        register_hook=not args.no_hook,
+        install_daemon=args.daemon,
         register_introspect_bridges=not args.no_bridges,
         bridge_allow=args.bridge_allow,
         dry_run=args.dry_run,
@@ -124,6 +133,17 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     else:
         print(f"  · no bridge entries to remove", file=sys.stderr)
 
+    # Capture hook in ~/.claude/settings.json
+    hook_bin = shutil.which("korg-hook")
+    removed_hook = False
+    for cmd in dict.fromkeys(filter(None, [hook_bin, "korg-hook"])):
+        status_h, _ = remove_hook(cmd, args.claude_settings)
+        removed_hook = removed_hook or status_h == "removed"
+    print(
+        f"  {'✓ removed' if removed_hook else '·'} korg-hook from {args.claude_settings}",
+        file=sys.stderr,
+    )
+
     # launchd
     if is_macos():
         try:
@@ -152,7 +172,13 @@ def main(argv: list[str] | None = None) -> int:
     # Top-level flags also accepted at the setup subcommand for convenience.
     parser.add_argument("--yes", action="store_true", help="non-interactive (skip confirmation prompt)")
     parser.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
-    parser.add_argument("--no-daemon", action="store_true", help="don't install/start the launchd agent")
+    parser.add_argument("--daemon", action="store_true",
+                        help="also install the legacy launchd tail daemon (macOS; off by default — the korg-hook is the default capture)")
+    parser.add_argument("--no-daemon", action="store_true", help=argparse.SUPPRESS)  # deprecated: daemon is already off by default
+    parser.add_argument("--no-hook", action="store_true",
+                        help="don't register the korg-hook capture hook in ~/.claude/settings.json")
+    parser.add_argument("--claude-settings", type=Path, default=DEFAULT_SETTINGS_PATH,
+                        help=f"Claude Code hooks file (default {DEFAULT_SETTINGS_PATH})")
     parser.add_argument(
         "--no-bridges",
         action="store_true",
