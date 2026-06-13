@@ -94,6 +94,20 @@ def test_verify_chain_flags_event_with_no_entry_hash(tmp_path):
     assert any("missing entry_hash" in e for e in errors), errors
 
 
+def test_concurrent_writers_do_not_fork_the_chain(tmp_path):
+    led = tmp_path / "l.jsonl"
+    a = LedgerWriter(led)
+    b = LedgerWriter(led)  # second instance with an independent (soon-stale) cache
+    a.append(event=_evt("user_prompt", 1), actor_id="korg:claude-hook")
+    # b's in-memory tip is stale (seq 0); a correct append must re-read from disk
+    s = b.append(event=_evt("Read", 2), actor_id="korg:claude-hook")
+    assert s == 2
+    events = _lines(led)
+    assert [e["seq_id"] for e in events] == [1, 2]
+    assert events[1]["prev_hash"] == events[0]["entry_hash"]
+    assert verify_chain(events) == []
+
+
 def test_resume_tolerates_blank_and_torn_final_line(tmp_path):
     led = tmp_path / "l.jsonl"
     a = LedgerWriter(led)
