@@ -82,3 +82,28 @@ def test_hmac_mode_requires_key_to_verify(tmp_path):
     events = _lines(led)
     assert verify_chain(events, key) == []          # correct key verifies
     assert verify_chain(events, None) != []          # missing key fails
+
+
+def test_verify_chain_flags_event_with_no_entry_hash(tmp_path):
+    led = tmp_path / "l.jsonl"
+    w = LedgerWriter(led)
+    w.append(event=_evt("user_prompt", 1), actor_id="korg:claude-hook")
+    events = _lines(led)
+    del events[0]["entry_hash"]  # an unchained event must be detected, not ignored
+    errors = verify_chain(events)
+    assert any("missing entry_hash" in e for e in errors), errors
+
+
+def test_resume_tolerates_blank_and_torn_final_line(tmp_path):
+    led = tmp_path / "l.jsonl"
+    a = LedgerWriter(led)
+    a.append(event=_evt("user_prompt", 1), actor_id="korg:claude-hook")
+    a.append(event=_evt("Read", 2), actor_id="korg:claude-hook")
+    # simulate a crash mid-write: a blank line then a torn JSON line at the tail
+    with led.open("a") as f:
+        f.write("\n")
+        f.write('{"seq_id": 3, "metadata": {"emitted')  # truncated, no newline
+    b = LedgerWriter(led)  # must recover from the last intact event, not crash
+    assert b.tip()[0] == 2
+    s3 = b.append(event=_evt("Edit", 3), actor_id="korg:claude-hook")
+    assert s3 == 3
