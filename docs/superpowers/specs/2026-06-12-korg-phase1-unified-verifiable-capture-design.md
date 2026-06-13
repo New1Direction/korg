@@ -1,7 +1,9 @@
 # Phase 1 — Unified Verifiable Ledger + Zero-Config Claude Code Capture
 
-**Status:** Design (approved)
+**Status:** Design (approved); Plan 1 + Plan 3 implemented (see `docs/superpowers/plans/`)
 **Date:** 2026-06-12
+
+> **Implementation refinement (Plan 3, 2026-06-13):** capture writes **per-session ledger files** `~/.korg/sessions/<session_id>.jsonl` (one verifiable hash-chain per causal session) rather than a single interleaved `~/.korg/ledger.jsonl`. This dodges cross-session append races, matches the per-session causal root, and is the shareable Phase-3 receipt. Capture also uses **full-reparse + `emitted_count`** (the hook re-parses the transcript each `PostToolUse`/`Stop` firing) rather than byte-offset incremental, because that captures tool results the buffered parser fills in by mutation. The format unification (one `JournalEvent` JSONL format, verifiable by `korg-verify`) is unchanged.
 **Program:** "Zero-config adoption" (Track A, Phase 1 of 3). Phase 2 = trust hardening; Phase 3 = publish verifier + WASM + UI. Track B (swarm) follows Track A.
 **One-line goal:** Make every Claude Code session land — passively, cross-platform — in a *single, hash-chained, independently verifiable* ledger, so `korg-verify` can validate a real agent session and there is exactly **one** ledger format in the project.
 
