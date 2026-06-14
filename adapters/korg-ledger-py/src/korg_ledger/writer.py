@@ -51,18 +51,29 @@ class LedgerWriter:
             self._last_seq, self._last_hash, self._last_hlc = self._read_tip(f)
 
     def _read_tip(self, f) -> tuple[int, str, Hlc]:
-        """Authoritative tip read from disk (caller holds the lock for writes)."""
+        """Authoritative tip read from disk (caller holds the lock for writes).
+
+        A torn FINAL line (crash mid-write) is tolerated. A corrupt line with
+        valid data after it means the log was spliced/truncated mid-file — we
+        FAIL LOUD rather than silently returning a stale tip, which would let the
+        next append reuse a seq_id and fork the chain."""
         last_seq, last_hash = 0, GENESIS
         last_hlc = Hlc(0, 0, self._hlc_actor_id)
         f.seek(0)
-        for line in f:
-            line = line.strip()
+        lines = f.readlines()
+        for i, raw in enumerate(lines):
+            line = raw.strip()
             if not line:
                 continue
             try:
                 e = json.loads(line)
-            except json.JSONDecodeError:
-                break  # tolerate a torn final line from a crash mid-write
+            except json.JSONDecodeError as ex:
+                if any(later.strip() for later in lines[i + 1 :]):
+                    raise ValueError(
+                        f"corrupt ledger line {i + 1} with data after it "
+                        f"(spliced/truncated log); refusing to append: {ex}"
+                    ) from ex
+                break  # torn final line from a crash mid-write — safe to ignore
             last_seq = e["seq_id"]
             last_hash = e["entry_hash"]
             hlc = e["metadata"]["emitted_at"]

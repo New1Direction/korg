@@ -51,6 +51,31 @@ pub fn canonicalize(value: &Value) -> Vec<u8> {
     s.into_bytes()
 }
 
+/// Largest integer that round-trips through a JS `Number` (`2^53 - 1`).
+const SAFE_INT_MAX: i128 = (1i128 << 53) - 1;
+
+/// Return the first out-of-domain number in `value`, or `None`. korg-ledger@v1
+/// numbers must be integers within ±(2^53-1) so the Rust, Python, and JS verifiers
+/// agree (JS `Number` loses precision beyond that). Finite floats are out of scope
+/// (SPEC §2) but NOT rejected here — Rust and Python agree on them and the JS
+/// verifier reports such an event unverifiable; this keeps capture of float-bearing
+/// tool args working. (serde_json `Number` can never be NaN/Infinity.)
+pub fn canon_domain_error(value: &Value) -> Option<String> {
+    match value {
+        Value::Number(n) => {
+            let out_of_range = n
+                .as_i64()
+                .map(|i| (i as i128).abs() > SAFE_INT_MAX)
+                .or_else(|| n.as_u64().map(|u| (u as i128) > SAFE_INT_MAX))
+                .unwrap_or(false);
+            out_of_range.then(|| format!("integer out of safe range (|n| > 2^53-1): {n}"))
+        }
+        Value::Array(a) => a.iter().find_map(canon_domain_error),
+        Value::Object(m) => m.values().find_map(canon_domain_error),
+        _ => None,
+    }
+}
+
 fn write_canonical(v: &Value, out: &mut String) {
     match v {
         Value::Null => out.push_str("null"),
@@ -214,6 +239,9 @@ pub fn verify_chain(events: &[Value], key: Option<&[u8]>) -> Vec<String> {
                         "seq {sid}: prev_hash breaks the chain \
                          (an event was inserted, deleted, or reordered)"
                     ));
+                }
+                if let Some(msg) = canon_domain_error(e) {
+                    errors.push(format!("seq {sid}: {msg}"));
                 }
                 if chain_hash(e, key) != stored {
                     errors.push(format!(
@@ -381,7 +409,7 @@ mod tests {
         #[test]
         fn any_built_chain_verifies_clean(
             payloads in prop::collection::vec(
-                prop::collection::btree_map("[a-z]{1,5}", any::<i64>(), 0..4), 0..12),
+                prop::collection::btree_map("[a-z]{1,5}", (-9_007_199_254_740_991i64..=9_007_199_254_740_991i64), 0..4), 0..12),
             use_key in any::<bool>(),
         ) {
             let key: Option<&[u8]> = if use_key { Some(b"k") } else { None };
@@ -392,7 +420,7 @@ mod tests {
         #[test]
         fn tampering_any_event_is_detected(
             payloads in prop::collection::vec(
-                prop::collection::btree_map("[a-z]{1,5}", any::<i64>(), 1..4), 1..8),
+                prop::collection::btree_map("[a-z]{1,5}", (-9_007_199_254_740_991i64..=9_007_199_254_740_991i64), 1..4), 1..8),
             idx in any::<usize>(),
         ) {
             let mut chain = build_chain(&payloads, None);
@@ -405,7 +433,7 @@ mod tests {
         #[test]
         fn reordering_breaks_the_chain(
             payloads in prop::collection::vec(
-                prop::collection::btree_map("[a-z]{1,5}", any::<i64>(), 1..4), 2..8),
+                prop::collection::btree_map("[a-z]{1,5}", (-9_007_199_254_740_991i64..=9_007_199_254_740_991i64), 1..4), 2..8),
         ) {
             let mut chain = build_chain(&payloads, None);
             let last = chain.len() - 1;
@@ -427,7 +455,7 @@ mod tests {
         // forward vs reverse insertion legitimately differ (last-write-wins).
         #[test]
         fn canonicalize_is_key_order_independent(
-            m in prop::collection::btree_map("[a-z]{1,6}", any::<i64>(), 0..8),
+            m in prop::collection::btree_map("[a-z]{1,6}", (-9_007_199_254_740_991i64..=9_007_199_254_740_991i64), 0..8),
         ) {
             let mut a = serde_json::Map::new();
             for (k, v) in m.iter() { a.insert(k.clone(), json!(v)); }

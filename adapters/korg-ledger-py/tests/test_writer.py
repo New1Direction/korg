@@ -121,3 +121,30 @@ def test_resume_tolerates_blank_and_torn_final_line(tmp_path):
     assert b.tip()[0] == 2
     s3 = b.append(event=_evt("Edit", 3), actor_id="korg:claude-hook")
     assert s3 == 3
+
+
+def test_torn_final_line_is_tolerated(tmp_path):
+    """A crash mid-write leaves a torn LAST line; the writer ignores it and
+    continues the chain from the last intact event."""
+    led = tmp_path / "ledger.jsonl"
+    w = LedgerWriter(led)
+    w.append(event=_evt("user_prompt", 1), actor_id="a")
+    with led.open("a") as f:
+        f.write('{"seq_id": 2, "partial')  # torn final line, no newline
+    w2 = LedgerWriter(led)  # re-reads tip; must not choke
+    s = w2.append(event=_evt("Read", 2), actor_id="a")
+    assert s == 2  # continued from seq 1, not forked
+
+
+def test_mid_file_corruption_fails_loud(tmp_path):
+    """A corrupt line with valid data AFTER it means the log was spliced — the
+    writer must refuse to append rather than silently fork the chain."""
+    led = tmp_path / "ledger.jsonl"
+    w = LedgerWriter(led)
+    w.append(event=_evt("user_prompt", 1), actor_id="a")
+    w.append(event=_evt("Read", 2), actor_id="a")
+    # splice a garbage line into the MIDDLE
+    good = led.read_text().splitlines()
+    led.write_text(good[0] + "\n" + "{garbage not json}\n" + good[1] + "\n")
+    with pytest.raises(ValueError, match="corrupt ledger line"):
+        LedgerWriter(led)

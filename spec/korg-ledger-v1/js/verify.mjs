@@ -42,6 +42,19 @@ function canonicalJsonString(s) {
   return out + '"';
 }
 
+// Compare strings by Unicode code point (not UTF-16 code unit), matching Python's
+// default string ordering and Rust's byte-wise sort over the UTF-8 korg emits.
+function compareCodePoints(a, b) {
+  const ca = Array.from(a);
+  const cb = Array.from(b);
+  const n = Math.min(ca.length, cb.length);
+  for (let i = 0; i < n; i++) {
+    const d = ca[i].codePointAt(0) - cb[i].codePointAt(0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return ca.length - cb.length;
+}
+
 function canonicalString(value) {
   if (value === null) return "null";
   if (value === true) return "true";
@@ -51,14 +64,20 @@ function canonicalString(value) {
     if (!Number.isInteger(value)) {
       throw new Error(`floats are out of korg-ledger@v1 canonicalization scope: ${value}`);
     }
+    // Integers beyond ±(2^53-1) cannot round-trip through JS Number — reject them
+    // so JS never silently disagrees with Python/Rust (which keep i64 exact).
+    if (!Number.isSafeInteger(value)) {
+      throw new Error(`integer out of safe range (|n| > 2^53-1): ${value}`);
+    }
     return String(value);
   }
   if (t === "string") return canonicalJsonString(value);
   if (Array.isArray(value)) return "[" + value.map(canonicalString).join(",") + "]";
   if (t === "object") {
-    // Default sort is by UTF-16 code unit, which equals code-point order for the
-    // BMP identifier keys korg emits (matches Python sort_keys / Rust keys.sort()).
-    const keys = Object.keys(value).sort();
+    // Sort keys by Unicode CODE POINT (matches Python sort_keys + Rust keys.sort()
+    // byte order). Default Array.sort() compares UTF-16 code units, which diverges
+    // for astral-plane (non-BMP) keys — a real cross-impl hash bug.
+    const keys = Object.keys(value).sort(compareCodePoints);
     return "{" + keys.map((k) => canonicalJsonString(k) + ":" + canonicalString(value[k])).join(",") + "}";
   }
   throw new Error(`unsupported JSON value of type ${t}`);
@@ -132,7 +151,17 @@ export async function verifyChain(events, keyBytes = null) {
     if (e.prev_hash !== expectedPrev) {
       errors.push(`seq ${sid}: prev_hash breaks the chain (an event was inserted, deleted, or reordered)`);
     }
-    if ((await chainHash(e, keyBytes)) !== stored) {
+    // chainHash → canonicalize can throw on out-of-scope numbers (floats,
+    // |int| > 2^53-1). Treat that as a verification failure, never a crash.
+    let computed;
+    try {
+      computed = await chainHash(e, keyBytes);
+    } catch (err) {
+      errors.push(`seq ${sid}: not canonicalizable (${err.message})`);
+      expectedPrev = stored;
+      continue;
+    }
+    if (computed !== stored) {
       errors.push(`seq ${sid}: entry_hash mismatch (content was tampered)`);
     }
     expectedPrev = stored;
@@ -170,7 +199,9 @@ export async function verifyTipSig(pubkeyHex, tipHex, sigHex) {
     const pk = hexToBytes(pubkeyHex);
     const msg = hexToBytes(tipHex);
     const sig = hexToBytes(sigHex);
-    if (!pk || !msg || !sig || pk.length !== 32 || sig.length !== 64) return false;
+    // msg.length must be 32 — an empty/short tip yields a 0-byte message an
+    // attacker can sign with their own key, forging a "validly signed" receipt.
+    if (!pk || !msg || !sig || pk.length !== 32 || msg.length !== 32 || sig.length !== 64) return false;
     const key = await subtle.importKey("raw", pk, { name: "Ed25519" }, false, ["verify"]);
     return await subtle.verify({ name: "Ed25519" }, key, sig, msg);
   } catch {
@@ -261,8 +292,13 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
   const dagOk = dag.length === 0;
   for (const e of dag) errors.push(e);
 
+  // A receipt with no events makes no attestation.
+  const eventsOk = events.length > 0;
+  if (!eventsOk) errors.push("receipt contains no events");
+
   const claimedTip = typeof receipt.tip === "string" ? receipt.tip : null;
-  const head = events.length ? events[events.length - 1].entry_hash : null;
+  const last = events.length ? events[events.length - 1] : null;
+  const head = last && typeof last === "object" ? last.entry_hash : null;
   let tipOk;
   if (claimedTip == null) tipOk = true;
   else if (head == null) tipOk = false;
@@ -274,9 +310,17 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
   if (receipt.signature) {
     const pubkey = receipt.signature.pubkey || "";
     const sigHex = receipt.signature.sig || "";
-    let ok = await verifyTipSig(pubkey, claimedTip || "", sigHex);
     signer = pubkey;
-    if (!ok) errors.push("signature does not verify for the recorded tip");
+    // Fail closed if a signature is present but there's no tip to attest to,
+    // rather than verifying over an empty message.
+    let ok;
+    if (claimedTip == null) {
+      ok = false;
+      errors.push("receipt carries a signature but no tip to attest to");
+    } else {
+      ok = await verifyTipSig(pubkey, claimedTip, sigHex);
+      if (!ok) errors.push("signature does not verify for the recorded tip");
+    }
     if (pinPubkey != null && pinPubkey !== pubkey) {
       ok = false;
       errors.push(`signer ${pubkey} does not match the pinned key ${pinPubkey}`);
@@ -287,7 +331,7 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
     errors.push(`receipt is unsigned but signer ${pinPubkey} was required`);
   }
 
-  const valid = chainOk && dagOk && tipOk && signatureOk !== false;
+  const valid = eventsOk && chainOk && dagOk && tipOk && signatureOk !== false;
   return {
     valid,
     kind: "receipt",
@@ -341,12 +385,14 @@ export function deriveSummary(events) {
     .filter((e) => e !== null && typeof e === "object" && !Array.isArray(e))
     .map((e) => e.seq_id)
     .filter((s) => typeof s === "number" && Number.isInteger(s));
+  // Sort by code point to match Python sorted() / Rust BTreeSet ordering, so the
+  // re-derived summary canonicalizes byte-identically across impls.
   const byToolSorted = {};
-  for (const k of Object.keys(byTool).sort()) byToolSorted[k] = byTool[k];
+  for (const k of Object.keys(byTool).sort(compareCodePoints)) byToolSorted[k] = byTool[k];
   return {
-    agents: [...agents].sort(),
+    agents: [...agents].sort(compareCodePoints),
     by_tool: byToolSorted,
-    files: [...files].sort(),
+    files: [...files].sort(compareCodePoints),
     seq_first: seqs.length ? Math.min(...seqs) : 0,
     seq_last: seqs.length ? Math.max(...seqs) : 0,
   };

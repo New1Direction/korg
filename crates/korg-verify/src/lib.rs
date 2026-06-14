@@ -80,8 +80,12 @@ pub fn verify_tip_sig(pubkey_hex: &str, tip_hex: &str, sig_hex: &str) -> bool {
     ) else {
         return false;
     };
-    let (Ok(pk), Ok(sig)) = (
+    // The message MUST be a 32-byte tip hash. Without this, an empty/short tip
+    // (`tip_hex == ""`) decodes to a 0-byte message that an attacker can sign with
+    // their own key — forging a "validly signed" tipless receipt.
+    let (Ok(pk), Ok(msg), Ok(sig)) = (
         <[u8; 32]>::try_from(pk.as_slice()),
+        <[u8; 32]>::try_from(msg.as_slice()),
         <[u8; 64]>::try_from(sig.as_slice()),
     ) else {
         return false;
@@ -200,16 +204,34 @@ pub fn verify_receipt(receipt: &Value, key: Option<&[u8]>, pin_pubkey: Option<&s
         errors.push("recorded tip does not match the chain head".to_string());
     }
 
+    // A receipt with no events makes no attestation — reject it rather than
+    // letting an empty/tipless object pass as "valid".
+    let events_ok = !events.is_empty();
+    if !events_ok {
+        errors.push("receipt contains no events".to_string());
+    }
+
     let mut signature_ok = None;
     let mut signer = None;
     if let Some(sig) = receipt.get("signature") {
         let pubkey = sig.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
         let sig_hex = sig.get("sig").and_then(|v| v.as_str()).unwrap_or("");
-        let mut ok = verify_tip_sig(pubkey, claimed_tip.unwrap_or(""), sig_hex);
         signer = Some(pubkey.to_string());
-        if !ok {
-            errors.push("signature does not verify for the recorded tip".to_string());
-        }
+        // A signature must attest to a real tip. Fail closed if there is none,
+        // rather than verifying over an empty message.
+        let mut ok = match claimed_tip {
+            Some(tip) => {
+                let v = verify_tip_sig(pubkey, tip, sig_hex);
+                if !v {
+                    errors.push("signature does not verify for the recorded tip".to_string());
+                }
+                v
+            }
+            None => {
+                errors.push("receipt carries a signature but no tip to attest to".to_string());
+                false
+            }
+        };
         if let Some(pin) = pin_pubkey {
             if pin != pubkey {
                 ok = false;
@@ -224,7 +246,15 @@ pub fn verify_receipt(receipt: &Value, key: Option<&[u8]>, pin_pubkey: Option<&s
         errors.push(format!("receipt is unsigned but signer {pin} was required"));
     }
 
-    let valid = chain_ok && dag_ok && tip_ok && signature_ok != Some(false);
+    let domain_ok = match korg_ledger::canon_domain_error(receipt) {
+        Some(msg) => {
+            errors.push(msg);
+            false
+        }
+        None => true,
+    };
+    let valid =
+        events_ok && chain_ok && dag_ok && tip_ok && domain_ok && signature_ok != Some(false);
     Verdict {
         valid,
         kind: "receipt",
@@ -413,12 +443,23 @@ pub fn verify_goldseal(envelope: &Value, pin_pubkey: Option<&str>) -> Verdict {
         (Some(false), None)
     };
 
+    // Reject envelope-level out-of-domain numbers (e.g. a big issued_at/summary
+    // count) so Rust agrees with Python/JS, which reject them at canonicalize time.
+    let domain_ok = match korg_ledger::canon_domain_error(envelope) {
+        Some(msg) => {
+            errors.push(msg);
+            false
+        }
+        None => true,
+    };
+
     let valid = chain_ok
         && dag_ok
         && schema_ok
         && tip_ok
         && count_ok
         && summary_ok
+        && domain_ok
         && signature_ok != Some(false)
         && anchors_ok != Some(false);
     Verdict {

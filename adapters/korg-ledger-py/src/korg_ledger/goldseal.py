@@ -60,9 +60,9 @@ def derive_summary(events: list) -> dict:
     """Deterministically derive the human summary from the event chain.
 
     Every field here is a pure function of ``events`` so a verifier can
-    re-derive it and reject any tampered summary. Integer/string/array values
-    only (canonicalization rejects floats), so the derived object canonicalizes
-    byte-identically across Rust/Python/JS.
+    re-derive it and reject any tampered summary. It emits only integers (counts,
+    seq ids), strings, arrays and objects-of-those — never floats — so the derived
+    object canonicalizes byte-identically across Rust/Python/JS.
     """
     by_tool: dict[str, int] = {}
     files: set[str] = set()
@@ -178,7 +178,11 @@ def verify_structure(envelope: dict) -> list:
 
     claimed_summary = envelope.get("summary")
     derived = derive_summary(events)
-    if canonicalize(claimed_summary) != canonicalize(derived):
+    try:
+        summary_match = canonicalize(claimed_summary) == canonicalize(derived)
+    except ValueError:
+        summary_match = False  # out-of-domain number in the claimed summary
+    if not summary_match:
         errors.append("summary does not match the events (re-derivation mismatch)")
 
     anchors = envelope.get("anchors")

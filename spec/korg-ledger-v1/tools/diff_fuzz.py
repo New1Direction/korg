@@ -79,6 +79,9 @@ def mutations(base: dict):
     yield mut("anchor-commit", lambda c: c["anchors"][0]["anchor_proof"].update(commit="f" * 40))
     yield mut("anchor-hash", lambda c: c["anchors"][0].update(entry_hash="deadbeef"))
     yield mut("drop-anchors", lambda c: c.pop("anchors"))
+    # out-of-domain numbers must be rejected by all three (was a silent divergence)
+    yield mut("bigint-arg", lambda c: c["events"][1]["args"].update(big=2**60))
+    yield mut("bigint-issued", lambda c: c.update(issued_at=2**60))
 
 
 def main() -> None:
@@ -104,6 +107,46 @@ def main() -> None:
         if not agree:
             diverged += 1
         print(f"  [{'ok' if agree else 'DIVERGE':>7}] {label:16} py={py} rust={rust} js={js}")
+
+    # Positive cross-impl check: a VALID seal full of canonicalization edge cases —
+    # astral-plane (non-BMP) object keys, the max-safe integer, and non-ASCII paths —
+    # must verify VALID in all three. This is what catches a key-sort / number /
+    # escaping divergence on LEGITIMATE data (the opposite of the mutation cases).
+    from korg_ledger import chain_hash
+    from korg_ledger.signing import mint_seal
+
+    edge_events = []
+    prev = "0" * 64
+    edge_steps = [
+        ("user_prompt", {"prompt": "café — naïve 𝄞", "￿": 1, "\U0001d11e": 2}),
+        ("Edit", {"file_path": "src/café/𝄞.py", "n": 9007199254740991}),
+    ]
+    for i, (tool, args) in enumerate(edge_steps, start=1):
+        rec = {
+            "schema_version": "1.0", "seq_id": i, "source_agent": "a", "tool_name": tool,
+            "args": args, "result": {}, "payload_refs": [], "success": True,
+            "duration_ms": 0, "prev_hash": prev,
+        }
+        rec["entry_hash"] = chain_hash(rec)
+        prev = rec["entry_hash"]
+        edge_events.append(rec)
+    edge_seal = mint_seal(
+        events=edge_events, claim="café 𝄞", issuer_agent="a", issued_at=1, private_seed=bytes([42]) * 32
+    )
+    total += 1
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump(edge_seal, f, ensure_ascii=False)
+        path = f.name
+    try:
+        py = verify_seal(edge_seal) == []
+        rust = _cli_valid([str(RUST_BIN), path, "--json"])
+        js = _cli_valid(["node", str(VERIFY_MJS), path, "--json"])
+    finally:
+        os.unlink(path)
+    agree = py is True and rust is True and js is True
+    if not agree:
+        diverged += 1
+    print(f"  [{'ok' if agree else 'DIVERGE':>7}] {'edge-valid (astral/maxint/unicode)':16} py={py} rust={rust} js={js}")
 
     print(f"\ndifferential fuzz: {total} candidates · {diverged} divergence(s)")
     sys.exit(1 if diverged else 0)

@@ -40,7 +40,9 @@ def parse_github_repo(url: str) -> tuple[str, str]:
         u = u[:-4]
     u = u.replace("https://", "").replace("http://", "")
     parts = [p for p in u.split("/") if p]
-    if len(parts) >= 3 and parts[0].endswith("github.com"):
+    # Exact host match — a suffix test like endswith("github.com") would accept a
+    # spoofed witness host such as notgithub.com/owner/repo.
+    if len(parts) >= 3 and parts[0] in ("github.com", "www.github.com"):
         return parts[1], parts[2]
     if len(parts) == 2 and "." not in parts[0]:
         return parts[0], parts[1]

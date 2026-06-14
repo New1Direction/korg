@@ -16,6 +16,7 @@ import {
   verifyEventSig,
   verifyAnchors,
   verifyGoldSeal,
+  verifyReceipt,
   deriveSummary,
 } from "./verify.mjs";
 
@@ -176,6 +177,20 @@ async function run() {
       ok = ok && (await safe(m));
     }
     console.log(`  [${ok ? "PASS" : "FAIL"}] goldseal fuzz             no-throw + junk/mutations rejected`);
+    if (!ok) failures++;
+  }
+
+  // CRITICAL forge regression: a tipless receipt + a signature over the empty
+  // message must NOT verify, and an empty receipt must not pass.
+  {
+    const r = JSON.parse(
+      readFileSync(here("../../../crates/korg-verify/tests/fixtures/signed-receipt.json"), "utf8")
+    );
+    delete r.tip;
+    const tipless = await verifyReceipt(r);
+    const empty = await verifyReceipt({ schema: "korgex-receipt@v1", events: [] });
+    const ok = tipless.valid === false && tipless.signature_ok === false && empty.valid === false;
+    console.log(`  [${ok ? "PASS" : "FAIL"}] receipt forge            tipless-signed + empty rejected`);
     if (!ok) failures++;
   }
 
