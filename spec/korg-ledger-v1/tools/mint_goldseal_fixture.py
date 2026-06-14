@@ -63,12 +63,30 @@ def build_chain() -> list[dict]:
 
 def main() -> None:
     events = build_chain()
+    tip = events[-1]["entry_hash"]
+    # A git-tip anchor over the chain head. It is bound BOTH structurally
+    # (entry_hash must match the chain) AND cryptographically (the seal signs the
+    # anchor set). The external/network proof of the commit is a separate operator
+    # step; here the values are fixed so the fixture stays deterministic.
+    anchors = [
+        {
+            "seq_id": events[-1]["seq_id"],
+            "entry_hash": tip,
+            "anchor_kind": "git-tip",
+            "anchor_proof": {
+                "repo": "https://github.com/New1Direction/korg",
+                "commit": "0" * 40,
+            },
+            "anchored_at": "2026-06-14T00:00:00Z",
+        }
+    ]
     seal = mint_seal(
         events=events,
         claim="Added a /healthz endpoint to src/app.py with a passing regression test",
         issuer_agent=AGENT,
         issued_at=ISSUED_AT,
         private_seed=SEED,
+        anchors=anchors,
     )
 
     out_dir = REPO / "crates" / "korg-verify" / "tests" / "fixtures"

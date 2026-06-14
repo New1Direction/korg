@@ -94,9 +94,10 @@ features, and that discipline is the reason anyone should believe the rest of th
 - A Gold Seal proves a session is a **faithful record**, not that the work is **good**.
 - It proves **authorship by a key**, not **identity** — key↔real-world-org binding is
   pinned by the relying party today; a hosted registry is future work, not a claim.
-- It proves **order and content**, not **time** — trusted timestamping needs an
-  external anchor (structural anchoring shipped; the network/transparency-log resolver
-  is on the roadmap, not done).
+- It proves **order and content**, not **time** — the anchor *set* is now sealed
+  (un-strippable, un-forgeable) and chain-bound, but the *network resolution* of a
+  git-tip anchor against public history — what actually yields a trusted "published
+  before" bound — is on the roadmap, not done.
 - The hosted layers above (transparency log, registry, dashboards, marketplace) are
   the *business*, and are **not built yet**. What is built and verifiable today is the
   primitive: capture → ledger → Gold Seal → independent re-verification.

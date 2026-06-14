@@ -288,13 +288,13 @@ fn derive_summary(events: &[Value]) -> Value {
     })
 }
 
-/// The signed portion of a Gold Seal: the envelope minus events/seal/anchors. Its
+/// The signed portion of a Gold Seal: the envelope minus `events` and `seal` (so
+/// it includes `anchors` when present — the seal commits to the anchor set). Its
 /// canonicalization is the seal-signature preimage (identical at mint and verify).
 fn seal_header(envelope: &Value) -> Value {
     let mut obj = envelope.as_object().cloned().unwrap_or_default();
     obj.remove("events");
     obj.remove("seal");
-    obj.remove("anchors");
     Value::Object(obj)
 }
 

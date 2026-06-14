@@ -130,14 +130,19 @@ async function run() {
     lying.summary.files = [];
     const stripped = JSON.parse(JSON.stringify(env));
     delete stripped.seal;
+    // anchors are bound into the seal: stripping the (signed) anchor must break it
+    const unanchored = JSON.parse(JSON.stringify(env));
+    delete unanchored.anchors;
     const ok =
       v.valid &&
       v.kind === "goldseal" &&
       v.summary_ok === true &&
+      v.anchors_ok === true &&
       derived === embedded &&
       !(await verifyGoldSeal(lying)).valid &&
-      !(await verifyGoldSeal(stripped)).valid;
-    console.log(`  [${ok ? "PASS" : "FAIL"}] goldseal-v1.json          cross-impl seal + summary (Python→JS)`);
+      !(await verifyGoldSeal(stripped)).valid &&
+      !(await verifyGoldSeal(unanchored)).valid;
+    console.log(`  [${ok ? "PASS" : "FAIL"}] goldseal-v1.json          cross-impl seal + summary + bound anchors (Python→JS)`);
     if (!ok) failures++;
   }
 

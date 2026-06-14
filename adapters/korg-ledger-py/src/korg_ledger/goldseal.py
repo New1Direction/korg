@@ -10,8 +10,9 @@ trust in the tool that produced it:
   3. the human summary is **re-derived from the events** and must match
      byte-for-byte — so the summary literally cannot lie about what happened;
   4. the ``seal`` signature covers the canonical header (claim + issuer +
-     tip + event_count + summary), so neither the events nor the summary nor
-     the claim can be altered independently of the issuer's key.
+     tip + event_count + summary + anchors), so neither the events nor the
+     summary nor the claim nor the anchor set can be altered independently of
+     the issuer's key.
 
 This module is **stdlib-only**: it does derivation + the structural checks
 (1-3). The Ed25519 seal signature (4) lives in :mod:`korg_ledger.signing`
@@ -31,11 +32,12 @@ from ._hash import canonicalize, verify_anchors, verify_chain
 SCHEMA = "goldseal@v1"
 SPEC = "korg-ledger@v1"
 
-#: Envelope keys that are NOT part of the signed header. ``events`` is bound via
-#: ``tip``/``summary``; ``anchors`` are a detachable sidecar bound structurally
-#: to the chain (not to the seal signature — see SPEC limits); ``seal`` is the
-#: signature itself.
-_NON_HEADER_KEYS = ("events", "seal", "anchors")
+#: Envelope keys that are NOT part of the signed header. ``events`` is excluded
+#: (large, and already bound via ``tip`` + the verified chain); ``seal`` is the
+#: signature itself. ``anchors`` ARE in the signed header — the seal commits to
+#: the exact anchor set, so an anchor cannot be stripped, added, or altered
+#: without breaking the seal (it remains structurally bound to the chain too).
+_NON_HEADER_KEYS = ("events", "seal")
 
 
 def _event_view(event: dict) -> tuple:
@@ -84,7 +86,8 @@ def derive_summary(events: list) -> dict:
 
 
 def seal_header(envelope: dict) -> dict:
-    """The signed portion of a Gold Seal: the envelope minus events/seal/anchors.
+    """The signed portion of a Gold Seal: the envelope minus ``events`` and
+    ``seal`` (so it includes ``anchors`` when present).
 
     This is the exact object whose canonicalization is the seal signature
     preimage. Identical at mint time and verify time, so the signature is

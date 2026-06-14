@@ -107,9 +107,21 @@
       "entry_hash": "bd8389e3d91163a4d458376b94ca40a09746cbfb6e4183ab2a84fd75bdf6cb05"
     }
   ],
+  "anchors": [
+    {
+      "seq_id": 5,
+      "entry_hash": "bd8389e3d91163a4d458376b94ca40a09746cbfb6e4183ab2a84fd75bdf6cb05",
+      "anchor_kind": "git-tip",
+      "anchor_proof": {
+        "repo": "https://github.com/New1Direction/korg",
+        "commit": "0000000000000000000000000000000000000000"
+      },
+      "anchored_at": "2026-06-14T00:00:00Z"
+    }
+  ],
   "seal": {
     "alg": "ed25519",
     "pubkey": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
-    "sig": "1b67381dabca439291c52fd3c0ac597c95085087c1bd03d7a43b3f1c3f25b05ff5702598da17dd394669b3fad8faf5a675aaf7228d3b94aaae90bac29a994800"
+    "sig": "a30927527dd88461958288d42d775b06833c488f023f0a054bb7895415f75994b8ac4521c2e3923f86a2f760eda1c58a711e7f3052a3c28cca3a99ac7c9f4307"
   }
 }
