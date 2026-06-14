@@ -6,8 +6,17 @@ name: Gold Seal demo — mint → verify in CI
 # agent work in CI" looks like.
 on:
   workflow_dispatch:
+  # On PRs: mint + verify and post a sticky Gold Seal check comment (the demo).
+  pull_request:
+    paths:
+      - "adapters/korg-seal/**"
+      - "adapters/korg-ledger-py/**"
+      - "spec/korg-ledger-v1/**"
+      - ".github/actions/verify-goldseal/**"
+      - ".github/workflows/goldseal-demo.yml"
+  # On main (post-merge): dogfood without commenting.
   push:
-    branches: [main, feat/goldseal-certificate]
+    branches: [main]
     paths:
       - "adapters/korg-seal/**"
       - "adapters/korg-ledger-py/**"
@@ -17,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write  # so the Action can post the sticky Gold Seal comment
 
 jobs:
   mint-and-verify:
