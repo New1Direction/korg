@@ -94,6 +94,12 @@ struct Cli {
     #[arg(long)]
     introspect: bool,
 
+    /// Re-enable the synthetic stress/telemetry injectors (default OFF).
+    /// The hermetic default scores only real telemetry; this flag is for
+    /// demos / fault-injection where adversarial signal is wanted.
+    #[arg(long)]
+    inject_stress: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -178,6 +184,10 @@ enum Commands {
         /// Enable autonomous goal execution mode (bypasses all manual approvals)
         #[arg(long)]
         goal: bool,
+
+        /// Re-enable the synthetic stress/telemetry injectors (default OFF).
+        #[arg(long)]
+        inject_stress: bool,
     },
 
     /// Launch the interactive Ratatui TUI dashboard (live ticker, approvals, .ktrans stream, etc.)
@@ -472,6 +482,7 @@ async fn main() -> Result<()> {
             println!("{slate}├──{reset} Prompt: {bold}{pink}{}{reset}", prompt);
             let mut leader = LeaderOrchestrator::new(prompt.to_string(), None);
             leader.goal_mode = true;
+            leader.set_inject_stress(cli.inject_stress);
             leader.set_cognition_mode("autonomous").await;
             println!(
                 "{slate}├──{reset} Session: {bold}{cyan}{}{reset}",
@@ -597,6 +608,7 @@ async fn main() -> Result<()> {
                     .to_string(),
                 sid,
             );
+            leader.set_inject_stress(cli.inject_stress);
             if goal || cli.goal {
                 leader.goal_mode = true;
                 leader.set_cognition_mode("autonomous").await;
@@ -650,8 +662,10 @@ async fn main() -> Result<()> {
             web,
             mode,
             goal,
+            inject_stress,
         } => {
             let sid = session.and_then(|s| uuid::Uuid::parse_str(&s).ok());
+            let inject_stress = inject_stress || cli.inject_stress;
 
             if web {
                 println!("Launching web-based korg dashboard with live campaign...");
@@ -671,6 +685,7 @@ async fn main() -> Result<()> {
                     "Implement production-grade semantic evaluation guardrail with 5 adversarial rubrics".to_string(),
                     sid,
                 );
+                leader.set_inject_stress(inject_stress);
                 if goal || cli.goal {
                     leader.goal_mode = true;
                     leader.set_cognition_mode("autonomous").await;

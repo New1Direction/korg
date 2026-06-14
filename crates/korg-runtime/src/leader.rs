@@ -68,6 +68,10 @@ pub struct LeaderOrchestrator {
     pub last_round_healed: bool,
     pub runtime_coordinator: Arc<crate::runtime::RuntimeCoordinator>,
     pub capability_resolver: Arc<tokio::sync::Mutex<korg_registry::CapabilityResolver>>,
+    /// When `false` (the hermetic default), the synthetic stress/telemetry
+    /// injectors are OFF and the evaluator scores only real `live_events`.
+    /// Enabled via `--inject-stress` for demos / fault-injection.
+    pub inject_stress: bool,
 }
 
 /// First-class contract artifact (negotiated between Planner and Evaluator).
@@ -138,7 +142,13 @@ impl LeaderOrchestrator {
             last_round_healed: false,
             runtime_coordinator,
             capability_resolver,
+            inject_stress: false,
         }
+    }
+
+    /// Enable/disable the synthetic stress + telemetry injectors (default off).
+    pub fn set_inject_stress(&mut self, on: bool) {
+        self.inject_stress = on;
     }
 
     pub fn session_id(&self) -> Uuid {
@@ -894,30 +904,34 @@ impl LeaderOrchestrator {
                 let _ = tokio::fs::write(format!("{}/blackboard.json", bb_dir), pretty).await;
             }
 
-            // Spawn background tokio thread that runs the Captain planner and Critic evaluator asynchronously
-            let bb_clone = self.telemetry_blackboard.clone();
-            let description_clone = description.clone();
-            tokio::spawn(async move {
-                println!("\n{bold}{gold}⏳ [Async Oversight] Background Captain Planner + Critic Evaluator started...{reset}");
-                // Simulate recursive planning debate
-                for round in 1..=3 {
-                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-                    let text = format!("[Async Oversight] Round {}: Planner/Critic analyzing architecture, scanning risks for: {}", round, description_clone);
-                    println!("{slate}{}{reset}", text);
+            // Spawn background tokio thread that runs the Captain planner and Critic evaluator asynchronously.
+            // This whole task only fabricates synthetic "captain-async-planner" traces, so it is gated
+            // behind --inject-stress; the default hermetic path injects nothing here.
+            if self.inject_stress {
+                let bb_clone = self.telemetry_blackboard.clone();
+                let description_clone = description.clone();
+                tokio::spawn(async move {
+                    println!("\n{bold}{gold}⏳ [Async Oversight] Background Captain Planner + Critic Evaluator started...{reset}");
+                    // Simulate recursive planning debate
+                    for round in 1..=3 {
+                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                        let text = format!("[Async Oversight] Round {}: Planner/Critic analyzing architecture, scanning risks for: {}", round, description_clone);
+                        println!("{slate}{}{reset}", text);
 
-                    let trace = TraceEvent {
-                        agent_id: "captain-async-planner".to_string(),
-                        risk_score: 0.12 * round as f32,
-                        epistemic_confidence: 0.88,
-                        surface_text: text.clone(),
-                        ..Default::default()
-                    };
-                    if let Ok(mut bb) = bb_clone.lock() {
-                        bb.ingest_trace_events(vec![trace]);
+                        let trace = TraceEvent {
+                            agent_id: "captain-async-planner".to_string(),
+                            risk_score: 0.12 * round as f32,
+                            epistemic_confidence: 0.88,
+                            surface_text: text.clone(),
+                            ..Default::default()
+                        };
+                        if let Ok(mut bb) = bb_clone.lock() {
+                            bb.ingest_trace_events(vec![trace]);
+                        }
                     }
-                }
-                println!("{bold}{green}✓ [Async Oversight] Background planning and risk critique completed.{reset}\n");
-            });
+                    println!("{bold}{green}✓ [Async Oversight] Background planning and risk critique completed.{reset}\n");
+                });
+            }
 
             return Ok(contract);
         }
@@ -1515,22 +1529,25 @@ impl LeaderOrchestrator {
             }
 
             // Optional stress pulse so the harsh critic has realistic adversarial signal to evaluate
-            // (makes the demo more interesting and shows the combinatorial logic firing)
-            let stress_event = TraceEvent {
-                agent_id: "stress-test-worker".to_string(),
-                risk_score: 0.71,
-                epistemic_confidence: 0.44,
-                conflict_rate: 0.31,
-                token_velocity: 195.0,
-                gpu_util: 0.81,
-                verified_count_delta: 0,
-                authority_improvement: 0.05,
-                surface_text:
-                    "multiple conflicting approaches, low verification rate, rising semantic churn"
-                        .to_string(),
-                ..Default::default()
-            };
-            self.evaluator.ingest(stress_event);
+            // (makes the demo more interesting and shows the combinatorial logic firing).
+            // Synthetic — gated behind --inject-stress so the default path scores only real events.
+            if self.inject_stress {
+                let stress_event = TraceEvent {
+                    agent_id: "stress-test-worker".to_string(),
+                    risk_score: 0.71,
+                    epistemic_confidence: 0.44,
+                    conflict_rate: 0.31,
+                    token_velocity: 195.0,
+                    gpu_util: 0.81,
+                    verified_count_delta: 0,
+                    authority_improvement: 0.05,
+                    surface_text:
+                        "multiple conflicting approaches, low verification rate, rising semantic churn"
+                            .to_string(),
+                    ..Default::default()
+                };
+                self.evaluator.ingest(stress_event);
+            }
 
             // Run the full harsh 5-rubric evaluation on genuine swarm data + stress signal
             let verdict = self.evaluator.evaluate(self.session_id).await;
@@ -1717,15 +1734,18 @@ impl LeaderOrchestrator {
 
                 // Also inject a small amount of evolving synthetic signal so the demo stays interesting
                 // even after the short-lived subprocesses have exited.
-                let synthetic = TraceEvent {
-                    agent_id: format!("live-worker-{}", round % 4),
-                    risk_score: 0.38 + ((round as f32) * 0.04).sin().abs() * 0.25,
-                    epistemic_confidence: 0.72 - (round as f32 * 0.025).max(0.0),
-                    token_velocity: 85.0 + (round as f32 * 7.0),
-                    conflict_rate: 0.11 + (round as f32 * 0.015),
-                    ..Default::default()
-                };
-                self.evaluator.ingest(synthetic);
+                // Synthetic — gated behind --inject-stress so the default path scores only real events.
+                if self.inject_stress {
+                    let synthetic = TraceEvent {
+                        agent_id: format!("live-worker-{}", round % 4),
+                        risk_score: 0.38 + ((round as f32) * 0.04).sin().abs() * 0.25,
+                        epistemic_confidence: 0.72 - (round as f32 * 0.025).max(0.0),
+                        token_velocity: 85.0 + (round as f32 * 7.0),
+                        conflict_rate: 0.11 + (round as f32 * 0.015),
+                        ..Default::default()
+                    };
+                    self.evaluator.ingest(synthetic);
+                }
 
                 // Run the full harsh critic on the current window
                 let live_verdict = self.evaluator.evaluate(self.session_id).await;
@@ -3361,6 +3381,15 @@ fn copy_dir_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn inject_stress_defaults_off() {
+        let leader = LeaderOrchestrator::new("task".to_string(), None);
+        assert!(
+            !leader.inject_stress,
+            "the default campaign path must inject no synthetic signal"
+        );
+    }
 
     #[tokio::test]
     async fn test_contract_negotiation_loop() {
