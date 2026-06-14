@@ -72,6 +72,10 @@ pub struct LeaderOrchestrator {
     /// injectors are OFF and the evaluator scores only real `live_events`.
     /// Enabled via `--inject-stress` for demos / fault-injection.
     pub inject_stress: bool,
+    /// Running total of REAL mutations (summed `git diff --numstat` file counts)
+    /// across all completed rounds. Feeds the ledger's `total_mutations_so_far`
+    /// so the attested running total is a real measurement, not a synthetic formula.
+    pub total_real_mutations: usize,
 }
 
 /// First-class contract artifact (negotiated between Planner and Evaluator).
@@ -143,6 +147,7 @@ impl LeaderOrchestrator {
             runtime_coordinator,
             capability_resolver,
             inject_stress: false,
+            total_real_mutations: 0,
         }
     }
 
@@ -630,6 +635,7 @@ impl LeaderOrchestrator {
         arena_winner: String,
         arena_confidence: f32,
         mutations_this_round: usize,
+        total_mutations_so_far: usize,
         verdict: &EvaluationVerdict,
     ) {
         let session_id = self.session_id;
@@ -692,7 +698,7 @@ impl LeaderOrchestrator {
                 verdict: verdict_json.clone(),
                 leader_action: leader_action.clone(),
                 new_swarm_size: swarm_size,
-                total_mutations_so_far: (round + 1) * 5,
+                total_mutations_so_far,
                 tx_hash: "".to_string(), // Set to empty string for deterministic hashing
                 parent_hashes: campaign_tips.clone(),
                 state_merkle_root: state_merkle_root.clone(),
@@ -719,7 +725,7 @@ impl LeaderOrchestrator {
                 verdict: verdict_json,
                 leader_action,
                 new_swarm_size: swarm_size,
-                total_mutations_so_far: (round + 1) * 5,
+                total_mutations_so_far,
                 tx_hash: tx_hash.clone(),
                 parent_hashes: campaign_tips,
                 state_merkle_root,
@@ -814,11 +820,13 @@ impl LeaderOrchestrator {
 
     async fn persist_final_summary_ktrans(&mut self) {
         // Round 999 is the conventional marker for final summary
+        let total_real = self.total_real_mutations;
         self.persist_campaign_ktrans(
             999,
             "FINAL".to_string(),
             0.0,
             0,
+            total_real,
             &EvaluationVerdict {
                 verdict_id: Uuid::now_v7(),
                 session_id: self.session_id,
@@ -1469,6 +1477,13 @@ impl LeaderOrchestrator {
             }
             let results = final_results;
 
+            // Honest ledger count: the REAL number of files changed this round is the
+            // sum of each worker's measured `git diff --numstat` file count (plumbed up
+            // from the worker child in Unit B). This is what the ledger attests — no
+            // synthetic `arena_outcome["mutations"].unwrap_or(3) + round%2` fabrication.
+            let real_files_changed: usize = results.iter().map(|r| r.files_changed).sum();
+            self.total_real_mutations += real_files_changed;
+
             // Aggregate any vision attachments captured during this round
             for r in &results {
                 self.current_round_vision_attachments
@@ -1622,8 +1637,7 @@ impl LeaderOrchestrator {
                     let _ = tx.try_send(crate::tui_bridge::TuiUpdate::Arena {
                         round,
                         winner: winner_name.clone(),
-                        mutations: arena_outcome["mutations"].as_u64().unwrap_or(3) as usize
-                            + (round % 2),
+                        mutations: real_files_changed,
                     });
 
                     let _ = tx.try_send(crate::tui_bridge::TuiUpdate::PersonaTelemetry {
@@ -1777,7 +1791,8 @@ impl LeaderOrchestrator {
                     round,
                     winner_name.clone(), // in real flow this comes from the Arena result
                     arena_outcome["confidence"].as_f64().unwrap_or(0.87) as f32,
-                    arena_outcome["mutations"].as_u64().unwrap_or(3) as usize + (round % 2),
+                    real_files_changed,
+                    self.total_real_mutations,
                     &live_verdict,
                 )
                 .await;
@@ -3405,6 +3420,20 @@ mod tests {
             !leader.inject_stress,
             "the default campaign path must inject no synthetic signal"
         );
+    }
+
+    #[test]
+    fn real_mutation_count_replaces_synthetic_formula() {
+        // The honest count is the sum of per-worker files_changed, NOT
+        // arena_outcome["mutations"].unwrap_or(3) + round%2.
+        use crate::personas::{Persona, PersonaResult};
+        let mut a = PersonaResult::new(Persona::Benjamin, "r".into());
+        a.files_changed = 1;
+        let mut b = PersonaResult::new(Persona::Harper, "r".into());
+        b.files_changed = 0;
+        let results = vec![a, b];
+        let real: usize = results.iter().map(|r| r.files_changed).sum();
+        assert_eq!(real, 1, "the attested count is the real per-worker sum");
     }
 
     #[tokio::test]
