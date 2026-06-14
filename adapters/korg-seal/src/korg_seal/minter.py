@@ -102,6 +102,18 @@ def anchor(
     if anchored_at:
         record["anchored_at"] = anchored_at
 
+    # Preserve any pre-existing anchors (re-anchoring must not silently drop a
+    # prior git-tip witness); de-dupe an identical re-anchor so it stays idempotent.
+    existing = [a for a in (seal.get("anchors") or []) if isinstance(a, dict)]
+    same = [
+        a
+        for a in existing
+        if a.get("seq_id") == record["seq_id"]
+        and a.get("anchor_kind") == record["anchor_kind"]
+        and a.get("anchor_proof") == record["anchor_proof"]
+    ]
+    merged = existing if same else [*existing, record]
+
     issuer = (seal.get("issuer") or {}).get("agent") or "agent:korg-seal"
     return mint_seal(
         events=events,
@@ -109,5 +121,5 @@ def anchor(
         issuer_agent=issuer,
         issued_at=int(seal.get("issued_at", 0)),
         private_seed=seed,
-        anchors=[record],
+        anchors=merged,
     )

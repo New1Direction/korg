@@ -36,6 +36,22 @@ def _cmd_mint(args) -> int:
         print(f"korg-seal: {e}", file=sys.stderr)
         return 2
 
+    # --allow-unverified seals a chain that does not verify; never do so silently.
+    if args.allow_unverified:
+        from korg_ledger import verify_chain, verify_dag
+
+        problems = verify_chain(minter.load_ledger(args.ledger)) + verify_dag(
+            minter.load_ledger(args.ledger)
+        )
+        if problems:
+            print(
+                f"⚠ WARNING: sealed an UNVERIFIED chain ({len(problems)} problem(s)) "
+                "because --allow-unverified was set:",
+                file=sys.stderr,
+            )
+            for p in problems[:8]:
+                print(f"    - {p}", file=sys.stderr)
+
     rendered = json.dumps(seal, indent=2, ensure_ascii=False)
     if args.out:
         Path(args.out).write_text(rendered + "\n", encoding="utf-8")

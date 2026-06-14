@@ -18,9 +18,36 @@ GENESIS = "0" * 64
 HASH_FIELDS = ("entry_hash", "event_sig")
 
 
+_SAFE_INT_MAX = 2**53 - 1
+
+
+def _reject_out_of_domain(value) -> None:
+    """Raise ValueError on numbers the three implementations cannot agree on:
+    integers beyond ±(2^53-1) (JS Number loses precision there). NaN/Infinity are
+    rejected by ``allow_nan=False`` below. Finite floats are out of korg-ledger@v1
+    scope (SPEC §2) but left to json.dumps so this never breaks capture of tool
+    args that carry a finite float — Python/Rust agree on them; the JS verifier
+    reports such an event unverifiable."""
+    if isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        if abs(value) > _SAFE_INT_MAX:
+            raise ValueError(f"integer out of safe range (|n| > 2^53-1): {value}")
+    elif isinstance(value, dict):
+        for v in value.values():
+            _reject_out_of_domain(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _reject_out_of_domain(v)
+
+
 def canonicalize(value) -> bytes:
-    """JSON, keys sorted by code point, no whitespace, non-ASCII \\uXXXX-escaped."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii")
+    """JSON, keys sorted by code point, no whitespace, non-ASCII \\uXXXX-escaped.
+    Rejects NaN/Infinity and out-of-safe-range integers so the three impls agree."""
+    _reject_out_of_domain(value)
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("ascii")
 
 
 def chain_hash(event: dict, key: bytes | None = None) -> str:
@@ -80,7 +107,15 @@ def verify_chain(events: list, key: bytes | None = None) -> list:
             continue
         if e.get("prev_hash") != expected_prev:
             errors.append(f"seq {sid}: prev_hash breaks the chain")
-        if chain_hash(e, key) != stored:
+        # chain_hash → canonicalize raises on out-of-domain numbers; treat as a
+        # verification failure rather than crashing.
+        try:
+            computed = chain_hash(e, key)
+        except ValueError as ex:
+            errors.append(f"seq {sid}: not canonicalizable ({ex})")
+            expected_prev = stored
+            continue
+        if computed != stored:
             errors.append(f"seq {sid}: entry_hash mismatch (content tampered)")
         expected_prev = stored
     return errors

@@ -13,7 +13,15 @@ const { verifyText } = await import(verifyPath);
 const files = process.argv.slice(2);
 const pin = process.env.KORG_PIN || null;
 
-const esc = (s) => String(s).replace(/\|/g, "\\|").replace(/\n/g, " ");
+// Neutralize Markdown/HTML so attacker-controlled seal fields (claim, file
+// paths, issuer, anchor repo/commit — the seal may even be INVALID) cannot inject
+// into the privileged PR comment: escapes code spans (`), tables (|), links/HTML
+// (<>[]()), @-mentions, and backslashes, and collapses control chars/newlines.
+// Angle-escaping also defangs HTML comments, so a forged MARKER can't be smuggled in.
+const esc = (s) =>
+  String(s)
+    .replace(/[\x00-\x1f]+/g, " ")
+    .replace(/[`|<>[\]()@\\]/g, (c) => "\\" + c);
 
 const results = [];
 for (const f of files) {
@@ -58,21 +66,23 @@ for (const r of results) {
   L.push("");
   if (v.kind === "goldseal") {
     const s = e.summary || {};
-    const who = v.signer ? `\`${v.signer.slice(0, 16)}…\`` : "unsigned";
-    const tools = s.by_tool
-      ? Object.keys(s.by_tool).sort().map((k) => `${k}×${s.by_tool[k]}`).join(" ")
+    // Every field below is seal-derived (untrusted) → esc() before interpolation,
+    // and NOT wrapped in backticks (esc neutralizes them, which would break a span).
+    const who = v.signer ? esc(String(v.signer).slice(0, 16)) + "…" : "unsigned";
+    const tools = s.by_tool && typeof s.by_tool === "object"
+      ? Object.keys(s.by_tool).sort().map((k) => `${esc(k)}×${esc(s.by_tool[k])}`).join(" ")
       : "";
-    const filesList = (s.files || []).map((x) => `\`${x}\``).join(", ");
-    const anchors = (e.anchors || [])
-      .map((a) => `${a.anchor_proof?.repo || "?"}@${(a.anchor_proof?.commit || "").slice(0, 10)}`)
+    const filesList = (Array.isArray(s.files) ? s.files : []).map((x) => esc(x)).join(", ");
+    const anchors = (Array.isArray(e.anchors) ? e.anchors : [])
+      .map((a) => esc(`${a?.anchor_proof?.repo || "?"}@${String(a?.anchor_proof?.commit || "").slice(0, 10)}`))
       .join(", ");
     L.push("| | |");
     L.push("|---|---|");
     L.push(`| **claim** | ${e.claim ? esc(e.claim) : "—"} |`);
     L.push(`| **who** (issuer) | ${who} |`);
-    L.push(`| **what** | ${v.event_count} events · ${esc(tools)} |`);
+    L.push(`| **what** | ${esc(v.event_count)} events · ${tools} |`);
     if (filesList) L.push(`| **files** | ${filesList} |`);
-    if (anchors) L.push(`| **when** (anchor) | ${anchors} — \`korg-seal resolve\` confirms the date |`);
+    if (anchors) L.push(`| **when** (anchor) | ${anchors} — run \`korg-seal resolve\` to confirm the date |`);
     L.push(
       `| **integrity** | chain ${v.chain_ok ? "✓" : "✗"} · summary ${v.summary_ok ? "re-derived ✓" : "✗"} · seal ${v.seal_ok ? "✓" : "✗"} |`
     );
@@ -121,7 +131,12 @@ if (wantComment && token && repo && pr) {
   const issueComments = `https://api.github.com/repos/${repo}/issues/${pr}/comments`;
   try {
     const list = await (await fetch(`${issueComments}?per_page=100`, { headers: h })).json();
-    const existing = Array.isArray(list) ? list.find((c) => (c.body || "").includes(MARKER)) : null;
+    // Only ever update OUR OWN sticky comment: a Bot-authored comment whose
+    // trailing line is the marker. A bare body.includes(MARKER) could be tricked
+    // into editing an unrelated user comment that merely quotes the marker.
+    const existing = Array.isArray(list)
+      ? list.find((c) => c.user?.type === "Bot" && (c.body || "").trimEnd().endsWith(MARKER))
+      : null;
     if (existing) {
       await fetch(`https://api.github.com/repos/${repo}/issues/comments/${existing.id}`, {
         method: "PATCH",

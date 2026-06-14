@@ -113,8 +113,14 @@ Run a conformance harness (exit 0 = conformant): `python3 spec/korg-ledger-v1/co
 - v1 defines integrity (chain) and causal well-formedness (DAG). It does **not**
   define event semantics, signatures over the chain *tip* (an Ed25519 signature
   over the final `entry_hash` is a v1.1 candidate), or transport.
-- Floats are out of scope for v1 canonicalization (korg events don't emit them);
-  add them under JCS number rules in a future version if needed.
+- **Number domain.** Canonicalizable numbers are integers within ±(2^53−1) — the
+  range that round-trips through a JS `Number` (IEEE-754 double). All three
+  reference verifiers **reject** integers beyond that range so they never silently
+  disagree. NaN/Infinity are rejected (they are not valid JSON). Finite **floats**
+  are out of scope (korg events don't emit them in hashed fields): the Python and
+  Rust verifiers will hash a finite float, but the JS verifier reports such an event
+  unverifiable — producers MUST emit integers. JCS number rules are a future-version
+  candidate.
 
 ## 8. Phase-2 extensions: per-event signatures & external anchors
 

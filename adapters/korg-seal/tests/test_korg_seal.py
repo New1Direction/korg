@@ -174,6 +174,17 @@ def test_parse_github_repo_forms():
         resolver.parse_github_repo("not a repo")
 
 
+def test_parse_github_repo_rejects_spoofed_hosts():
+    # a suffix match would have accepted these as the recorded witness host
+    for spoof in [
+        "https://notgithub.com/New1Direction/korg",
+        "evil.github.com/New1Direction/korg",
+        "https://github.com.evil.com/o/r",
+    ]:
+        with pytest.raises(ValueError):
+            resolver.parse_github_repo(spoof)
+
+
 def _fake_commit(patch_contains, date="2026-06-14T06:01:28Z"):
     patch = f"+  \"tip\": \"{patch_contains}\"\n" if patch_contains else "+ unrelated\n"
     return lambda owner, name, sha: {
@@ -246,3 +257,21 @@ def test_anchor_rebinds_and_stays_verifiable(tmp_path):
     stripped = copy.deepcopy(anchored)
     del stripped["anchors"]
     assert verify_seal(stripped) != []
+
+
+def test_anchor_preserves_existing_anchors(tmp_path):
+    from korg_ledger.signing import verify_seal
+
+    ledger, _ = _sample(tmp_path)
+    seed = bytes([7]) * 32
+    seal = mint_mod.mint(ledger_path=ledger, claim="c", seed=seed, issued_at=1)
+
+    one = mint_mod.anchor(seal=seal, repo="github.com/o/a", commit="aaa", seed=seed)
+    two = mint_mod.anchor(seal=one, repo="github.com/o/b", commit="bbb", seed=seed)
+    commits = sorted(a["anchor_proof"]["commit"] for a in two["anchors"])
+    assert commits == ["aaa", "bbb"], "re-anchoring must not drop the prior anchor"
+    assert verify_seal(two) == []
+
+    # re-anchoring the SAME point is idempotent (no duplicate)
+    again = mint_mod.anchor(seal=two, repo="github.com/o/b", commit="bbb", seed=seed)
+    assert len(again["anchors"]) == 2
