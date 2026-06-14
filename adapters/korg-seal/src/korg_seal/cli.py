@@ -45,6 +45,11 @@ def _cmd_mint(args) -> int:
     print(f"  issuer {keys.public_key_hex(seed)}", file=sys.stderr)
     print(f"  tip    {seal['tip']}", file=sys.stderr)
     print(f"  events {seal['event_count']}", file=sys.stderr)
+    print(
+        "  verify anywhere: drop it at https://new1direction.github.io/korg/web/seal.html"
+        " · or `korg-verify <seal>`",
+        file=sys.stderr,
+    )
     return 0
 
 
