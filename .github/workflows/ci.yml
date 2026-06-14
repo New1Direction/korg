@@ -43,11 +43,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # --workspace so every member compiles AND the korg-verify binary is built
+      # (the root is also a package, so bare `cargo build` would skip members).
       - name: Build (default features)
-        run: cargo build --verbose
+        run: cargo build --workspace --verbose
 
-      - name: Run tests
+      - name: Run tests (root package)
         run: cargo test --verbose -- --test-threads=4
+
+      - name: Test the verifier crates (goldseal + fuzz + ledger)
+        run: cargo test -p korg-verify -p korg-ledger --verbose -- --test-threads=4
 
       - name: Differential fuzz — Rust vs Python vs JS verifiers agree
         run: |
