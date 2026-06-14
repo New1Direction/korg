@@ -57,6 +57,41 @@ fn python_signed_events_verify_under_rust_and_resign_identically() {
 }
 
 #[test]
+fn verify_journal_extended_folds_event_sigs_and_anchors() {
+    let pubkey = fixture("signed-events.pubkey");
+    let pubkey = pubkey.trim();
+    let events = fixture_events();
+    let tip = events.last().unwrap()["entry_hash"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let tip_seq = events.last().unwrap()["seq_id"].as_u64().unwrap();
+
+    // pinned event pubkey: every event_sig verifies
+    let v = korg_verify::verify_journal_extended(&events, None, Some(pubkey), None);
+    assert_eq!(v.event_sigs_ok, Some(true));
+    assert!(v.valid);
+
+    // a wrong pinned pubkey fails the per-event check
+    let wrong = "00".repeat(32);
+    let v = korg_verify::verify_journal_extended(&events, None, Some(&wrong), None);
+    assert_eq!(v.event_sigs_ok, Some(false));
+    assert!(!v.valid);
+
+    // structural anchors: a correct anchor passes, a wrong one fails
+    let good =
+        vec![serde_json::json!({"seq_id": tip_seq, "entry_hash": tip, "anchor_kind": "git-tip"})];
+    let v = korg_verify::verify_journal_extended(&events, None, None, Some(&good));
+    assert_eq!(v.anchors_ok, Some(true));
+    assert!(v.valid);
+
+    let bad = vec![serde_json::json!({"seq_id": tip_seq, "entry_hash": "deadbeef"})];
+    let v = korg_verify::verify_journal_extended(&events, None, None, Some(&bad));
+    assert_eq!(v.anchors_ok, Some(false));
+    assert!(!v.valid);
+}
+
+#[test]
 fn tampered_signature_is_rejected() {
     let pubkey = fixture("signed-events.pubkey");
     let events = fixture_events();
