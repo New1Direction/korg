@@ -524,6 +524,67 @@ pub struct WorkPackage {
     pub routing_id: String,
 }
 
+/// Total character budget for upstream context appended to a downstream
+/// payload — mirrors the 8000-char Heavy-Consciousness ceiling so payloads
+/// can't grow unbounded across a deep DAG.
+pub const UPSTREAM_CONTEXT_BUDGET: usize = 8000;
+
+/// Compose a downstream persona's payload from its base description plus the
+/// serialized outputs of its just-completed upstream dependencies.
+///
+/// This is the heart of the real data-flow: an upstream `PersonaResult.output`
+/// (e.g. Captain's `work_packages`) is appended to the downstream node's
+/// payload so Benjamin/Lucas actually *see* what their dependencies produced.
+///
+/// Guarantees:
+/// - **Deterministic order:** upstream entries are sorted by `(persona, node_id)`
+///   before appending, so the campaign stays reproducible regardless of the
+///   completion order the JoinSet surfaced.
+/// - **Size-capped:** the *appended* upstream context is capped at
+///   [`UPSTREAM_CONTEXT_BUDGET`] characters; if it would overflow, it is
+///   truncated with an explicit `…[truncated]` marker. The base payload is
+///   never truncated.
+///
+/// `upstream` entries are `(persona_name, node_id, output_json)`.
+pub fn compose_downstream_payload(
+    base: &str,
+    upstream: &[(String, String, serde_json::Value)],
+) -> String {
+    if upstream.is_empty() {
+        return base.to_string();
+    }
+
+    // Stable order: sort by persona name then node id so byte-identical inputs
+    // (in any completion order) yield byte-identical payloads.
+    let mut sorted: Vec<&(String, String, serde_json::Value)> = upstream.iter().collect();
+    sorted.sort_by(|a, b| (a.0.as_str(), a.1.as_str()).cmp(&(b.0.as_str(), b.1.as_str())));
+
+    let mut appended = String::new();
+    for (persona, node_id, output) in sorted {
+        let json = serde_json::to_string_pretty(output).unwrap_or_else(|_| output.to_string());
+        let block = format!("\n\n## Upstream from {persona} ({node_id}):\n{json}");
+        // Enforce the budget on the *appended* context only.
+        if appended.len() + block.len() > UPSTREAM_CONTEXT_BUDGET {
+            let remaining = UPSTREAM_CONTEXT_BUDGET.saturating_sub(appended.len());
+            if remaining > 0 {
+                let marker = "\n…[truncated]";
+                let take = remaining.saturating_sub(marker.len()).min(block.len());
+                // Truncate on a char boundary to avoid splitting a UTF-8 scalar.
+                let mut end = take;
+                while end > 0 && !block.is_char_boundary(end) {
+                    end -= 1;
+                }
+                appended.push_str(&block[..end]);
+                appended.push_str(marker);
+            }
+            break;
+        }
+        appended.push_str(&block);
+    }
+
+    format!("{base}{appended}")
+}
+
 /// Build the canonical 4-persona campaign DAG and return topological levels.
 /// Speculative pre-warm is gated on the `speculative_execution` capability.
 #[tracing::instrument(skip(root_task, tui_tx))]
@@ -906,5 +967,92 @@ mod tests {
         assert_eq!(packages_map.len(), 4);
         assert!(packages_map.contains_key("pkg-captain"));
         assert_eq!(dag.nodes.len(), 4);
+    }
+
+    // --- Slice 2: real upstream→downstream data-flow (pure helper) ---
+
+    #[test]
+    fn compose_downstream_payload_carries_upstream_output() {
+        // Captain's plan output flows into Benjamin's payload.
+        let captain_out = serde_json::json!({
+            "work_packages": [{"id": 1, "title": "Fix add"}],
+            "acceptance_criteria": ["add(2,3)==5"]
+        });
+        let benjamin_payload = compose_downstream_payload(
+            "Implement: fix the add bug",
+            &[(
+                "Captain".to_string(),
+                "pkg-captain".to_string(),
+                captain_out,
+            )],
+        );
+        // Base is preserved.
+        assert!(benjamin_payload.starts_with("Implement: fix the add bug"));
+        // Upstream content is actually present (data-flow is real, not a no-op).
+        assert!(
+            benjamin_payload.contains("work_packages"),
+            "benjamin payload must contain captain's plan marker"
+        );
+        assert!(benjamin_payload.contains("Upstream from Captain (pkg-captain)"));
+    }
+
+    #[test]
+    fn compose_downstream_payload_then_benjamin_into_lucas() {
+        // The two-hop chain: Benjamin's output appears in Lucas's payload.
+        let benjamin_out = serde_json::json!({
+            "mutations": [{"target": "src/lib.rs", "action": "update"}]
+        });
+        let lucas_payload = compose_downstream_payload(
+            "Synthesize: fix the add bug",
+            &[(
+                "Benjamin".to_string(),
+                "pkg-benjamin".to_string(),
+                benjamin_out,
+            )],
+        );
+        assert!(
+            lucas_payload.contains("mutations") && lucas_payload.contains("src/lib.rs"),
+            "lucas payload must contain benjamin's output marker"
+        );
+    }
+
+    #[test]
+    fn compose_downstream_payload_is_order_independent() {
+        // Captain + Harper into Benjamin — completion order must not matter.
+        let cap = (
+            "Captain".to_string(),
+            "pkg-captain".to_string(),
+            serde_json::json!({"work_packages": [1]}),
+        );
+        let har = (
+            "Harper".to_string(),
+            "pkg-harper".to_string(),
+            serde_json::json!({"concerns": [2]}),
+        );
+        let a = compose_downstream_payload("base", &[cap.clone(), har.clone()]);
+        let b = compose_downstream_payload("base", &[har, cap]);
+        assert_eq!(a, b, "payload must be byte-identical regardless of order");
+    }
+
+    #[test]
+    fn compose_downstream_payload_respects_size_cap() {
+        // A huge upstream output must not blow the payload past base + budget.
+        let big = serde_json::json!({ "blob": "x".repeat(50_000) });
+        let out = compose_downstream_payload(
+            "base",
+            &[("Captain".to_string(), "pkg-captain".to_string(), big)],
+        );
+        assert!(
+            out.len() <= "base".len() + UPSTREAM_CONTEXT_BUDGET,
+            "appended upstream context must be capped at the budget, got {} chars",
+            out.len()
+        );
+        assert!(out.contains("…[truncated]"), "truncation must be marked");
+    }
+
+    #[test]
+    fn compose_downstream_payload_empty_upstream_is_noop() {
+        let out = compose_downstream_payload("base only", &[]);
+        assert_eq!(out, "base only");
     }
 }
