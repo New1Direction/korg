@@ -76,6 +76,10 @@ pub struct LeaderOrchestrator {
     /// across all completed rounds. Feeds the ledger's `total_mutations_so_far`
     /// so the attested running total is a real measurement, not a synthetic formula.
     pub total_real_mutations: usize,
+    /// When true (via `--speculative`), the campaign pre-warms a shared
+    /// `CARGO_TARGET_DIR` (warm boot) and spawns worker children pointing at it so
+    /// their `cargo check` reuses the warmed cache. Default off → unchanged path.
+    pub speculative: bool,
 }
 
 /// First-class contract artifact (negotiated between Planner and Evaluator).
@@ -148,12 +152,43 @@ impl LeaderOrchestrator {
             capability_resolver,
             inject_stress: false,
             total_real_mutations: 0,
+            speculative: false,
         }
     }
 
     /// Enable/disable the synthetic stress + telemetry injectors (default off).
     pub fn set_inject_stress(&mut self, on: bool) {
         self.inject_stress = on;
+    }
+
+    /// Enable/disable speculative warm boot + shared-cache reuse (default off).
+    /// Flips the runtime coordinator's flag so spawned worker children inherit the
+    /// `CARGO_TARGET_DIR` env, and gates the campaign-level `warm_boot` call.
+    pub fn set_speculative(&mut self, on: bool) {
+        self.speculative = on;
+        self.runtime_coordinator.set_speculative(on);
+    }
+
+    /// Pre-warm the shared cargo cache once per campaign when speculative is on.
+    /// Hermetic: cargo absent / timeout → logs + degrades, never aborts. No-op
+    /// (Skipped) when speculative is off — the default path is unchanged.
+    async fn maybe_warm_boot(&self) {
+        if !self.speculative {
+            return;
+        }
+        let session = self.session_id.to_string();
+        let repo = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let report = crate::execution::warm_boot(&session, &repo, true).await;
+        println!(
+            "[Leader] Warm boot: {:?} (target={:?}, populated={})",
+            report.status, report.target_dir, report.populated
+        );
+        if let Some(ref tx) = self.tui_tx {
+            let _ = tx.try_send(crate::tui_bridge::TuiUpdate::Trace(format!(
+                "[Speculative] Warm boot {:?} — shared cargo cache populated={}",
+                report.status, report.populated
+            )));
+        }
     }
 
     pub fn session_id(&self) -> Uuid {
@@ -1463,6 +1498,10 @@ impl LeaderOrchestrator {
             // === Heavy-Adversarial: Explicit contract negotiation before any Generator work ===
             let _contract = self.negotiate_contract(&plan).await?;
 
+            // Speculative warm boot (default off): pre-warm the shared cargo cache
+            // once before workers spawn so their cargo_check reuses it.
+            self.maybe_warm_boot().await;
+
             // Phase 2: Real concurrent workers (they emit SwarmTelemetryPulse messages)
             println!("{bold}{cyan}🚀 [Leader] Spawning 4 concurrent persona workers with real-time telemetry...{reset}\n");
             let results = self.dispatch_concurrent(&plan).await?;
@@ -2361,6 +2400,10 @@ impl LeaderOrchestrator {
 
         // === Heavy-Adversarial: Explicit contract negotiation before any Generator work ===
         let _contract = self.negotiate_contract(&plan).await?;
+
+        // Speculative warm boot (default off): pre-warm the shared CARGO_TARGET_DIR
+        // once, before any worker spawns, so worker cargo_check reuses it.
+        self.maybe_warm_boot().await;
 
         // Phase 2: Concurrent real subprocess spawning
         println!("\n[Leader] Spawning 4 persona workers concurrently as child processes...");
@@ -3485,6 +3528,31 @@ mod tests {
         assert!(
             !leader.inject_stress,
             "the default campaign path must inject no synthetic signal"
+        );
+    }
+
+    #[tokio::test]
+    async fn speculative_defaults_off() {
+        let leader = LeaderOrchestrator::new("task".to_string(), None);
+        assert!(
+            !leader.speculative,
+            "the default campaign path must not run warm boot (speculative is opt-in)"
+        );
+        assert!(
+            !leader.runtime_coordinator.speculative(),
+            "the coordinator's worker-spawn env gate must default off too"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_speculative_flips_leader_and_coordinator() {
+        let mut leader = LeaderOrchestrator::new("task".to_string(), None);
+        leader.set_speculative(true);
+        assert!(leader.speculative);
+        assert!(
+            leader.runtime_coordinator.speculative(),
+            "enabling speculative must propagate to the coordinator so spawned \
+             workers inherit CARGO_TARGET_DIR"
         );
     }
 
