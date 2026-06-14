@@ -280,6 +280,19 @@ impl Blackboard {
     /// Robust extractor that turns arbitrary JSON metrics (from a pulse) into a TraceEvent.
     /// Handles missing fields gracefully with Heavy-Tier defaults.
     fn metrics_to_trace_event(&self, agent_id: &str, m: &serde_json::Value) -> Option<TraceEvent> {
+        // Honest absence: a metrics object carrying none of the real observation
+        // keys is NOT a measurement — do not fabricate a mid-range event for it.
+        const SIGNAL_KEYS: [&str; 6] = [
+            "risk_score",
+            "epistemic_confidence",
+            "conflict_rate",
+            "token_velocity",
+            "gpu_util",
+            "verified_count_delta",
+        ];
+        if !SIGNAL_KEYS.iter().any(|k| m.get(k).is_some()) {
+            return None;
+        }
         // Common field names we expect from the spec + worker emission
         let risk = m
             .get("risk_score")
@@ -417,6 +430,38 @@ mod tests {
     }
 
     #[test]
+    fn content_free_pulse_yields_no_fabricated_event() {
+        let mut bb = Blackboard::new(Uuid::now_v7());
+        let stub = AcpMessage::SwarmTelemetryPulse {
+            agent_id: "w".into(),
+            per_agent: serde_json::json!({ "w": { "phase": "start" } }),
+            aggregate: serde_json::json!({}),
+            scaling_recommendation: None,
+        };
+        assert!(
+            bb.ingest_telemetry_pulse(&stub, None).is_empty(),
+            "a pulse with no real signal must not become an invented trace event"
+        );
+    }
+
+    #[test]
+    fn real_signal_pulse_maps_through_with_observed_values() {
+        let mut bb = Blackboard::new(Uuid::now_v7());
+        let real = AcpMessage::SwarmTelemetryPulse {
+            agent_id: "w".into(),
+            per_agent: serde_json::json!({ "w": {
+                "risk_score": 0.7, "epistemic_confidence": 0.3, "verified_count_delta": 0
+            }}),
+            aggregate: serde_json::json!({}),
+            scaling_recommendation: None,
+        };
+        let evs = bb.ingest_telemetry_pulse(&real, None);
+        assert_eq!(evs.len(), 1);
+        assert!((evs[0].risk_score - 0.7).abs() < 1e-6);
+        assert_eq!(evs[0].verified_count_delta, 0);
+    }
+
+    #[test]
     fn test_blackboard_vector_clock_deduplication() {
         let mut bb = Blackboard::new(Uuid::now_v7());
 
@@ -440,9 +485,11 @@ mod tests {
 
         let msg_id = Uuid::now_v7();
 
-        // First ingestion should succeed
+        // First ingestion should succeed. Only the one real per-agent metrics
+        // object yields an event; the empty `aggregate: {}` no longer fabricates
+        // a defaulted event (honest-absence guard in metrics_to_trace_event).
         let events1 = bb.ingest_telemetry_pulse(&pulse, Some(msg_id));
-        assert_eq!(events1.len(), 2);
+        assert_eq!(events1.len(), 1);
 
         // Second ingestion of the same message_id should be deduplicated (return empty events)
         let events2 = bb.ingest_telemetry_pulse(&pulse, Some(msg_id));
