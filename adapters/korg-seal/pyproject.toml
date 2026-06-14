@@ -1,0 +1,37 @@
+[build-system]
+requires      = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "korg-seal"
+version         = "0.1.0"
+description     = "Mint and verify goldseal@v1 certificates — turn a captured AI-agent session ledger into a portable, signed Gold Seal anyone can re-verify offline."
+license         = { text = "MIT" }
+requires-python = ">=3.9"
+authors         = [{ name = "Korg ecosystem maintainers" }]
+classifiers     = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+]
+# Minting is intrinsically a signing operation, so cryptography is a hard dep
+# (unlike korg-ledger-py, whose stdlib core stays pure and gates signing behind
+# an extra). The korg-ledger reference package is a sibling install / on PYTHONPATH.
+dependencies = ["cryptography>=41"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0,<9.0.0"]
+
+[project.scripts]
+korg-seal = "korg_seal.cli:main"
+
+[tool.setuptools.packages.find]
+where   = ["src"]
+include = ["korg_seal*"]
+
+[tool.pytest.ini_options]
+testpaths    = ["tests"]
+python_files = ["test_*.py"]
