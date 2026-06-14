@@ -81,3 +81,5 @@ package-lock.json
 .coverage
 .understand-anything/
 **/proptest-regressions/
+
+.playwright-mcp/
