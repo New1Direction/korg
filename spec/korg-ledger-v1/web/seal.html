@@ -397,9 +397,10 @@ function render(env, v) {
   if (v.valid) {
     $("badgeword").textContent = "✓ verified";
     const id = (env.tip || "").slice(0, 16);
+    const verifier = "https://new1direction.github.io/korg/web/seal.html";
     const md =
-`<!-- korg Gold Seal · seal ${id} · ${v.event_count} events · re-verify: drop goldseal.json at the korg Gold Seal verifier, or run \`korg-verify goldseal.json\` -->
-[korg Gold Seal ✓ verified](https://github.com/New1Direction/korg) · seal \`${id}…\` · ${v.event_count} events · issuer \`${(signer || "").slice(0, 12)}…\``;
+`<!-- korg Gold Seal · seal ${id} · ${v.event_count} events · re-verify by dropping this goldseal.json at ${verifier} (or run \`korg-verify goldseal.json\`) -->
+[![korg Gold Seal: verified](https://img.shields.io/badge/korg%20Gold%20Seal-verified-2ea043?logo=ed25519)](${verifier}) · seal \`${id}…\` · ${v.event_count} events · issuer \`${(signer || "").slice(0, 12)}…\``;
     $("badgecode").value = md;
   }
 
