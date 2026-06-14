@@ -185,6 +185,29 @@ export async function verifyEventSig(pubkeyHex, event, sigHex) {
   }
 }
 
+/**
+ * Structural verification of an anchors.jsonl sidecar against a verified chain:
+ * each anchor's `entry_hash` must match the chain event at its `seq_id`. Always
+ * hermetic (no network). Returns [] iff every anchor matches. The external
+ * git-tip proof (the actual owner-rewrite defense) is checked by the Rust verifier.
+ */
+export function verifyAnchors(chain, anchors) {
+  const errors = [];
+  const bySeq = new Map(chain.map((e) => [e.seq_id, e]));
+  for (const a of anchors) {
+    const seq = a.seq_id;
+    const want = a.entry_hash;
+    if (seq == null || want == null) {
+      errors.push("anchor record missing seq_id or entry_hash");
+      continue;
+    }
+    const e = bySeq.get(seq);
+    if (!e) errors.push(`anchor seq ${seq}: no event with that seq_id in the chain`);
+    else if (e.entry_hash !== want) errors.push(`anchor seq ${seq}: entry_hash does not match the chain`);
+  }
+  return errors;
+}
+
 /** Verify a list of events as a journal: hash chain + causal DAG. */
 export async function verifyJournal(events, keyBytes = null) {
   const errors = await verifyChain(events, keyBytes);

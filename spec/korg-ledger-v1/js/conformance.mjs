@@ -9,7 +9,7 @@
 //     node conformance.mjs        # exit 0 = this JS impl reproduces the vectors
 
 import { readFileSync } from "node:fs";
-import { canonicalize, chainHash, verifyChain, verifyEventSig } from "./verify.mjs";
+import { canonicalize, chainHash, verifyChain, verifyEventSig, verifyAnchors } from "./verify.mjs";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -94,6 +94,17 @@ async function run() {
     const tamperedOk = await verifyEventSig(pubkey, events[0], "00".repeat(64));
     const ok = allOk && !tamperedOk;
     console.log(`  [${ok ? "PASS" : "FAIL"}] signed-events.jsonl       cross-impl Ed25519 (Python→JS)`);
+    if (!ok) failures++;
+  }
+
+  // Structural anchor verification (matches the Rust + Python verify_anchors).
+  {
+    const basic = read("basic-intact.jsonl");
+    const tip = basic[basic.length - 1];
+    const okAnchor = [{ seq_id: tip.seq_id, entry_hash: tip.entry_hash, anchor_kind: "git-tip" }];
+    const badAnchor = [{ seq_id: tip.seq_id, entry_hash: "deadbeef" }];
+    const ok = verifyAnchors(basic, okAnchor).length === 0 && verifyAnchors(basic, badAnchor).length > 0;
+    console.log(`  [${ok ? "PASS" : "FAIL"}] anchors structural        verify_anchors (entry_hash ↔ chain)`);
     if (!ok) failures++;
   }
 

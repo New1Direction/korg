@@ -24,6 +24,12 @@ pub const GENESIS_HASH: &str = "000000000000000000000000000000000000000000000000
 /// tips. Kept OUTSIDE the chain preimage so it never affects `entry_hash`.
 pub const ANCHORS_FILE: &str = "anchors.jsonl";
 
+/// Anchor kind: the chain tip's `entry_hash` is committed to a public git repo,
+/// whose immutable commit serves as the external witness that closes the
+/// owner-rewrite-undetectably gap. `anchor_proof` carries
+/// `{"repo": "<url>", "commit": "<sha>"}`.
+pub const ANCHOR_KIND_GIT_TIP: &str = "git-tip";
+
 /// Fields that ARE the hash/signature and so are excluded from the preimage.
 /// `event_sig` is the reserved Phase-2 per-event signature slot: excluding it
 /// in lockstep across all implementations means a signed event hashes the same
@@ -252,10 +258,90 @@ pub fn verify_dag(events: &[Value]) -> Vec<String> {
     errors
 }
 
+/// Structural verification of an `anchors.jsonl` sidecar against an
+/// already-verified chain (korg-ledger@v1 §8). For each anchor record, the
+/// event at `seq_id` must exist in the chain and its `entry_hash` must equal the
+/// anchor's. Returns an empty vec iff every anchor matches.
+///
+/// This is the LOCAL half of anchoring and is always hermetic. The EXTERNAL
+/// half — checking that the anchor's `anchor_proof` (e.g. a public git commit)
+/// actually witnesses that `entry_hash` — is what closes the owner-rewrite gap;
+/// it is verified separately (network) and documented in the spec.
+pub fn verify_anchors(chain: &[Value], anchors: &[Value]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for a in anchors {
+        let seq = a.get("seq_id").and_then(|v| v.as_u64());
+        let want = a.get("entry_hash").and_then(|v| v.as_str());
+        match (seq, want) {
+            (Some(seq), Some(want)) => {
+                match chain
+                    .iter()
+                    .find(|e| e.get("seq_id").and_then(|v| v.as_u64()) == Some(seq))
+                {
+                    None => errors.push(format!(
+                        "anchor seq {seq}: no event with that seq_id in the chain"
+                    )),
+                    Some(e) if e.get("entry_hash").and_then(|v| v.as_str()) != Some(want) => errors
+                        .push(format!(
+                            "anchor seq {seq}: entry_hash does not match the chain"
+                        )),
+                    Some(_) => {}
+                }
+            }
+            _ => errors.push("anchor record missing seq_id or entry_hash".into()),
+        }
+    }
+    errors
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn verify_anchors_accepts_correct_and_flags_wrong_or_missing() {
+        use std::collections::BTreeMap;
+        let payloads: Vec<BTreeMap<String, i64>> = (0..3)
+            .map(|i| {
+                let mut m = BTreeMap::new();
+                m.insert("i".to_string(), i as i64);
+                m
+            })
+            .collect();
+        let chain = chain_for_anchors(&payloads);
+        let tip = chain[2]["entry_hash"].as_str().unwrap().to_string();
+
+        let good = json!([{"seq_id": 3, "entry_hash": tip, "anchor_kind": ANCHOR_KIND_GIT_TIP}]);
+        assert!(verify_anchors(&chain, good.as_array().unwrap()).is_empty());
+
+        let wrong = json!([{"seq_id": 3, "entry_hash": "deadbeef"}]);
+        let errs = verify_anchors(&chain, wrong.as_array().unwrap());
+        assert!(errs.iter().any(|e| e.contains("seq 3")), "{errs:?}");
+
+        let missing = json!([{"seq_id": 99, "entry_hash": tip}]);
+        assert!(!verify_anchors(&chain, missing.as_array().unwrap()).is_empty());
+    }
+
+    // local helper so the anchor test doesn't depend on the proptest build_chain
+    fn chain_for_anchors(payloads: &[std::collections::BTreeMap<String, i64>]) -> Vec<Value> {
+        let mut out = Vec::new();
+        let mut prev = GENESIS_HASH.to_string();
+        for (i, p) in payloads.iter().enumerate() {
+            let mut obj = serde_json::Map::new();
+            obj.insert("seq_id".into(), json!(i as u64 + 1));
+            obj.insert("prev_hash".into(), json!(prev));
+            obj.insert("payload".into(), serde_json::to_value(p).unwrap());
+            let mut val = Value::Object(obj);
+            let h = chain_hash(&val, None);
+            val.as_object_mut()
+                .unwrap()
+                .insert("entry_hash".into(), json!(h));
+            prev = h;
+            out.push(val);
+        }
+        out
+    }
 
     #[test]
     fn event_sig_is_excluded_from_the_preimage() {
