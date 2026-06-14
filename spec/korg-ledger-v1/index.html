@@ -62,8 +62,11 @@
   .flow .ar { color: var(--gold-dim); }
 
   /* verifier cards */
-  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin: var(--space) 0; }
-  @media (max-width: 720px) { .cards { grid-template-columns: 1fr; } }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2rem; margin: var(--space) 0; }
+  @media (max-width: 860px) { .cards { grid-template-columns: 1fr; } }
+  .card.replay h2 { color: var(--ink); }
+  .card.replay:hover { border-color: var(--muted); }
+  .card.replay .go { color: var(--ink); }
   .card {
     display: grid; gap: 0.7rem; padding: 1.6rem; border: 1px solid var(--line); border-radius: 6px;
     background: var(--surface); position: relative; text-decoration: none; color: inherit;
@@ -137,6 +140,14 @@
         DAG, every per-event signature, and any anchors — entirely on your machine, using the same
         verifier shipped in Rust, Python, and this JavaScript.</p>
       <span class="go">Open the ledger verifier →</span>
+    </a>
+    <a class="card replay" href="web/explore.html">
+      <span class="badge">time-travel · replay</span>
+      <h2>Replay a session</h2>
+      <p>Drop a session or a Gold Seal and scrub the timeline. Watch the cumulative state — files
+        touched, tools used — evolve step by step while the hash-chain verifies under every frame.
+        A break lights up red at the exact step it happened.</p>
+      <span class="go">Open the time-travel explorer →</span>
     </a>
   </section>
 

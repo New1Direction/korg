@@ -2,7 +2,7 @@
 
 **Status:** FROZEN · **Canonical home:** this directory (`korg/spec/korg-ledger-v1/`) is the normative source; all implementations conform to it.
 
-> **Try it live (zero install, sends nothing):** **[Gold Seal verifier](https://new1direction.github.io/korg/web/seal.html)** · **[ledger verifier](https://new1direction.github.io/korg/web/index.html)** · **[home](https://new1direction.github.io/korg/)**
+> **Try it live (zero install, sends nothing):** **[Gold Seal verifier](https://new1direction.github.io/korg/web/seal.html)** · **[ledger verifier](https://new1direction.github.io/korg/web/index.html)** · **[time-travel explorer](https://new1direction.github.io/korg/web/explore.html)** · **[home](https://new1direction.github.io/korg/)**
 
 A korg-ledger is a hash-chained log of agent events. Each event carries
 `prev_hash` (the previous event's `entry_hash`, or a genesis anchor) and
