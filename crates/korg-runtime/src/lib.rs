@@ -24,6 +24,7 @@ pub mod execution;
 pub mod harness;
 pub mod identity;
 pub mod leader;
+pub mod observation;
 pub mod personas;
 pub mod provenance;
 pub mod recovery;
