@@ -171,9 +171,15 @@ def verify_structure(envelope: dict) -> list:
         errors.append("recorded tip does not match the chain head")
 
     claimed_count = envelope.get("event_count")
-    if claimed_count != len(events):
+    # Type-strict: a JSON float (5.0) must not satisfy the count (Rust's as_u64
+    # rejects it) — keep the three verdicts aligned.
+    if (
+        not isinstance(claimed_count, int)
+        or isinstance(claimed_count, bool)
+        or claimed_count != len(events)
+    ):
         errors.append(
-            f"event_count {claimed_count} does not match the {len(events)} embedded events"
+            f"event_count {claimed_count!r} does not match the {len(events)} embedded events"
         )
 
     claimed_summary = envelope.get("summary")

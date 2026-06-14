@@ -94,8 +94,17 @@ def resolve_anchor(anchor: dict, fetch=None) -> AnchorResult:
         return res
 
     res.committed_at = (((data.get("commit") or {}).get("committer") or {}).get("date"))
-    patches = "".join((f.get("patch") or "") for f in (data.get("files") or []))
-    res.witnessed = entry_hash in patches
+
+    # Only an ADDED line counts as introducing the hash — a bare substring scan of
+    # the whole diff would also match a deleted ("-") or context line, or the
+    # "+++ b/file" header, none of which the commit actually introduced.
+    def _introduced(patch: str) -> bool:
+        for line in patch.splitlines():
+            if line.startswith("+") and not line.startswith("+++") and entry_hash in line:
+                return True
+        return False
+
+    res.witnessed = any(_introduced(f.get("patch") or "") for f in (data.get("files") or []))
     res.detail = "witnessed" if res.witnessed else "commit found but does not introduce the entry_hash"
     return res
 

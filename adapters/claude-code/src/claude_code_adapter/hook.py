@@ -73,12 +73,25 @@ def run_hook(payload: dict, korg_home: Path | None = None) -> None:
         adapter._llm_seq = state["llm_seq"]
 
         events = adapter.parse_all(records)  # full parse, single-shot semantics
-        new_events = events[already:]
+        tail = events[already:]
+
+        # Hold the watermark BEFORE the first tail tool event whose result hasn't
+        # landed yet. The ledger is append-only and cannot patch an already-emitted
+        # event, so emitting a tool_in_round with result={} now would lose its
+        # output forever (parallel/multi-tool rounds land results across firings).
+        # A later PostToolUse — or the Stop hook, fired once all results are in —
+        # re-parses with the result present and emits it then.
+        safe_len = len(tail)
+        for i, ev in enumerate(tail):
+            if ev.causal_role == "tool_in_round" and not ev.result:
+                safe_len = i
+                break
+        new_events = tail[:safe_len]
         if not new_events:
             return
         adapter.ingest_events(new_events)
 
-        state["emitted_count"] = len(events)
+        state["emitted_count"] = already + safe_len
         state["prompt_seq"] = adapter._prompt_seq
         state["llm_seq"] = adapter._llm_seq
         state["root_eid"] = emit.root_event_id()  # type: ignore[attr-defined]

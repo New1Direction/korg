@@ -21,6 +21,11 @@ from typing import Any, Iterable
 def _normalize_record(obj: dict) -> dict:
     """Return a flat {seq, source_agent, tool_name, args, result, triggered_by, success}
     from EITHER a legacy flat record OR a canonical korg-ledger@v1 JournalEvent."""
+    def _as_dict(x):
+        # a truthy non-dict (e.g. a list arg) would escape `x or {}` and crash
+        # downstream text extraction — coerce anything non-dict to {}.
+        return x if isinstance(x, dict) else {}
+
     ev = obj.get("event")
     if isinstance(ev, dict) and "tool_name" in ev:  # canonical JournalEvent
         meta = obj.get("metadata") or {}
@@ -28,8 +33,8 @@ def _normalize_record(obj: dict) -> dict:
             "seq": obj.get("seq_id", 0),
             "source_agent": ev.get("source_agent", ""),
             "tool_name": ev.get("tool_name", ""),
-            "args": ev.get("args") or {},
-            "result": ev.get("result") or {},
+            "args": _as_dict(ev.get("args")),
+            "result": _as_dict(ev.get("result")),
             "triggered_by": meta.get("triggered_by"),
             "success": ev.get("success", True),
         }
@@ -37,8 +42,8 @@ def _normalize_record(obj: dict) -> dict:
         "seq": obj.get("seq", 0),
         "source_agent": obj.get("source_agent", ""),
         "tool_name": obj.get("tool_name", ""),
-        "args": obj.get("args") or {},
-        "result": obj.get("result") or {},
+        "args": _as_dict(obj.get("args")),
+        "result": _as_dict(obj.get("result")),
         "triggered_by": obj.get("triggered_by"),
         "success": obj.get("success", True),
     }
@@ -113,44 +118,49 @@ class EventIndex:
             offset = self._offsets.get(key, 0)
             if size <= offset:
                 continue
+            # Read in BINARY so byte offsets are exact even with invalid UTF-8 —
+            # text-mode seek/read with a byte offset drifts (a replacement char is
+            # 3 bytes; the original bad byte was 1), silently losing events.
             try:
-                with path.open("r", encoding="utf-8", errors="replace") as f:
+                with path.open("rb") as f:
                     f.seek(offset)
                     chunk = f.read(size - offset)
             except OSError:
                 continue
-            if "\n" not in chunk:
+            if b"\n" not in chunk:
                 continue
-            complete, _partial = chunk.rsplit("\n", 1)
-            consumed = len(complete.encode("utf-8")) + 1
-            for line in complete.split("\n"):
-                line = line.strip()
+            complete, _partial = chunk.rsplit(b"\n", 1)
+            consumed = len(complete) + 1  # exact raw byte count
+            for raw in complete.split(b"\n"):
+                line = raw.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
+                # A single poison record must never freeze the offset (error loop):
+                # skip-and-continue, and advance the offset unconditionally below.
                 try:
                     obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(obj, dict):
-                    continue
-                rec = _normalize_record(obj)
-                embed_text = text_for_event(rec)
-                if not embed_text:
-                    continue
-                self.events.append(
-                    IndexedEvent(
-                        source_file=key,
-                        seq=int(rec["seq"] or 0),
-                        source_agent=str(rec["source_agent"]),
-                        tool_name=str(rec["tool_name"]),
-                        args=dict(rec["args"]),
-                        result=dict(rec["result"]),
-                        embed_text=embed_text,
-                        triggered_by=rec["triggered_by"],
-                        success=bool(rec["success"]),
+                    if not isinstance(obj, dict):
+                        continue
+                    rec = _normalize_record(obj)
+                    embed_text = text_for_event(rec)
+                    if not embed_text:
+                        continue
+                    self.events.append(
+                        IndexedEvent(
+                            source_file=key,
+                            seq=int(rec["seq"] or 0),
+                            source_agent=str(rec["source_agent"]),
+                            tool_name=str(rec["tool_name"]),
+                            args=dict(rec["args"]),
+                            result=dict(rec["result"]),
+                            embed_text=embed_text,
+                            triggered_by=rec["triggered_by"],
+                            success=bool(rec["success"]),
+                        )
                     )
-                )
-                added += 1
+                    added += 1
+                except Exception:  # noqa: BLE001 — one bad line must not stall the index
+                    continue
             self._offsets[key] = offset + consumed
         return added
 
