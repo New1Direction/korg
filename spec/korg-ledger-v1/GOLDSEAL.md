@@ -192,3 +192,14 @@ the cross-implementation oracle:
 
 Each suite also pins the security properties: a lying summary, a moved claim, a
 tampered event, a stripped seal, and a wrong pinned key all fail.
+
+---
+
+## 8. Reference minter
+
+Verification is intentionally separate from minting — a relying party should never
+need the producer's tooling. The reference **producer** is `korg-seal`
+(`adapters/korg-seal/`): `korg-seal mint <session.jsonl> --claim "..."` derives the
+summary, builds the envelope, and signs the header with a local issuer key
+(`~/.korg/issuer.ed25519`). It refuses to seal a chain that does not verify. A seal
+it mints is verified — unchanged — by the Rust, JS, and browser verifiers above.

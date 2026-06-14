@@ -95,10 +95,11 @@ jobs:
 
       - name: Producer + capture + setup + reader test suites
         run: |
-          PYTHONPATH="adapters/korg-ledger-py/src:adapters/claude-code/src:adapters/korg-setup/src:adapters/recall-mcp/src" \
+          PYTHONPATH="adapters/korg-ledger-py/src:adapters/claude-code/src:adapters/korg-setup/src:adapters/recall-mcp/src:adapters/korg-seal/src" \
             python3 -m pytest -q \
               adapters/korg-ledger-py/tests \
               adapters/claude-code/tests \
               adapters/korg-setup/tests \
               adapters/recall-mcp/tests/test_index.py \
-              adapters/recall-mcp/tests/test_text.py
+              adapters/recall-mcp/tests/test_text.py \
+              adapters/korg-seal/tests
