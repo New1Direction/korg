@@ -189,6 +189,60 @@ def test_stop_flushes_incomplete_tool_with_abort_marker(tmp_path):
     assert bash[0]["event"]["success"] is False
 
 
+def test_dropped_round_does_not_falsely_parent_tool_across_firings(tmp_path):
+    """A dropped llm_round in firing N must not cause its held-back tool sibling to
+    be falsely chained to the PRIOR round's llm_inference in firing N+1.
+
+    The `_round_dropped` flag lives in the adapter, but the hook builds a fresh
+    adapter every firing — so unless the flag is persisted, firing N+1 forgets the
+    round was orphaned and attaches the tool to a stale-but-valid earlier seq. That
+    is a causally-valid yet FALSE parent: a verifier-undetectable causality lie, the
+    one thing a flight-recorder must never emit. This pins the persistence fix."""
+    korg_home = tmp_path / ".korg"
+    transcript = tmp_path / "sess-drop.jsonl"
+
+    # firing A: a complete round 1 → ledger [user_prompt(1), llm_inference(2), Read(3)]
+    round1 = [
+        {"type": "user", "message": {"content": "go"}},
+        {"type": "assistant", "message": {"model": "c", "usage": {"input_tokens": 1, "output_tokens": 1},
+            "content": [{"type": "tool_use", "id": "r1", "name": "Read", "input": {"file": "a.py"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "r1", "content": "READ_OUT", "is_error": False}]}},
+    ]
+    _write_transcript(transcript, round1)
+    run_hook({"session_id": "sess-drop", "transcript_path": str(transcript),
+              "hook_event_name": "PostToolUse"}, korg_home=korg_home)
+
+    # Inject the exact state firing B would leave after DROPPING round 2's
+    # llm_inference (reachable via a ledger/state divergence — state retains a
+    # higher llm_seq than the truncated ledger supports) while holding back round
+    # 2's tool: emitted_count advances past the dropped llm (→4), llm_seq stays at
+    # the PRIOR round's 2, and round_dropped is now True.
+    state_path = korg_home / "hook-state" / "sess-drop.json"
+    state = json.loads(state_path.read_text())
+    assert state["round_dropped"] is False and state["llm_seq"] == 2
+    state["emitted_count"] = 4
+    state["round_dropped"] = True
+    state_path.write_text(json.dumps(state))
+
+    # firing C: round 2's tool result has landed — the held-back Bash re-emits.
+    _write_transcript(transcript, round1 + [
+        {"type": "assistant", "message": {"model": "c", "usage": {"input_tokens": 1, "output_tokens": 1},
+            "content": [{"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "ls"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "b1", "content": "BASH_OUT", "is_error": False}]}},
+    ])
+    run_hook({"session_id": "sess-drop", "transcript_path": str(transcript),
+              "hook_event_name": "PostToolUse"}, korg_home=korg_home)
+
+    events = _ledger(korg_home, "sess-drop")
+    assert verify_chain(events) == []
+    bash = [e for e in events if e["event"]["tool_name"] == "Bash"]
+    assert len(bash) == 1, "the held-back tool must still be captured"
+    # honest unparented — NOT the stale prior-round llm at seq 2 (the lie this prevents)
+    assert bash[0]["metadata"]["triggered_by"] is None
+
+
 def test_concurrent_firings_do_not_duplicate_the_session(tmp_path):
     """Two firings racing on the same session must not each emit the whole tail
     (the per-session lock serializes the read-modify-write)."""

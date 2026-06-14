@@ -38,7 +38,15 @@ def _load_state(path: Path) -> dict:
             return json.loads(path.read_text())
         except (json.JSONDecodeError, OSError):
             pass
-    return {"emitted_count": 0, "prompt_seq": None, "llm_seq": None, "root_eid": None}
+    return {
+        "emitted_count": 0,
+        "prompt_seq": None,
+        "llm_seq": None,
+        "root_eid": None,
+        # Carries a dropped llm_round's "no honest parent" signal across firings.
+        # Legacy state files without this key degrade safely to False.
+        "round_dropped": False,
+    }
 
 
 def _save_state(path: Path, state: dict) -> None:
@@ -90,6 +98,12 @@ def run_hook(payload: dict, korg_home: Path | None = None) -> None:
                 # seed the chain pointers so the new tail chains to prior firings
                 adapter._prompt_seq = state["prompt_seq"]
                 adapter._llm_seq = state["llm_seq"]
+                # If a prior firing dropped this round's llm_inference, its tool
+                # siblings (held back by the watermark) re-emit in THIS firing —
+                # without restoring the flag, the fresh adapter would falsely chain
+                # them to the stale prior llm_seq (a verifier-undetectable causality
+                # lie). Restore it so they take the honest unparented path instead.
+                adapter._round_dropped = state.get("round_dropped", False)
 
                 events = adapter.parse_all(records)  # full parse, single-shot semantics
                 tail = events[already:]
@@ -125,6 +139,7 @@ def run_hook(payload: dict, korg_home: Path | None = None) -> None:
                 state["emitted_count"] = already + safe_len
                 state["prompt_seq"] = adapter._prompt_seq
                 state["llm_seq"] = adapter._llm_seq
+                state["round_dropped"] = adapter._round_dropped
                 state["root_eid"] = emit.root_event_id()  # type: ignore[attr-defined]
                 _save_state(state_path, state)
             finally:
