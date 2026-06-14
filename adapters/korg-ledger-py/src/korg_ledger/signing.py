@@ -122,6 +122,9 @@ def verify_seal(envelope: dict, pin_pubkey: str | None = None) -> list:
     """
     from . import goldseal
 
+    if not isinstance(envelope, dict):
+        return ["envelope is not a JSON object"]
+
     errors = goldseal.verify_structure(envelope)
 
     seal = envelope.get("seal")

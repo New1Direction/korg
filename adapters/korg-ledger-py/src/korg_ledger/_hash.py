@@ -37,8 +37,13 @@ def verify_anchors(chain: list, anchors: list) -> list:
     match the chain event at its seq_id. The external git-tip proof — the actual
     owner-rewrite defense — is verified by the Rust verifier (see the spec)."""
     errors: list[str] = []
-    by_seq = {e.get("seq_id"): e for e in chain}
+    if not isinstance(chain, list) or not isinstance(anchors, list):
+        return ["chain or anchors is not a list"]
+    by_seq = {e.get("seq_id"): e for e in chain if isinstance(e, dict)}
     for a in anchors:
+        if not isinstance(a, dict):
+            errors.append("anchor record is not a JSON object")
+            continue
         seq = a.get("seq_id")
         want = a.get("entry_hash")
         if seq is None or want is None:
@@ -53,10 +58,20 @@ def verify_anchors(chain: list, anchors: list) -> list:
 
 
 def verify_chain(events: list, key: bytes | None = None) -> list:
-    """Recompute the chain; empty list iff intact. Each error names a seq_id."""
+    """Recompute the chain; empty list iff intact. Each error names a seq_id.
+
+    Robust to hostile input: a non-list, or any non-object event, is reported as
+    an error rather than raising — matching the Rust/JS verifiers, which never
+    crash on malformed input."""
     errors: list[str] = []
+    if not isinstance(events, list):
+        return ["events is not a list"]
     expected_prev: str | None = GENESIS
-    for e in events:
+    for idx, e in enumerate(events):
+        if not isinstance(e, dict):
+            errors.append(f"event {idx} is not a JSON object")
+            expected_prev = None
+            continue
         sid = e.get("seq_id")
         stored = e.get("entry_hash")
         if stored is None:
@@ -78,11 +93,14 @@ def verify_dag(events: list) -> list:
     JournalEvent records (which carry it under ``metadata``) get the
     uniqueness check only — matching the other two implementations."""
     errors: list[str] = []
-    seqs = [e.get("seq_id") for e in events if isinstance(e.get("seq_id"), int)]
+    if not isinstance(events, list):
+        return ["events is not a list"]
+    dicts = [e for e in events if isinstance(e, dict)]
+    seqs = [e.get("seq_id") for e in dicts if isinstance(e.get("seq_id"), int)]
     seqset = set(seqs)
     if len(seqset) != len(seqs):
         errors.append("duplicate seq_id present")
-    for e in events:
+    for e in dicts:
         tb = e.get("triggered_by")
         if not isinstance(tb, int):
             continue

@@ -2229,6 +2229,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "korg-ledger",
+ "proptest",
  "serde_json",
 ]
 

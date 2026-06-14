@@ -39,6 +39,12 @@ jobs:
       - name: Run tests
         run: cargo test --verbose -- --test-threads=4
 
+      - name: Differential fuzz — Rust vs Python vs JS verifiers agree
+        run: |
+          python3 -m pip install --quiet cryptography
+          PYTHONPATH=adapters/korg-ledger-py/src \
+            python3 spec/korg-ledger-v1/tools/diff_fuzz.py
+
       - name: Clippy lint
         run: cargo clippy -- -W clippy::correctness -D clippy::correctness
 

@@ -146,6 +146,39 @@ async function run() {
     if (!ok) failures++;
   }
 
+  // Adversarial robustness: verifyGoldSeal must never throw on hostile input and
+  // never return valid for junk or any single-char hash/sig flip (mirrors the
+  // Python Hypothesis + Rust proptest fuzz suites). Seeded LCG → reproducible.
+  {
+    let seed = 0x9e3779b9;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+    const randJson = (d) => {
+      const r = rnd();
+      if (d <= 0 || r < 0.4) return [null, true, Math.floor(rnd() * 1e6) - 5e5, "x".repeat(Math.floor(rnd() * 8)), rnd() * 1e3][Math.floor(rnd() * 5)];
+      if (r < 0.7) { const a = []; const n = Math.floor(rnd() * 5); for (let i = 0; i < n; i++) a.push(randJson(d - 1)); return a; }
+      const o = {}; const n = Math.floor(rnd() * 5); for (let i = 0; i < n; i++) o["k" + Math.floor(rnd() * 9)] = randJson(d - 1); return o;
+    };
+    let ok = true;
+    const safe = async (v) => { try { return (await verifyGoldSeal(v)).valid === false; } catch { return false; } };
+    const crafted = [null, true, 42, "x", [], {}, [1, 2, 3], { events: "nope" }, { events: [1, 2] }, { schema: "goldseal@v1" }, { schema: "goldseal@v1", events: [{}] }, { schema: "goldseal@v1", events: [null] }];
+    for (const c of crafted) ok = ok && (await safe(c));
+    for (let i = 0; i < 400; i++) ok = ok && (await safe(randJson(4)));
+
+    const fix = JSON.parse(readFileSync(here("../../../crates/korg-verify/tests/fixtures/goldseal-v1.json"), "utf8"));
+    for (let i = 0; i < 64; i++) {
+      const m = JSON.parse(JSON.stringify(fix));
+      const t = m.tip.split(""); t[i] = t[i] === "0" ? "f" : "0"; m.tip = t.join("");
+      ok = ok && (await safe(m));
+    }
+    for (let i = 0; i < 128; i++) {
+      const m = JSON.parse(JSON.stringify(fix));
+      const s = m.seal.sig.split(""); s[i] = s[i] === "0" ? "f" : "0"; m.seal.sig = s.join("");
+      ok = ok && (await safe(m));
+    }
+    console.log(`  [${ok ? "PASS" : "FAIL"}] goldseal fuzz             no-throw + junk/mutations rejected`);
+    if (!ok) failures++;
+  }
+
   console.log(`\nkorg-ledger@v1 conformance (js): ${failures ? `${failures} FAILURE(S)` : "PASS"}`);
   return failures ? 1 : 0;
 }
