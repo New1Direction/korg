@@ -63,17 +63,19 @@ A Gold Seal is one JSON object:
 | `tip`         | hex string     | seal     | MUST equal the last event's `entry_hash`. |
 | `summary`     | object         | seal     | The re-derivable attestation (§4). |
 | `events`      | array          | `tip`/`summary` | The full korg-ledger@v1 chain (flat or nested event shape). |
-| `anchors`     | array (opt.)   | structural | Detachable anchor sidecar (SPEC §8.2). **Not** covered by the seal — see §6. |
+| `anchors`     | array (opt.)   | seal + structural | Anchor records (SPEC §8.2). Bound to the chain structurally **and** signed by the seal (§3) — cannot be stripped, added, or altered. |
 | `seal`        | object         | —        | `{ "alg": "ed25519", "pubkey": <hex>, "sig": <hex> }`. |
 
 ---
 
 ## 3. The header and the seal signature
 
-The **header** is the envelope minus `events`, `seal`, and `anchors`:
+The **header** is the envelope minus `events` and `seal` (so it *includes*
+`anchors` when present — `events` is excluded only because it is large and already
+bound via `tip` + the verified chain):
 
 ```
-header = { schema, spec, claim, issued_at, issuer, event_count, tip, summary }
+header = { schema, spec, claim, issued_at, issuer, event_count, tip, summary[, anchors] }
 ```
 
 The seal signature is Ed25519 over `canonicalize(header)` (SPEC §2 canonical bytes:
@@ -141,7 +143,9 @@ order and the verdict is **valid** iff every applicable check passes:
    `goldseal@v1` without a seal is a *downgrade*, not a merely-unsigned artifact.
 8. If a key is pinned, `seal.pubkey` MUST equal it.
 9. If `anchors` is present and non-empty, each anchor's `entry_hash` MUST match the
-   chain event at its `seq_id` (structural; SPEC §8.2).
+   chain event at its `seq_id` (structural; SPEC §8.2). The anchor set is also
+   covered by the seal signature (step 7, §3), so it cannot be stripped or altered
+   without failing the seal.
 
 ### Graceful degradation
 
@@ -154,12 +158,14 @@ a goldseal-aware tool additionally proves the summary and authorship.
 
 ## 6. Limits & non-goals (v1)
 
-- **Anchors are not sealed.** `anchors` are a detachable sidecar bound *structurally*
-  to the chain (an anchor cannot point at an `entry_hash` the chain doesn't contain),
-  but they are **outside** the seal signature — consistent with the korg-ledger@v1
-  sidecar model. An attacker can strip or add anchors; a stripped anchor only weakens
-  an external time claim, and an added bogus anchor fails the structural check.
-  Binding anchors into the seal is a candidate for a future revision.
+- **Anchors are sealed, but time still needs the network.** The anchor *set* is bound
+  into the seal (§3) and structurally to the chain (§5.9), so it cannot be stripped,
+  added, or forged. What a Gold Seal still does **not** prove offline is the *time*:
+  resolving a `git-tip` anchor against the public git history — confirming the named
+  commit actually witnesses the `entry_hash` — is a network step (SPEC §8.2, "external
+  verification"), out of scope for the hermetic verifier. A green seal proves *which*
+  commit is claimed as the witness; fetching it proves the chain was published before
+  any third party first saw that commit.
 - **No revocation.** There is no built-in mechanism to revoke a minted seal; relying
   parties manage issuer-key trust and rotation out-of-band.
 - **Identity is pinned, not proven.** See §1. v1 deliberately does not specify a PKI;

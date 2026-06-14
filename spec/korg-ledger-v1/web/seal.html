@@ -222,6 +222,7 @@
             <button class="chip" data-ex="valid">a real seal ✓</button>
             <button class="chip" data-ex="summary">forged summary ✗</button>
             <button class="chip" data-ex="claim">moved claim ✗</button>
+            <button class="chip" data-ex="anchor">stripped anchor ✗</button>
           </div>
         </div>
         <p class="err-note" id="err" hidden></p>
@@ -266,13 +267,14 @@
         <ul>
           <li>The <b>events are hash-chained intact</b> — nothing inserted, deleted, reordered, or edited.</li>
           <li>The <b>summary was re-derived from those events</b> — the file count, tools, and paths cannot lie.</li>
-          <li>The <b>issuer signed the whole thing</b> (claim + summary + tip) with one Ed25519 key.</li>
+          <li>The <b>issuer signed the whole thing</b> (claim + summary + tip + any anchors) with one Ed25519 key.</li>
+          <li>If anchored: the <b>anchor set is sealed</b> — it can't be stripped or forged, and points at a real chain event.</li>
         </ul>
       </div>
       <div class="panel no">
         <h3>What it does <em>not</em> prove</h3>
         <ul>
-          <li><b>When</b> it happened — Ed25519 carries no time (attach an external anchor).</li>
+          <li><b>When</b> it happened — the anchor is sealed, but resolving it against public git history (the trusted-time step) is done over the network.</li>
           <li>That the key is a <b>real-world identity</b> — pin a key you already trust.</li>
           <li>That the prose <b>claim</b> is true — only that no one but the issuer could have written it.</li>
         </ul>
@@ -360,6 +362,12 @@ function render(env, v) {
   const files = Array.isArray(s.files) ? s.files : [];
   if (files.length) add("files", `<div class="files">${files.map((f) => `<code>${esc(f)}</code>`).join("")}</div>`);
   if (Number.isInteger(s.seq_first)) add("steps", `seq ${s.seq_first}–${s.seq_last}`);
+  const anchors = Array.isArray(env.anchors) ? env.anchors : [];
+  if (anchors.length) {
+    const a = anchors[0];
+    const commit = a.anchor_proof && a.anchor_proof.commit ? ` <code>${esc(String(a.anchor_proof.commit).slice(0, 10))}…</code>` : "";
+    add("anchored", `${esc(a.anchor_kind || "anchor")}${commit} <span style="color:var(--faint)">(sealed)</span>`);
+  }
   if (Number.isInteger(env.issued_at)) add("issued", new Date(env.issued_at * 1000).toISOString().replace("T", " ").replace(".000Z", " UTC"));
   const signer = v.signer || (env.seal && env.seal.pubkey) || "";
   if (signer) add("issuer key", `<code>${esc(signer.slice(0, 24))}…</code>`);
@@ -417,6 +425,7 @@ async function loadExample(which) {
   let obj = JSON.parse(env);
   if (which === "summary") obj.summary.files = [];          // forge the human summary
   else if (which === "claim") obj.claim = "Fixed an unrelated critical security bug"; // move the claim
+  else if (which === "anchor") delete obj.anchors;          // strip the (sealed) anchor
   $("input").value = JSON.stringify(obj, null, 2);
   $("pubkey").value = "";
   run();

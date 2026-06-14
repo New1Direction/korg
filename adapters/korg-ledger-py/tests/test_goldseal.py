@@ -124,12 +124,13 @@ def test_structure_rejects_a_tampered_event():
     assert verify_structure(env) != []
 
 
-def test_seal_header_excludes_events_seal_anchors():
+def test_seal_header_excludes_events_and_seal_but_binds_anchors():
     env = build_envelope(events=_sample_chain(), claim="c", issuer_agent=AGENT, issued_at=1)
     env["seal"] = {"sig": "x"}
     env["anchors"] = [{"seq_id": 1}]
     h = seal_header(env)
-    assert "events" not in h and "seal" not in h and "anchors" not in h
+    assert "events" not in h and "seal" not in h
+    assert h["anchors"] == [{"seq_id": 1}]  # anchors ARE signed (bound into the seal)
     assert h["claim"] == "c" and h["tip"] == env["tip"]
 
 
@@ -195,3 +196,37 @@ def test_frozen_fixture_verifies_under_python():
     assert verify_seal(env) == []
     # and re-minting the same inputs reproduces it byte-for-byte (deterministic).
     assert env["seal"]["pubkey"] == public_key_hex(SEED)
+
+
+@requires_crypto
+def test_anchors_are_bound_into_the_seal():
+    anchors = [
+        {
+            "seq_id": 4,
+            "entry_hash": None,  # filled in below from the real chain
+            "anchor_kind": "git-tip",
+            "anchor_proof": {"repo": "https://example/r", "commit": "0" * 40},
+            "anchored_at": "2026-06-14T00:00:00Z",
+        }
+    ]
+    events = _sample_chain()
+    anchors[0]["entry_hash"] = events[-1]["entry_hash"]
+    env = mint_seal(
+        events=events, claim="c", issuer_agent=AGENT, issued_at=1, private_seed=SEED, anchors=anchors
+    )
+    assert verify_seal(env) == []
+
+    # stripping the anchor changes the signed header → the seal must break
+    stripped = copy.deepcopy(env)
+    del stripped["anchors"]
+    assert any("seal signature" in e for e in verify_seal(stripped))
+
+    # forging the anchor proof (inside the signed header) → the seal must break
+    forged = copy.deepcopy(env)
+    forged["anchors"][0]["anchor_proof"]["commit"] = "f" * 40
+    assert any("seal signature" in e for e in verify_seal(forged))
+
+    # pointing the anchor at a bogus entry_hash is caught structurally too
+    bogus = copy.deepcopy(env)
+    bogus["anchors"][0]["entry_hash"] = "deadbeef"
+    assert verify_seal(bogus) != []

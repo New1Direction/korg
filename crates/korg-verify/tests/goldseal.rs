@@ -98,3 +98,32 @@ fn a_stripped_seal_is_a_downgrade_not_merely_unsigned() {
     assert!(!v.valid, "a goldseal@v1 without a seal must not verify");
     assert_eq!(v.signature_ok, Some(false));
 }
+
+#[test]
+fn anchors_are_bound_into_the_seal() {
+    // The fixture carries a git-tip anchor. It must verify both structurally
+    // (entry_hash ↔ chain) and cryptographically (the seal signs the anchor set) —
+    // anchors are no longer a detachable sidecar on a Gold Seal.
+    let env = seal();
+    let v = verify_goldseal(&env, None);
+    assert!(v.valid, "anchored fixture must verify: {:?}", v.errors);
+    assert_eq!(
+        v.anchors_ok,
+        Some(true),
+        "the fixture anchor must match the chain"
+    );
+
+    // Strip the anchor → the signed header changes → the seal no longer verifies.
+    let mut stripped = env.clone();
+    stripped.as_object_mut().unwrap().remove("anchors");
+    let v = verify_goldseal(&stripped, None);
+    assert!(!v.valid, "stripping a bound anchor must break the seal");
+    assert_eq!(v.signature_ok, Some(false));
+
+    // Forge the anchor's commit proof → still inside the signed header → fails.
+    let mut forged = env.clone();
+    forged["anchors"][0]["anchor_proof"]["commit"] = Value::String("f".repeat(40));
+    let v = verify_goldseal(&forged, None);
+    assert!(!v.valid, "forging an anchor proof must break the seal");
+    assert_eq!(v.signature_ok, Some(false));
+}

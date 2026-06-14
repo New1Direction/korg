@@ -293,7 +293,9 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
 // Byte-identical derivation + header to the Python (korg_ledger.goldseal) and
 // Rust (korg-verify) implementations.
 
-const GOLDSEAL_NON_HEADER = ["events", "seal", "anchors"];
+// `events` is excluded (bound via tip); `seal` is the signature. `anchors` ARE
+// signed — the seal commits to the anchor set (still structurally chain-bound too).
+const GOLDSEAL_NON_HEADER = ["events", "seal"];
 
 function eventView(e) {
   const inner = e && e.event;
@@ -330,7 +332,8 @@ export function deriveSummary(events) {
   };
 }
 
-/** The signed portion of a Gold Seal: the envelope minus events/seal/anchors. */
+/** The signed portion of a Gold Seal: the envelope minus events and seal (so it
+ *  includes anchors when present — the seal commits to the anchor set). */
 export function sealHeader(envelope) {
   const h = { ...envelope };
   for (const k of GOLDSEAL_NON_HEADER) delete h[k];
