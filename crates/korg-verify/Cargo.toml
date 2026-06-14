@@ -15,7 +15,7 @@ name = "korg-verify"
 path = "src/main.rs"
 
 [dependencies]
-korg-ledger = { path = "../korg-ledger", version = "0.1.0" }
+korg-ledger = { path = "../korg-ledger", version = "0.1.0", features = ["signing"] }
 serde_json = { workspace = true }
 ed25519-dalek = "2"
 hex = "0.4"
