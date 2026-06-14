@@ -585,6 +585,56 @@ pub fn compose_downstream_payload(
     format!("{base}{appended}")
 }
 
+/// Rewrite every still-pending downstream package whose dependencies include a
+/// node that just completed, appending that upstream node's real
+/// `PersonaResult.output` to the downstream payload (Captain+Harper → Benjamin;
+/// Benjamin → Lucas).
+///
+/// This is the per-level data-flow step extracted from `dispatch_concurrent` so
+/// it can be unit-tested in isolation. Behavior is identical to the inline loop:
+///
+/// - A node already present in `completed_outputs` is skipped (it's done).
+/// - A node is only rewritten if at least one of its dependencies is in
+///   `just_completed_ids` (we just produced new upstream context for it).
+/// - Upstream context is gathered from `completed_outputs` for ALL of the node's
+///   dependencies (so a node with two upstreams sees both once both finish), and
+///   composed deterministically + size-capped via [`compose_downstream_payload`].
+///
+/// `completed_outputs` maps `node_id -> (persona_name, output_json)`.
+/// `node_dependencies` maps `node_id -> [dependency_node_id, …]`.
+pub fn apply_upstream_to_pending(
+    packages_map: &mut HashMap<String, WorkPackage>,
+    node_dependencies: &HashMap<String, Vec<String>>,
+    completed_outputs: &HashMap<String, (String, serde_json::Value)>,
+    just_completed_ids: &std::collections::HashSet<String>,
+) {
+    for (node_id, deps) in node_dependencies {
+        // Only rewrite nodes that depend on something we just finished
+        // (and are not themselves done yet).
+        if completed_outputs.contains_key(node_id) {
+            continue;
+        }
+        if !deps.iter().any(|d| just_completed_ids.contains(d)) {
+            continue;
+        }
+        // Gather all completed upstream outputs for this node's deps.
+        let upstream: Vec<(String, String, serde_json::Value)> = deps
+            .iter()
+            .filter_map(|dep_id| {
+                completed_outputs
+                    .get(dep_id)
+                    .map(|(persona, output)| (persona.clone(), dep_id.clone(), output.clone()))
+            })
+            .collect();
+        if upstream.is_empty() {
+            continue;
+        }
+        if let Some(pkg) = packages_map.get_mut(node_id) {
+            pkg.description = compose_downstream_payload(&pkg.description, &upstream);
+        }
+    }
+}
+
 /// Build the canonical 4-persona campaign DAG and return topological levels.
 /// Speculative pre-warm is gated on the `speculative_execution` capability.
 #[tracing::instrument(skip(root_task, tui_tx))]
@@ -1054,5 +1104,149 @@ mod tests {
     fn compose_downstream_payload_empty_upstream_is_noop() {
         let out = compose_downstream_payload("base only", &[]);
         assert_eq!(out, "base only");
+    }
+
+    // --- Slice 2 integration: the dispatch_concurrent per-level rewrite loop ---
+
+    fn dataflow_fixture() -> (HashMap<String, WorkPackage>, HashMap<String, Vec<String>>) {
+        // The canonical 4-node campaign DAG:
+        //   captain, harper (no deps) → benjamin (deps: captain, harper) → lucas (deps: benjamin)
+        let mk = |id: &str, persona: Persona, desc: &str| WorkPackage {
+            node_id: id.to_string(),
+            persona,
+            description: desc.to_string(),
+            routing_id: id.to_string(),
+        };
+        let mut packages_map = HashMap::new();
+        packages_map.insert(
+            "pkg-captain".into(),
+            mk("pkg-captain", Persona::Captain, "Plan: root task"),
+        );
+        packages_map.insert(
+            "pkg-harper".into(),
+            mk("pkg-harper", Persona::Harper, "Research: root task"),
+        );
+        packages_map.insert(
+            "pkg-benjamin".into(),
+            mk("pkg-benjamin", Persona::Benjamin, "Implement: root task"),
+        );
+        packages_map.insert(
+            "pkg-lucas".into(),
+            mk("pkg-lucas", Persona::Lucas, "Synthesize: root task"),
+        );
+
+        let mut node_dependencies = HashMap::new();
+        node_dependencies.insert("pkg-captain".to_string(), vec![]);
+        node_dependencies.insert("pkg-harper".to_string(), vec![]);
+        node_dependencies.insert(
+            "pkg-benjamin".to_string(),
+            vec!["pkg-captain".to_string(), "pkg-harper".to_string()],
+        );
+        node_dependencies.insert("pkg-lucas".to_string(), vec!["pkg-benjamin".to_string()]);
+
+        (packages_map, node_dependencies)
+    }
+
+    #[test]
+    fn apply_upstream_to_pending_threads_captain_into_benjamin_then_benjamin_into_lucas() {
+        let (mut packages_map, node_dependencies) = dataflow_fixture();
+        let mut completed_outputs: HashMap<String, (String, serde_json::Value)> = HashMap::new();
+
+        // --- L1 completes: captain + harper produce real outputs ---
+        completed_outputs.insert(
+            "pkg-captain".to_string(),
+            (
+                "Captain".to_string(),
+                serde_json::json!({
+                    "work_packages": [{"id": 1, "title": "Fix add"}],
+                    "acceptance_criteria": ["add(2,3)==5"]
+                }),
+            ),
+        );
+        completed_outputs.insert(
+            "pkg-harper".to_string(),
+            (
+                "Harper".to_string(),
+                serde_json::json!({ "concerns": [{"id": "c1", "file_path": "src/lib.rs"}] }),
+            ),
+        );
+        let l1_completed: std::collections::HashSet<String> =
+            ["pkg-captain".to_string(), "pkg-harper".to_string()]
+                .into_iter()
+                .collect();
+
+        apply_upstream_to_pending(
+            &mut packages_map,
+            &node_dependencies,
+            &completed_outputs,
+            &l1_completed,
+        );
+
+        // Benjamin's payload now carries BOTH captain's plan and harper's concerns
+        // (the real rewrite — downstream payload carries upstream content).
+        let benjamin_desc = &packages_map["pkg-benjamin"].description;
+        assert!(
+            benjamin_desc.starts_with("Implement: root task"),
+            "base payload must be preserved"
+        );
+        assert!(
+            benjamin_desc.contains("work_packages")
+                && benjamin_desc.contains("Upstream from Captain (pkg-captain)"),
+            "benjamin payload must contain Captain's plan marker, got:\n{benjamin_desc}"
+        );
+        assert!(
+            benjamin_desc.contains("concerns")
+                && benjamin_desc.contains("Upstream from Harper (pkg-harper)"),
+            "benjamin payload must also contain Harper's concerns marker"
+        );
+        // Lucas not yet rewritten — its dep (benjamin) hasn't completed.
+        assert_eq!(
+            packages_map["pkg-lucas"].description, "Synthesize: root task",
+            "lucas must NOT be rewritten before benjamin completes"
+        );
+        // L1 peers (captain/harper) are not themselves rewritten.
+        assert_eq!(packages_map["pkg-captain"].description, "Plan: root task");
+
+        // --- L2 completes: benjamin produces output referencing the implement step ---
+        completed_outputs.insert(
+            "pkg-benjamin".to_string(),
+            (
+                "Benjamin".to_string(),
+                serde_json::json!({
+                    "mutations": [{"target": "src/lib.rs", "action": "update"}]
+                }),
+            ),
+        );
+        let l2_completed: std::collections::HashSet<String> =
+            ["pkg-benjamin".to_string()].into_iter().collect();
+
+        apply_upstream_to_pending(
+            &mut packages_map,
+            &node_dependencies,
+            &completed_outputs,
+            &l2_completed,
+        );
+
+        // Now Lucas's payload carries Benjamin's real output marker.
+        let lucas_desc = &packages_map["pkg-lucas"].description;
+        assert!(
+            lucas_desc.starts_with("Synthesize: root task"),
+            "lucas base payload must be preserved"
+        );
+        assert!(
+            lucas_desc.contains("mutations")
+                && lucas_desc.contains("src/lib.rs")
+                && lucas_desc.contains("Upstream from Benjamin (pkg-benjamin)"),
+            "lucas payload must contain Benjamin's output marker, got:\n{lucas_desc}"
+        );
+        // Benjamin is now done; it must not be re-rewritten as if pending.
+        assert!(
+            packages_map["pkg-benjamin"]
+                .description
+                .matches("Upstream from Captain")
+                .count()
+                == 1,
+            "benjamin must not be rewritten again after it completes"
+        );
     }
 }
