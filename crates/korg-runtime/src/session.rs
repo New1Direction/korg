@@ -210,6 +210,12 @@ pub struct SessionSpec {
     pub payload: String,
     /// Timeout in seconds before the session is forcibly terminated.
     pub timeout_secs: u64,
+    /// Campaign session id. Used (with `speculative`) to derive the shared warm
+    /// `CARGO_TARGET_DIR` so the worker's `cargo check` reuses the warmed cache.
+    pub session_id: String,
+    /// When true, the worker child is spawned with `CARGO_TARGET_DIR` pointing at
+    /// `warm_target_dir(session_id)` — the anti-theater link to the warm boot.
+    pub speculative: bool,
 }
 
 /// An opaque handle to a running session. Returned by `SessionBackend::spawn`.
@@ -262,6 +268,30 @@ pub trait SessionBackend: Send + Sync + std::fmt::Debug {
 
     /// Human-readable backend identifier for logging and metrics.
     fn backend_kind(&self) -> &'static str;
+}
+
+// =========================================================================
+// Speculative warm-cache env decision (pure, testable)
+// =========================================================================
+
+/// Decide the extra env a worker child needs to reuse the warm shared cargo
+/// cache. Pure so the anti-theater link can be unit-tested without inspecting a
+/// spawned `Command`.
+///
+/// When `speculative` is on, returns a single `("CARGO_TARGET_DIR", <path>)` pair
+/// equal to [`crate::execution::warm_target_dir`] for this `session_id` — exactly
+/// what the warm boot populated — so the worker's `cargo check` reuses it. When
+/// off (the default), returns an empty vec and the worker uses its own target dir
+/// (unchanged behavior).
+pub fn worker_cargo_env(session_id: &str, speculative: bool) -> Vec<(String, String)> {
+    if !speculative {
+        return Vec::new();
+    }
+    let target = crate::execution::warm_target_dir(session_id);
+    vec![(
+        "CARGO_TARGET_DIR".to_string(),
+        target.to_string_lossy().into_owned(),
+    )]
 }
 
 // =========================================================================
@@ -320,6 +350,13 @@ impl SessionBackend for SubprocessBackend {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        // Anti-theater link: when speculative is on, point this worker's cargo at
+        // the warm shared cache the warm boot populated, so `observation::cargo_check`
+        // (which honors CARGO_TARGET_DIR automatically) reuses it instead of cold.
+        for (k, v) in worker_cargo_env(&spec.session_id, spec.speculative) {
+            cmd.env(k, v);
+        }
 
         #[cfg(unix)]
         {
@@ -614,6 +651,31 @@ mod tests {
         let h1 = SessionHandle::new(ws.clone(), "r1");
         let h2 = SessionHandle::new(ws, "r1");
         assert_ne!(h1.id, h2.id);
+    }
+
+    #[test]
+    fn worker_cargo_env_is_empty_when_not_speculative() {
+        // Default (non-speculative) path: no CARGO_TARGET_DIR override, so workers
+        // use their own target dir — unchanged behavior.
+        assert!(worker_cargo_env("session-1", false).is_empty());
+    }
+
+    #[test]
+    fn worker_cargo_env_points_at_warm_target_dir_when_speculative() {
+        // The anti-theater link: speculative workers must set CARGO_TARGET_DIR to
+        // exactly the path the warm boot populated, so cargo_check reuses the cache.
+        let session = "session-xyz";
+        let env = worker_cargo_env(session, true);
+        assert_eq!(env.len(), 1, "exactly the CARGO_TARGET_DIR pair");
+        let (k, v) = &env[0];
+        assert_eq!(k, "CARGO_TARGET_DIR");
+        assert_eq!(
+            v,
+            &crate::execution::warm_target_dir(session)
+                .to_string_lossy()
+                .into_owned(),
+            "worker must reuse the SAME shared cache the warm boot derived"
+        );
     }
 
     #[test]

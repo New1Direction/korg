@@ -6,6 +6,7 @@
 use crate::workspace::{WorkspaceId, WorkspaceManager};
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -141,6 +142,11 @@ pub struct RuntimeCoordinator {
     pub concurrency_semaphore: Arc<tokio::sync::Semaphore>,
     pub max_workspace_quota: usize,
     pub backend: Arc<dyn crate::session::SessionBackend>,
+    /// When set (via `--speculative`), worker children are spawned with
+    /// `CARGO_TARGET_DIR` pointing at the warm shared cache. Default off. An
+    /// `AtomicBool` so the leader can flip it through its `Arc<RuntimeCoordinator>`
+    /// after construction without needing `&mut`.
+    speculative: Arc<AtomicBool>,
 }
 
 impl RuntimeCoordinator {
@@ -160,7 +166,19 @@ impl RuntimeCoordinator {
             concurrency_semaphore: Arc::new(tokio::sync::Semaphore::new(max_concurrent_workers)),
             max_workspace_quota,
             backend,
+            speculative: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Enable/disable speculative warm-cache reuse for worker children (default
+    /// off). Gated by `--speculative` at the CLI; threaded via the leader.
+    pub fn set_speculative(&self, on: bool) {
+        self.speculative.store(on, Ordering::SeqCst);
+    }
+
+    /// Whether worker children should reuse the warm shared cargo cache.
+    pub fn speculative(&self) -> bool {
+        self.speculative.load(Ordering::SeqCst)
     }
 
     /// Forcibly abort all running components owned by this coordinator context.
