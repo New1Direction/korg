@@ -142,6 +142,46 @@ pub fn chain_hash(event: &Value, key: Option<&[u8]>) -> String {
     }
 }
 
+/// Canonical preimage bytes for an event — exactly the bytes `chain_hash`
+/// hashes (the event with `HASH_FIELDS` removed, canonicalized). Exposed so
+/// signers/verifiers/anchors reuse the same bytes without duplicating logic.
+pub fn event_preimage(event: &Value) -> Vec<u8> {
+    let mut obj = event.as_object().cloned().unwrap_or_default();
+    for f in HASH_FIELDS {
+        obj.remove(*f);
+    }
+    canonicalize(&Value::Object(obj))
+}
+
+/// Ed25519-sign an event's canonical preimage (RFC 8032, pure — the raw
+/// preimage bytes are the message, NOT their hash). Returns lowercase hex.
+#[cfg(feature = "signing")]
+pub fn sign_event(key: &ed25519_dalek::SigningKey, event: &Value) -> String {
+    use ed25519_dalek::Signer;
+    hex::encode(key.sign(&event_preimage(event)).to_bytes())
+}
+
+/// Verify an event's `event_sig` (lowercase hex) against a hex Ed25519 public
+/// key. Returns false on any decode/length/verification error.
+#[cfg(feature = "signing")]
+pub fn verify_event_sig(pubkey_hex: &str, event: &Value, sig_hex: &str) -> bool {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    let pk: [u8; 32] = match hex::decode(pubkey_hex).ok().and_then(|b| b.try_into().ok()) {
+        Some(p) => p,
+        None => return false,
+    };
+    let vk = match VerifyingKey::from_bytes(&pk) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let sig: [u8; 64] = match hex::decode(sig_hex).ok().and_then(|b| b.try_into().ok()) {
+        Some(s) => s,
+        None => return false,
+    };
+    vk.verify(&event_preimage(event), &Signature::from_bytes(&sig))
+        .is_ok()
+}
+
 /// Recompute the hash-chain and report tampering (korg-ledger@v1 §5).
 /// Returns an empty vec iff the chain is intact; each error names a `seq_id`.
 pub fn verify_chain(events: &[Value], key: Option<&[u8]>) -> Vec<String> {
@@ -241,7 +281,9 @@ mod tests {
             obj.insert("payload".into(), serde_json::to_value(p).unwrap());
             let mut val = Value::Object(obj);
             let h = chain_hash(&val, key);
-            val.as_object_mut().unwrap().insert("entry_hash".into(), json!(h));
+            val.as_object_mut()
+                .unwrap()
+                .insert("entry_hash".into(), json!(h));
             prev = h;
             out.push(val);
         }
@@ -337,5 +379,39 @@ mod tests {
         let mut other = ev.clone();
         other["prev_hash"] = json!("ff");
         assert_ne!(chain_hash(&other, None), h);
+    }
+}
+
+#[cfg(all(test, feature = "signing"))]
+mod signing_tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+    use serde_json::json;
+
+    #[test]
+    fn sign_then_verify_roundtrips_and_detects_tampering() {
+        let key = SigningKey::from_bytes(&[42u8; 32]);
+        let pk_hex = hex::encode(key.verifying_key().to_bytes());
+        let ev = json!({"seq_id": 1, "prev_hash": GENESIS_HASH, "payload": {"a": 1}, "entry_hash": "deadbeef"});
+        let sig = sign_event(&key, &ev);
+        assert_eq!(sig.len(), 128); // 64-byte signature as lowercase hex
+        assert!(verify_event_sig(&pk_hex, &ev, &sig));
+        // tampering event content breaks verification
+        let mut tampered = ev.clone();
+        tampered["payload"] = json!({"a": 2});
+        assert!(!verify_event_sig(&pk_hex, &tampered, &sig));
+        // a wrong pubkey / malformed sig returns false (never panics)
+        assert!(!verify_event_sig("not-hex", &ev, &sig));
+        assert!(!verify_event_sig(&pk_hex, &ev, "00"));
+    }
+
+    #[test]
+    fn signature_excludes_entry_hash_and_event_sig_from_the_preimage() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let a = json!({"seq_id": 1, "prev_hash": GENESIS_HASH, "x": "y"});
+        let mut b = a.clone();
+        b["entry_hash"] = json!("anything");
+        b["event_sig"] = json!("anything");
+        assert_eq!(sign_event(&key, &a), sign_event(&key, &b));
     }
 }

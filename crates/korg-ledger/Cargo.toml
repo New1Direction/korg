@@ -14,6 +14,13 @@ readme = false
 serde_json = { workspace = true }
 sha2 = "0.10"
 hmac = "0.12"
+ed25519-dalek = { version = "2", optional = true }
+hex = { version = "0.4", optional = true }
+
+[features]
+# Opt-in Ed25519 per-event signing/verification. Keeps the core crate
+# dependency-light (hash-chain only) for downstream consumers who don't sign.
+signing = ["dep:ed25519-dalek", "dep:hex"]
 
 [dev-dependencies]
 proptest = "1"
