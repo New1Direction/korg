@@ -203,32 +203,37 @@ impl LeaderOrchestrator {
             println!("    {}", j);
         }
 
-        // Feed a synthetic telemetry pulse into the Evaluator's own window for continuity
-        let te = TraceEvent {
-            agent_id: "leader-aggregate".into(),
-            risk_score: if verdict.overall == "TERMINATE" {
-                0.82
-            } else {
-                0.45
-            },
-            epistemic_confidence: if verdict.passed_rubrics >= 4 {
-                0.81
-            } else {
-                0.52
-            },
-            conflict_rate: if verdict.doom_loop_detected {
-                0.48
-            } else {
-                0.18
-            },
-            token_velocity: if verdict.doom_loop_detected {
-                240.0
-            } else {
-                95.0
-            },
-            ..Default::default()
-        };
-        self.evaluator.ingest(te);
+        // Feed a SYNTHETIC continuity pulse into the Evaluator's window — its fields
+        // are hardcoded constants chosen by verdict booleans, not real measurements,
+        // so it must never contaminate the default (honest) scoring path. Gated like
+        // the other synthetic injectors: only under --inject-stress.
+        if self.inject_stress {
+            let te = TraceEvent {
+                agent_id: "leader-aggregate".into(),
+                risk_score: if verdict.overall == "TERMINATE" {
+                    0.82
+                } else {
+                    0.45
+                },
+                epistemic_confidence: if verdict.passed_rubrics >= 4 {
+                    0.81
+                } else {
+                    0.52
+                },
+                conflict_rate: if verdict.doom_loop_detected {
+                    0.48
+                } else {
+                    0.18
+                },
+                token_velocity: if verdict.doom_loop_detected {
+                    240.0
+                } else {
+                    95.0
+                },
+                ..Default::default()
+            };
+            self.evaluator.ingest(te);
+        }
 
         let action = verdict.recommended_action.as_str();
         let decision_log = format!(
