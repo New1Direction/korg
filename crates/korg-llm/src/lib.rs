@@ -13,6 +13,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+mod deterministic;
+pub use deterministic::DeterministicProvider;
+
 // =========================================================================
 // Core Data Structures
 // =========================================================================
