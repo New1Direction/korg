@@ -191,9 +191,12 @@ impl SingleWorkerHarness {
         payload: String,
         base_snapshot: String,
         codebase_merkle_root: String,
-        _permissions: Vec<String>,
+        permissions: Vec<String>,
     ) -> Result<()> {
-        eprintln!("[Harness] Received RouteWork {}: {}", routing_id, payload);
+        eprintln!(
+            "[Harness] Received RouteWork {}: {} (permissions={:?})",
+            routing_id, payload, permissions
+        );
 
         // Save original working directory to restore it during cleanup
         let original_dir = std::env::current_dir()?;
@@ -353,8 +356,10 @@ impl SingleWorkerHarness {
             }
         });
 
-        // 2. Run the actual persona task (emitter runs in parallel)
-        let result = self.run_task_in_worktree(&payload).await?;
+        // 2. Run the actual persona task (emitter runs in parallel).
+        //    Permissions gate whether emitted mutations are applied: a read-only
+        //    persona (no fs:write:worktree) is analyzed, never mutated.
+        let result = self.run_task_in_worktree(&payload, &permissions).await?;
 
         // Wait for emitter to finish (or abort it)
         let _ = emitter_handle.await;
@@ -518,7 +523,11 @@ impl SingleWorkerHarness {
         Ok(())
     }
 
-    async fn run_task_in_worktree(&mut self, payload: &str) -> Result<TaskResult> {
+    async fn run_task_in_worktree(
+        &mut self,
+        payload: &str,
+        permissions: &[String],
+    ) -> Result<TaskResult> {
         // Route persona from worker_id when possible (real 4-persona topology)
         let persona = self.infer_persona_from_worker_id();
         eprintln!(
@@ -529,11 +538,29 @@ impl SingleWorkerHarness {
 
         let persona_result = run_persona(persona, payload, "worker-task").await;
 
-        // Honest observation: apply the persona's patch to THIS worktree, then
-        // measure reality. The worktree is the process CWD (set at harness.rs:267).
+        // Honest observation. The worktree is the process CWD (set at harness.rs:267).
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let started = std::time::Instant::now();
-        let apply = crate::observation::apply_mutations(&cwd, &persona_result.mutations).await;
+
+        // --- Apply gate (SP2 Slice 3) ---
+        // Only personas holding `fs:write:worktree` may mutate. A read-only
+        // persona (harper/captain/evaluator) that nonetheless emitted mutations
+        // is analyzed, NEVER applied: we run numstat/cargo_check on the existing
+        // (unmutated) tree and record files_changed = 0 honestly.
+        let may_write = crate::permissions::may_write(permissions);
+        let apply = if may_write {
+            crate::observation::apply_mutations(&cwd, &persona_result.mutations).await
+        } else {
+            if !persona_result.mutations.is_empty() {
+                eprintln!(
+                    "[Harness] {} is read-only (no fs:write:worktree) but emitted {} mutation(s); analyzing only — NOT applying (files_changed=0).",
+                    persona.name(),
+                    persona_result.mutations.len()
+                );
+            }
+            // Analyze-only: nothing applied, nothing rejected.
+            crate::observation::ApplyOutcome::default()
+        };
         let numstat = crate::observation::numstat(&cwd).await;
         let check = crate::observation::cargo_check(&cwd).await;
         let elapsed = started.elapsed().as_secs_f64().max(1e-3);
@@ -554,7 +581,9 @@ impl SingleWorkerHarness {
         self.last_observation = Some(crate::observation::honest_metrics(
             &apply, &check, &numstat, tokens, elapsed, cpu, &surface,
         ));
-        let files_changed = numstat.files;
+        // A read-only persona did not apply anything, so it changed nothing:
+        // record files_changed = 0 honestly (don't count analyze as apply).
+        let files_changed = if may_write { numstat.files } else { 0 };
 
         // Stage all modifications so git write-tree will capture them
         let _ = tokio::process::Command::new("git")
@@ -677,7 +706,7 @@ mod tests {
                 payload,
                 "HEAD".to_string(),
                 "".to_string(),
-                vec![],
+                crate::permissions::permissions_for(&worker_id),
             )
             .await;
 
@@ -686,5 +715,109 @@ mod tests {
         // Verify that the worktree directory is removed and cleaned up after successful completion
         let worktree_path = korg_core::paths::worktree_dir_harness(&worker_id, &routing_id);
         assert!(!worktree_path.exists());
+    }
+
+    /// CWD is process-global, so tests that `set_current_dir` into a sandbox
+    /// must not run concurrently with each other. This mutex serializes them.
+    static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Build a throwaway git repo containing the fixture `src/lib.rs` (broken
+    /// `add`) and return its path. The caller cd's into it.
+    fn setup_fixture_git_repo(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("korg-slice3-{}-{}", tag, uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        // A compiling crate whose `add` is intentionally wrong (fixture-shaped).
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"fix\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("src/lib.rs"),
+            "pub fn add(a: i32, b: i32) -> i32 { a - b }\n",
+        )
+        .unwrap();
+        for args in [vec!["init", "-q"], vec!["add", "-A"]] {
+            let _ = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(&dir)
+                .output();
+        }
+        // commit needs identity; set it locally for the throwaway repo
+        let _ = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ])
+            .current_dir(&dir)
+            .output();
+        dir
+    }
+
+    /// Slice 3: a read-only persona that emits an applyable mutation must NOT
+    /// mutate the worktree and must record files_changed == 0. The SAME persona
+    /// with write capability DOES apply — proving the gate (not the persona) is
+    /// what blocks the write.
+    #[tokio::test]
+    async fn read_only_persona_does_not_mutate_worktree() {
+        let _guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original_dir = std::env::current_dir().unwrap();
+
+        // Benjamin's worker emits a real applyable src/lib.rs patch on the
+        // fixture task, so the ONLY thing that can stop the write is the gate.
+        let payload = "Fix the add function in src/lib.rs so it adds";
+
+        // --- Read-only run: pass fs:read perms; expect NO mutation ---
+        let ro_repo = setup_fixture_git_repo("ro");
+        std::env::set_current_dir(&ro_repo).unwrap();
+        let mut ro_harness = SingleWorkerHarness::new("benjamin-ro-test".to_string());
+        let ro_result = ro_harness
+            .run_task_in_worktree(payload, &[crate::permissions::CAP_FS_READ.to_string()])
+            .await
+            .unwrap();
+        let ro_lib = std::fs::read_to_string(ro_repo.join("src/lib.rs")).unwrap();
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        assert_eq!(
+            ro_result.files_changed, 0,
+            "read-only persona must record files_changed == 0 (analyze-only)"
+        );
+        assert!(
+            ro_lib.contains("a - b"),
+            "read-only persona must NOT have rewritten src/lib.rs (file unchanged)"
+        );
+
+        // --- Write run: pass fs:write:worktree; expect the patch to apply ---
+        let rw_repo = setup_fixture_git_repo("rw");
+        std::env::set_current_dir(&rw_repo).unwrap();
+        let mut rw_harness = SingleWorkerHarness::new("benjamin-rw-test".to_string());
+        let rw_result = rw_harness
+            .run_task_in_worktree(
+                payload,
+                &[crate::permissions::CAP_FS_WRITE_WORKTREE.to_string()],
+            )
+            .await
+            .unwrap();
+        let rw_lib = std::fs::read_to_string(rw_repo.join("src/lib.rs")).unwrap();
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        assert!(
+            rw_result.files_changed >= 1,
+            "write persona must record the applied change (files_changed >= 1)"
+        );
+        assert!(
+            rw_lib.contains("a + b"),
+            "write persona must have applied the fixture patch (add now uses a + b)"
+        );
+
+        let _ = std::fs::remove_dir_all(&ro_repo);
+        let _ = std::fs::remove_dir_all(&rw_repo);
     }
 }
