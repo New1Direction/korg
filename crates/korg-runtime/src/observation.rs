@@ -68,6 +68,42 @@ pub async fn numstat(worktree: &Path) -> Numstat {
     n
 }
 
+/// Outcome of applying a persona's mutations to the worktree.
+#[derive(Debug, Clone, Default)]
+pub struct ApplyOutcome {
+    pub applied: usize,
+    pub rejected: usize,
+    /// rejected / total — feeds the honest `conflict_rate` (0.0 = all clean).
+    pub conflict_rate: f32,
+}
+
+/// Write each mutation's `content` to its `target` (relative to `worktree`).
+/// A mutation without an applyable string `content` is rejected, not faked.
+pub async fn apply_mutations(worktree: &Path, mutations: &[serde_json::Value]) -> ApplyOutcome {
+    let mut out = ApplyOutcome::default();
+    for m in mutations {
+        let target = m.get("target").and_then(|v| v.as_str());
+        let content = m.get("content").and_then(|v| v.as_str());
+        match (target, content) {
+            (Some(rel), Some(body)) => {
+                let path = worktree.join(rel);
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(&path, body).is_ok() {
+                    out.applied += 1;
+                } else {
+                    out.rejected += 1;
+                }
+            }
+            _ => out.rejected += 1, // no applyable content
+        }
+    }
+    let total = (out.applied + out.rejected) as f32;
+    out.conflict_rate = if total > 0.0 { out.rejected as f32 / total } else { 0.0 };
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +164,22 @@ mod tests {
         std::fs::write(d.join("src/extra.rs"), "pub fn g() {}\n").unwrap();
         let n = numstat(&d).await;
         assert_eq!(n.files, 1, "a newly created file counts");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[tokio::test]
+    async fn apply_writes_content_and_counts_rejects() {
+        let d = tmp();
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        let muts = vec![
+            serde_json::json!({"target":"src/lib.rs","action":"update","content":"pub fn f() -> i64 { 2 }\n"}),
+            serde_json::json!({"target":"src/x.rs","action":"update","description":"no content field"}),
+        ];
+        let outcome = apply_mutations(&d, &muts).await;
+        assert_eq!(outcome.applied, 1);
+        assert_eq!(outcome.rejected, 1, "a mutation with no applyable content is a reject");
+        assert_eq!(std::fs::read_to_string(d.join("src/lib.rs")).unwrap(), "pub fn f() -> i64 { 2 }\n");
+        assert!((outcome.conflict_rate - 0.5).abs() < 1e-6);
         let _ = std::fs::remove_dir_all(&d);
     }
 }
