@@ -2653,37 +2653,17 @@ impl LeaderOrchestrator {
                     (res.persona.name().to_string(), res.output.clone()),
                 );
             }
-            let just_completed: std::collections::HashSet<&String> = level_result
+            let just_completed: std::collections::HashSet<String> = level_result
                 .completed
                 .iter()
-                .map(|r| &r.routing_id)
+                .map(|r| r.routing_id.clone())
                 .collect();
-            for (node_id, deps) in &node_dependencies {
-                // Only rewrite nodes that depend on something we just finished
-                // (and are not themselves done yet).
-                if completed_outputs.contains_key(node_id) {
-                    continue;
-                }
-                if !deps.iter().any(|d| just_completed.contains(d)) {
-                    continue;
-                }
-                // Gather all completed upstream outputs for this node's deps.
-                let upstream: Vec<(String, String, serde_json::Value)> = deps
-                    .iter()
-                    .filter_map(|dep_id| {
-                        completed_outputs.get(dep_id).map(|(persona, output)| {
-                            (persona.clone(), dep_id.clone(), output.clone())
-                        })
-                    })
-                    .collect();
-                if upstream.is_empty() {
-                    continue;
-                }
-                if let Some(pkg) = packages_map.get_mut(node_id) {
-                    pkg.description =
-                        crate::workers::compose_downstream_payload(&pkg.description, &upstream);
-                }
-            }
+            crate::workers::apply_upstream_to_pending(
+                &mut packages_map,
+                &node_dependencies,
+                &completed_outputs,
+                &just_completed,
+            );
 
             tracing::info!(
                 level = idx + 1,
