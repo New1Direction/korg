@@ -9,7 +9,7 @@
 
 ---
 
-![korg demo — rewind, fork, and replay AI agent decisions in real time](demo.gif)
+![korg demo — record, verify, and rewind an AI agent session as a hash-chained ledger](demo.gif)
 
 ---
 
@@ -45,7 +45,7 @@ Every agent action is:
 - **Appended** to an immutable, cryptographically-signed ledger
 - **Ordered** with Hybrid Logical Clocks (causal, deterministic, globally consistent)
 - **Replayable** — rebuild exact state at any point in history
-- **Reversible** — rewind, fork, or branch any decision
+- **Reversible** — rewind the ledger to any prior sequence point
 
 ---
 
@@ -178,18 +178,22 @@ korg goal "Write and validate a full test suite for src/parser.rs"
 korg run --preview "Refactor the main event loop"
 ```
 
-### Rewind & Fork
+### Rewind & Verify
 
 ```bash
-# Rewind to a specific ledger sequence point
+# Rewind the capability journal to a specific ledger sequence point
 korg rewind --seq 4
 
-# List all checkpoints in the current session
-korg checkpoints list
+# Drive the honest pipeline on a fixture and emit a verifiable ledger
+korg run-once "Fix the add function in src/lib.rs so it adds"
 
-# Restore from a specific checkpoint
-korg checkpoints restore --id <checkpoint-uuid>
+# Independently verify any korg-ledger@v1 journal (no trust in the producer)
+korg-verify <path-to-ledger.jsonl>
 ```
+
+> Speculative branch/fork and named checkpoints (`korg fork`, `korg checkpoints
+> list|restore`) are planned, not yet shipped. The reversibility surface today is
+> `korg rewind`.
 
 ---
 
