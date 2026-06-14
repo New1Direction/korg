@@ -100,7 +100,11 @@ pub async fn apply_mutations(worktree: &Path, mutations: &[serde_json::Value]) -
         }
     }
     let total = (out.applied + out.rejected) as f32;
-    out.conflict_rate = if total > 0.0 { out.rejected as f32 / total } else { 0.0 };
+    out.conflict_rate = if total > 0.0 {
+        out.rejected as f32 / total
+    } else {
+        0.0
+    };
     out
 }
 
@@ -146,7 +150,11 @@ pub fn honest_metrics(
     let confidence = if passed { CONF_PASS } else { CONF_FAIL };
     // verified delta: a real compile pass is +1; fail or unavailable is 0 (never faked).
     let verified: i64 = if passed { 1 } else { 0 };
-    let velocity = if elapsed_secs > 0.0 { tokens as f64 / elapsed_secs } else { 0.0 };
+    let velocity = if elapsed_secs > 0.0 {
+        tokens as f64 / elapsed_secs
+    } else {
+        0.0
+    };
     serde_json::json!({
         "phase": "complete",
         "risk_score": risk.clamp(0.0, 1.0),
@@ -174,8 +182,12 @@ mod tests {
     }
 
     async fn git(dir: &std::path::Path, args: &[&str]) {
-        tokio::process::Command::new("git").args(args).current_dir(dir)
-            .output().await.unwrap();
+        tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .await
+            .unwrap();
     }
 
     async fn init_crate(dir: &std::path::Path, lib_body: &str) {
@@ -185,7 +197,19 @@ mod tests {
         std::fs::write(dir.join("src/lib.rs"), lib_body).unwrap();
         git(dir, &["init", "-q"]).await;
         git(dir, &["add", "-A"]).await;
-        git(dir, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"]).await;
+        git(
+            dir,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "init",
+            ],
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -235,8 +259,14 @@ mod tests {
         ];
         let outcome = apply_mutations(&d, &muts).await;
         assert_eq!(outcome.applied, 1);
-        assert_eq!(outcome.rejected, 1, "a mutation with no applyable content is a reject");
-        assert_eq!(std::fs::read_to_string(d.join("src/lib.rs")).unwrap(), "pub fn f() -> i64 { 2 }\n");
+        assert_eq!(
+            outcome.rejected, 1,
+            "a mutation with no applyable content is a reject"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("src/lib.rs")).unwrap(),
+            "pub fn f() -> i64 { 2 }\n"
+        );
         assert!((outcome.conflict_rate - 0.5).abs() < 1e-6);
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -245,10 +275,21 @@ mod tests {
     fn honest_metrics_map_real_measurements() {
         // A clean apply that compiles → low risk, high confidence, positive verified delta.
         let m = honest_metrics(
-            &ApplyOutcome { applied: 1, rejected: 0, conflict_rate: 0.0 },
+            &ApplyOutcome {
+                applied: 1,
+                rejected: 0,
+                conflict_rate: 0.0,
+            },
             &CargoCheck::Passed,
-            &Numstat { files: 1, added: 1, removed: 1 },
-            120, 2.0, 0.30, "fixed add()",
+            &Numstat {
+                files: 1,
+                added: 1,
+                removed: 1,
+            },
+            120,
+            2.0,
+            0.30,
+            "fixed add()",
         );
         assert!(m["risk_score"].as_f64().unwrap() < 0.4);
         assert!(m["epistemic_confidence"].as_f64().unwrap() > 0.6);
@@ -261,10 +302,21 @@ mod tests {
     #[test]
     fn honest_metrics_failed_compile_is_high_risk_zero_verified() {
         let m = honest_metrics(
-            &ApplyOutcome { applied: 1, rejected: 0, conflict_rate: 0.0 },
+            &ApplyOutcome {
+                applied: 1,
+                rejected: 0,
+                conflict_rate: 0.0,
+            },
             &CargoCheck::Failed("E0308".into()),
-            &Numstat { files: 1, added: 5, removed: 0 },
-            80, 1.0, 0.1, "broke the build",
+            &Numstat {
+                files: 1,
+                added: 5,
+                removed: 0,
+            },
+            80,
+            1.0,
+            0.1,
+            "broke the build",
         );
         assert!(m["risk_score"].as_f64().unwrap() > 0.6);
         assert_eq!(m["verified_count_delta"].as_i64().unwrap(), 0);
@@ -273,10 +325,21 @@ mod tests {
     #[test]
     fn honest_metrics_unavailable_cargo_marks_tool_unavailable() {
         let m = honest_metrics(
-            &ApplyOutcome { applied: 1, rejected: 0, conflict_rate: 0.0 },
+            &ApplyOutcome {
+                applied: 1,
+                rejected: 0,
+                conflict_rate: 0.0,
+            },
             &CargoCheck::Unavailable,
-            &Numstat { files: 1, added: 1, removed: 0 },
-            10, 1.0, 0.0, "no cargo here",
+            &Numstat {
+                files: 1,
+                added: 1,
+                removed: 0,
+            },
+            10,
+            1.0,
+            0.0,
+            "no cargo here",
         );
         assert_eq!(m["verified_count_delta"].as_i64().unwrap(), 0);
         assert_eq!(m["tool_unavailable"].as_bool(), Some(true));
