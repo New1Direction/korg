@@ -937,7 +937,11 @@ mod chain_tests {
         assert_eq!(j.events.len(), 2);
         assert_eq!(j.events[0].seq_id, 1);
         match &j.events[1].event {
-            CapabilityEvent::LedgerRewind { target_seq_id, invalidated_through, .. } => {
+            CapabilityEvent::LedgerRewind {
+                target_seq_id,
+                invalidated_through,
+                ..
+            } => {
                 assert_eq!(*target_seq_id, 1);
                 assert_eq!(*invalidated_through, 3);
             }
