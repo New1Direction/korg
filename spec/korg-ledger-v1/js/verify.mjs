@@ -331,7 +331,19 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
     errors.push(`receipt is unsigned but signer ${pinPubkey} was required`);
   }
 
-  const valid = eventsOk && chainOk && dagOk && tipOk && signatureOk !== false;
+  // Reject out-of-domain numbers in envelope fields (e.g. a big tip-adjacent
+  // value) so JS agrees with the Rust verifier, which scans the whole receipt.
+  let domainOk = true;
+  try {
+    for (const [k, val] of Object.entries(receipt && typeof receipt === "object" ? receipt : {})) {
+      if (k !== "events") canonicalize(val);
+    }
+  } catch (err) {
+    domainOk = false;
+    errors.push(`receipt envelope has an out-of-domain number: ${err.message}`);
+  }
+
+  const valid = eventsOk && chainOk && dagOk && tipOk && domainOk && signatureOk !== false;
   return {
     valid,
     kind: "receipt",
@@ -444,7 +456,7 @@ export async function verifyGoldSeal(envelope, { pinPubkey = null } = {}) {
   const tipOk = claimedTip == null ? false : head != null && claimedTip === head;
   if (!tipOk) errors.push("recorded tip does not match the chain head");
 
-  const countOk = envelope.event_count === events.length;
+  const countOk = Number.isInteger(envelope.event_count) && envelope.event_count === events.length;
   if (!countOk) {
     errors.push(`event_count ${envelope.event_count} does not match the ${events.length} embedded events`);
   }

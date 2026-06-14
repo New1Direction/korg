@@ -141,9 +141,18 @@ def _cmd_resolve(args) -> int:
         if r.witnessed:
             print(
                 f"✓ seq {r.seq_id} · {r.entry_hash[:12]}… witnessed by "
-                f"{r.repo}@{r.commit[:10]} · committed {r.committed_at}"
+                f"{r.repo}@{r.commit[:10]}"
             )
-            print("  → the chain existed by then (published no later than this commit)")
+            # The committer date is self-asserted (git lets you set it to anything),
+            # so it is NOT a trusted clock. The real bound is the publish-before-fetch
+            # property of an immutable public commit (SPEC §8.2).
+            print(
+                f"  → the tip is committed to public git (commit's self-asserted date: {r.committed_at})"
+            )
+            print(
+                "    a public commit proves the chain existed before any third party fetched it —"
+                " confirm the commit's first-seen time out of band for a hard bound"
+            )
         else:
             all_ok = False
             print(f"✗ seq {r.seq_id} · {r.repo}@{r.commit[:10]}: {r.detail}")

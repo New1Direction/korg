@@ -94,3 +94,62 @@ def test_captured_ledger_verifies_under_spec_oracle(tmp_path):
     events = _ledger(korg_home, "sess-z")
     assert oracle.verify_chain(events, None) == []
     assert oracle.chain_hash(events[-1]) == events[-1]["entry_hash"]
+
+
+def test_parallel_tools_results_not_dropped_across_firings(tmp_path):
+    """Two tool_use blocks in one round whose results land in a LATER firing must
+    NOT be emitted with result={} (append-only can't patch them). They are held
+    back until their results arrive, then captured with output."""
+    korg_home = tmp_path / ".korg"
+    transcript = tmp_path / "sess-par.jsonl"
+    payload = {"session_id": "sess-par", "transcript_path": str(transcript)}
+
+    # firing 1: assistant fires Read + Bash in parallel; NO results yet
+    base = [
+        {"type": "user", "message": {"content": "go"}},
+        {"type": "assistant", "message": {"model": "claude", "usage": {"input_tokens": 1, "output_tokens": 1},
+            "content": [
+                {"type": "tool_use", "id": "r1", "name": "Read", "input": {"file": "a.py"}},
+                {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "ls"}},
+            ]}},
+    ]
+    _write_transcript(transcript, base)
+    run_hook(payload, korg_home=korg_home)
+
+    # firing 2: both results land (batched into one user message)
+    _write_transcript(transcript, base + [
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "r1", "content": "READ_OUT", "is_error": False},
+            {"type": "tool_result", "tool_use_id": "b1", "content": "BASH_OUT", "is_error": False},
+        ]}},
+    ])
+    run_hook(payload, korg_home=korg_home)
+
+    events = _ledger(korg_home, "sess-par")
+    assert verify_chain(events) == []
+    by_tool = {e["event"]["tool_name"]: e["event"]["result"] for e in events if e["event"]["tool_name"] in ("Read", "Bash")}
+    assert by_tool.get("Read", {}).get("output") == "READ_OUT", "Read result must be captured, not dropped"
+    assert by_tool.get("Bash", {}).get("output") == "BASH_OUT", "Bash result must be captured, not dropped"
+
+
+def test_oversized_int_arg_is_recorded_not_crashing(tmp_path):
+    """A tool arg beyond ±(2^53-1) (e.g. a nanosecond timestamp) must be recorded
+    (coerced canon-safe), not crash the firing and re-emit everything on the next."""
+    korg_home = tmp_path / ".korg"
+    transcript = tmp_path / "sess-big.jsonl"
+    payload = {"session_id": "sess-big", "transcript_path": str(transcript)}
+    recs = [
+        {"type": "user", "message": {"content": "go"}},
+        {"type": "assistant", "message": {"model": "c", "usage": {"input_tokens": 1, "output_tokens": 1},
+            "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"offset": 2**53, "cmd": "x"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "ok", "is_error": False}]}},
+    ]
+    _write_transcript(transcript, recs)
+    for _ in range(3):  # repeated firings must not duplicate
+        run_hook(payload, korg_home=korg_home)
+    events = _ledger(korg_home, "sess-big")
+    assert verify_chain(events) == []
+    bash = [e for e in events if e["event"]["tool_name"] == "Bash"]
+    assert len(bash) == 1, "must not duplicate on re-firing"
+    assert bash[0]["event"]["args"]["offset"] == str(2**53), "big int coerced to string + recorded"

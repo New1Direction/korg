@@ -594,6 +594,14 @@ impl CapabilityJournal {
             event_sig: None,
         };
         journal_event.entry_hash = journal_event.compute_entry_hash(ledger_hmac_key().as_deref());
+        // Keep the causal index in sync (append_with_metadata does the same) — else
+        // filtered queries return empty for triggers written this session.
+        if let Some(tb) = journal_event.metadata.triggered_by {
+            self.triggered_by_index
+                .entry(tb)
+                .or_insert_with(Vec::new)
+                .push(self.events.len());
+        }
         self.events.push(journal_event);
         let _ = self.flush();
     }
@@ -745,25 +753,35 @@ impl CapabilityJournal {
             .lock_exclusive()
             .map_err(|e| format!("ledger exclusive lock failed: {e}"))?;
 
-        // Write events atomically
+        // Write events atomically — propagate every I/O error so a lost write is
+        // observable (silencing these defeated rewind()'s `flush()?` durability guard).
+        // The advisory lock releases on `lock_file` drop, so an early `?` is safe.
         let tmp_journal = self.journal_path.with_extension("tmp");
-        if let Ok(serialized) = serde_json::to_string_pretty(&self.events) {
-            if let Ok(mut f) = std::fs::File::create(&tmp_journal) {
-                let _ = f.write_all(serialized.as_bytes());
-                let _ = f.sync_all();
-                let _ = std::fs::rename(&tmp_journal, &self.journal_path);
-            }
+        let serialized = serde_json::to_string_pretty(&self.events)
+            .map_err(|e| format!("serialize journal: {e}"))?;
+        {
+            let mut f = std::fs::File::create(&tmp_journal)
+                .map_err(|e| format!("create tmp journal: {e}"))?;
+            f.write_all(serialized.as_bytes())
+                .map_err(|e| format!("write journal: {e}"))?;
+            f.sync_all().map_err(|e| format!("sync journal: {e}"))?;
         }
+        std::fs::rename(&tmp_journal, &self.journal_path)
+            .map_err(|e| format!("rename journal: {e}"))?;
 
         // Write snapshots atomically
         let tmp_snapshot = self.snapshot_path.with_extension("tmp");
-        if let Ok(serialized) = serde_json::to_string_pretty(&self.snapshots) {
-            if let Ok(mut f) = std::fs::File::create(&tmp_snapshot) {
-                let _ = f.write_all(serialized.as_bytes());
-                let _ = f.sync_all();
-                let _ = std::fs::rename(&tmp_snapshot, &self.snapshot_path);
-            }
+        let serialized = serde_json::to_string_pretty(&self.snapshots)
+            .map_err(|e| format!("serialize snapshot: {e}"))?;
+        {
+            let mut f = std::fs::File::create(&tmp_snapshot)
+                .map_err(|e| format!("create tmp snapshot: {e}"))?;
+            f.write_all(serialized.as_bytes())
+                .map_err(|e| format!("write snapshot: {e}"))?;
+            f.sync_all().map_err(|e| format!("sync snapshot: {e}"))?;
         }
+        std::fs::rename(&tmp_snapshot, &self.snapshot_path)
+            .map_err(|e| format!("rename snapshot: {e}"))?;
 
         let _ = lock_file.unlock();
         Ok(())
