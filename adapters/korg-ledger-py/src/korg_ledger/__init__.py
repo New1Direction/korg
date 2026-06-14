@@ -14,6 +14,7 @@ from ._hash import (
     chain_hash,
     verify_anchors,
     verify_chain,
+    verify_dag,
 )
 from ._hlc import Hlc
 from .writer import CausalityError, LedgerWriter
@@ -28,6 +29,7 @@ __all__ = [
     "canonicalize",
     "chain_hash",
     "verify_chain",
+    "verify_dag",
     "verify_anchors",
     "agent_tool_call_event",
 ]
