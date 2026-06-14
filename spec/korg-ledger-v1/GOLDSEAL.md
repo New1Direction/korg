@@ -158,14 +158,16 @@ a goldseal-aware tool additionally proves the summary and authorship.
 
 ## 6. Limits & non-goals (v1)
 
-- **Anchors are sealed, but time still needs the network.** The anchor *set* is bound
-  into the seal (§3) and structurally to the chain (§5.9), so it cannot be stripped,
-  added, or forged. What a Gold Seal still does **not** prove offline is the *time*:
-  resolving a `git-tip` anchor against the public git history — confirming the named
-  commit actually witnesses the `entry_hash` — is a network step (SPEC §8.2, "external
-  verification"), out of scope for the hermetic verifier. A green seal proves *which*
-  commit is claimed as the witness; fetching it proves the chain was published before
-  any third party first saw that commit.
+- **Time is proven by an explicit network step, not offline.** The anchor *set* is
+  bound into the seal (§3) and structurally to the chain (§5.9), so it cannot be
+  stripped, added, or forged. Offline, a green seal proves *which* commit is claimed
+  as the witness. Proving *when* — that the named public commit actually introduced
+  the `entry_hash` to the immutable git history — is a deliberate network step (SPEC
+  §8.2, "external verification"), kept out of the hermetic verifier. The reference
+  resolver is `korg-seal resolve` (§8): it fetches the commit and confirms the
+  witness, yielding a "the chain existed no later than `<commit date>`" bound. The
+  post-hoc flow is mint → publish/commit the seal → `korg-seal anchor` (re-signs the
+  seal with the publishing commit bound) → anyone `korg-seal resolve`s it.
 - **No revocation.** There is no built-in mechanism to revoke a minted seal; relying
   parties manage issuer-key trust and rotation out-of-band.
 - **Identity is pinned, not proven.** See §1. v1 deliberately does not specify a PKI;
@@ -195,11 +197,19 @@ tampered event, a stripped seal, and a wrong pinned key all fail.
 
 ---
 
-## 8. Reference minter
+## 8. Reference minter & resolver
 
 Verification is intentionally separate from minting — a relying party should never
 need the producer's tooling. The reference **producer** is `korg-seal`
-(`adapters/korg-seal/`): `korg-seal mint <session.jsonl> --claim "..."` derives the
-summary, builds the envelope, and signs the header with a local issuer key
-(`~/.korg/issuer.ed25519`). It refuses to seal a chain that does not verify. A seal
-it mints is verified — unchanged — by the Rust, JS, and browser verifiers above.
+(`adapters/korg-seal/`):
+
+- `korg-seal mint <session.jsonl> --claim "..."` derives the summary, builds the
+  envelope, and signs the header with a local issuer key (`~/.korg/issuer.ed25519`).
+  It refuses to seal a chain that does not verify. A seal it mints is verified —
+  unchanged — by the Rust, JS, and browser verifiers above.
+- `korg-seal anchor <seal> --repo <url> --commit <sha>` binds a `git-tip` time
+  anchor and re-signs (the post-hoc anchoring flow of §6).
+- `korg-seal resolve <seal>` performs the network step: it fetches each git-tip
+  anchor's commit and confirms it introduced the anchored `entry_hash`, reporting a
+  "the chain existed no later than `<commit date>`" bound. This is the only step
+  that touches the network; the *what* and *who* stay provable offline.

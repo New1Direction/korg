@@ -5,6 +5,8 @@ mirroring korg-ledger-py's signing tests. CI installs only pytest, so these
 skip there; the cross-impl agreement (a korg-seal mint verifies under the Rust
 binary) is exercised by the end-to-end smoke in the workflow.
 """
+from __future__ import annotations
+
 import json
 import os
 import stat
@@ -153,3 +155,94 @@ def test_cli_key_prints_pubkey(tmp_path, capsys):
 
 def test_cli_mint_missing_ledger_is_usage_error(tmp_path):
     assert cli_main(["mint", str(tmp_path / "nope.jsonl"), "--claim", "c", "--key", str(tmp_path / "k")]) == 2
+
+
+# ── git-tip anchor resolution (the "when" step) ──────────────────────────────
+
+from korg_seal import resolve as resolver  # noqa: E402
+
+
+def test_parse_github_repo_forms():
+    for url in [
+        "https://github.com/New1Direction/korg",
+        "https://github.com/New1Direction/korg.git",
+        "github.com/New1Direction/korg/",
+        "New1Direction/korg",
+    ]:
+        assert resolver.parse_github_repo(url) == ("New1Direction", "korg")
+    with pytest.raises(ValueError):
+        resolver.parse_github_repo("not a repo")
+
+
+def _fake_commit(patch_contains, date="2026-06-14T06:01:28Z"):
+    patch = f"+  \"tip\": \"{patch_contains}\"\n" if patch_contains else "+ unrelated\n"
+    return lambda owner, name, sha: {
+        "commit": {"committer": {"date": date}},
+        "files": [{"filename": "seal.json", "patch": patch}],
+    }
+
+
+def test_resolve_anchor_witnessed():
+    anchor = {
+        "seq_id": 5,
+        "entry_hash": "deadbeef" * 8,
+        "anchor_kind": "git-tip",
+        "anchor_proof": {"repo": "github.com/New1Direction/korg", "commit": "0e566b0"},
+    }
+    r = resolver.resolve_anchor(anchor, fetch=_fake_commit("deadbeef" * 8))
+    assert r.witnessed is True
+    assert r.committed_at == "2026-06-14T06:01:28Z"
+
+
+def test_resolve_anchor_not_witnessed_when_hash_absent():
+    anchor = {
+        "seq_id": 5,
+        "entry_hash": "deadbeef" * 8,
+        "anchor_kind": "git-tip",
+        "anchor_proof": {"repo": "New1Direction/korg", "commit": "abc"},
+    }
+    r = resolver.resolve_anchor(anchor, fetch=_fake_commit(None))
+    assert r.witnessed is False
+    assert "does not introduce" in r.detail
+
+
+def test_resolve_anchor_handles_missing_commit():
+    import urllib.error
+
+    def boom(owner, name, sha):
+        raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+
+    anchor = {
+        "seq_id": 1,
+        "entry_hash": "ab" * 32,
+        "anchor_kind": "git-tip",
+        "anchor_proof": {"repo": "New1Direction/korg", "commit": "missing"},
+    }
+    r = resolver.resolve_anchor(anchor, fetch=boom)
+    assert r.witnessed is False
+    assert "404" in r.detail
+
+
+def test_anchor_rebinds_and_stays_verifiable(tmp_path):
+    from korg_ledger.signing import verify_seal
+
+    ledger, _ = _sample(tmp_path)
+    seed = bytes([7]) * 32
+    seal = mint_mod.mint(ledger_path=ledger, claim="did the thing", seed=seed, issued_at=1)
+    assert "anchors" not in seal
+
+    anchored = mint_mod.anchor(
+        seal=seal, repo="github.com/New1Direction/korg", commit="0e566b0", seed=seed
+    )
+    # the anchor is present, the claim/issuer/tip are preserved, and it verifies
+    assert anchored["anchors"][0]["anchor_proof"]["commit"] == "0e566b0"
+    assert anchored["claim"] == "did the thing"
+    assert anchored["tip"] == seal["tip"]
+    assert verify_seal(anchored) == []
+
+    # the anchor is BOUND: stripping it breaks the seal (re-mint re-signed it in)
+    import copy
+
+    stripped = copy.deepcopy(anchored)
+    del stripped["anchors"]
+    assert verify_seal(stripped) != []

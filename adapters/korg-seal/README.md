@@ -37,6 +37,27 @@ korg-seal key
 korg-seal verify auth-refactor.goldseal.json --pin <issuer-pubkey-hex>
 ```
 
+### Trusted time — anchor to a public commit, then resolve
+
+The verifiers prove *what* happened and *who* signed it offline. To prove *when*,
+anchor the seal to a public git commit and let anyone resolve it over the network:
+
+```sh
+# after publishing/committing the seal to a public repo, bind that commit (re-signs)
+korg-seal anchor auth-refactor.goldseal.json \
+  --repo github.com/you/your-repo --commit <sha>
+
+# anyone resolves it: fetches the commit and confirms it witnesses the tip
+korg-seal resolve auth-refactor.goldseal.json
+#  ✓ seq 12 · 4f9cc6b6… witnessed by github.com/you/your-repo@<sha> · committed <date>
+#    → the chain existed by then (published no later than this commit)
+```
+
+`resolve` is the only command that touches the network (stdlib `urllib`, GitHub
+API). It yields a "published no later than `<commit date>`" bound — a public commit
+is immutable once mirrored, so an owner who rewrote the chain would have to
+force-push the witness, which anyone who fetched it detects.
+
 What `mint` does:
 
 1. Loads the ledger (JSONL or JSON array, flat or nested event shape).
