@@ -2131,6 +2131,7 @@ dependencies = [
  "hmac",
  "korg-core",
  "korg-ledger",
+ "proptest",
  "serde",
  "serde_json",
  "sha2",

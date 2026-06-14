@@ -967,4 +967,42 @@ mod chain_tests {
         assert_eq!(v["event_type"], "LedgerRewind");
         assert_eq!(v["target_seq_id"], 5);
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        // For any chain of N events, sealing-rewind to k produces a chain that
+        // still verifies, with exactly k events + a LedgerRewind tip.
+        #[test]
+        fn rewind_with_seal_chain_always_verifies(n in 1usize..8, k in 1u64..8) {
+            let mut j = temp_journal("seal-prop");
+            for i in 0..n {
+                j.append(sample_event(&format!("t{i}")));
+            }
+            let target = k.min(n as u64);
+            j.rewind_with_seal(target, "korg:test", "proptest").unwrap();
+            prop_assert!(j.verify_chain().is_empty());
+            prop_assert_eq!(j.events.len(), target as usize + 1);
+            match &j.events.last().unwrap().event {
+                CapabilityEvent::LedgerRewind { target_seq_id, invalidated_through, .. } => {
+                    prop_assert_eq!(*target_seq_id, target);
+                    prop_assert_eq!(*invalidated_through, n as u64);
+                }
+                _ => prop_assert!(false, "tip must be LedgerRewind"),
+            }
+        }
+
+        // Appending after a sealed rewind keeps the chain continuous + valid.
+        #[test]
+        fn rewind_then_append_extends_the_chain(n in 1usize..6, k in 1u64..6) {
+            let mut j = temp_journal("seal-append");
+            for i in 0..n {
+                j.append(sample_event(&format!("t{i}")));
+            }
+            let target = k.min(n as u64);
+            j.rewind_with_seal(target, "korg:test", "proptest").unwrap();
+            j.append(sample_event("after"));
+            prop_assert!(j.verify_chain().is_empty());
+        }
+    }
 }
