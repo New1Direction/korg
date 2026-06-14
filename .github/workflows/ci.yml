@@ -48,11 +48,12 @@ jobs:
       - name: Build (default features)
         run: cargo build --workspace --verbose
 
-      - name: Run tests (root package)
-        run: cargo test --verbose -- --test-threads=4
-
-      - name: Test the verifier crates (goldseal + fuzz + ledger)
-        run: cargo test -p korg-verify -p korg-ledger --verbose -- --test-threads=4
+      # --workspace tests every member (root korg package + korg-verify/-ledger
+      # goldseal+fuzz suites + korg-registry journal/rewind, etc.). The root being
+      # both a [workspace] and a [package] means a bare `cargo test` would only run
+      # the root package — verified `cargo test --workspace` is green.
+      - name: Run tests (workspace)
+        run: cargo test --workspace --verbose -- --test-threads=4
 
       - name: Differential fuzz — Rust vs Python vs JS verifiers agree
         run: |
