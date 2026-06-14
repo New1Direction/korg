@@ -227,6 +227,79 @@ mod tests {
         assert_eq!(chain_hash(&base, None), chain_hash(&signed, None));
     }
 
+    use proptest::prelude::*;
+    use std::collections::BTreeMap;
+
+    /// Build a valid hash-chain from arbitrary small payloads.
+    fn build_chain(payloads: &[BTreeMap<String, i64>], key: Option<&[u8]>) -> Vec<Value> {
+        let mut out = Vec::new();
+        let mut prev = GENESIS_HASH.to_string();
+        for (i, p) in payloads.iter().enumerate() {
+            let mut obj = serde_json::Map::new();
+            obj.insert("seq_id".into(), json!(i as u64 + 1));
+            obj.insert("prev_hash".into(), json!(prev));
+            obj.insert("payload".into(), serde_json::to_value(p).unwrap());
+            let mut val = Value::Object(obj);
+            let h = chain_hash(&val, key);
+            val.as_object_mut().unwrap().insert("entry_hash".into(), json!(h));
+            prev = h;
+            out.push(val);
+        }
+        out
+    }
+
+    proptest! {
+        // Any well-formed chain verifies clean (no false positives), keyed or not.
+        #[test]
+        fn any_built_chain_verifies_clean(
+            payloads in prop::collection::vec(
+                prop::collection::btree_map("[a-z]{1,5}", any::<i64>(), 0..4), 0..12),
+            use_key in any::<bool>(),
+        ) {
+            let key: Option<&[u8]> = if use_key { Some(b"k") } else { None };
+            prop_assert!(verify_chain(&build_chain(&payloads, key), key).is_empty());
+        }
+
+        // Mutating ANY event's content is detected (no false negatives).
+        #[test]
+        fn tampering_any_event_is_detected(
+            payloads in prop::collection::vec(
+                prop::collection::btree_map("[a-z]{1,5}", any::<i64>(), 1..4), 1..8),
+            idx in any::<usize>(),
+        ) {
+            let mut chain = build_chain(&payloads, None);
+            let i = idx % chain.len();
+            chain[i].as_object_mut().unwrap().insert("TAMPER".into(), json!(1));
+            prop_assert!(!verify_chain(&chain, None).is_empty());
+        }
+
+        // Reordering two distinct events breaks the chain.
+        #[test]
+        fn reordering_breaks_the_chain(
+            payloads in prop::collection::vec(
+                prop::collection::btree_map("[a-z]{1,5}", any::<i64>(), 1..4), 2..8),
+        ) {
+            let mut chain = build_chain(&payloads, None);
+            let last = chain.len() - 1;
+            chain.swap(0, last);
+            prop_assert!(!verify_chain(&chain, None).is_empty());
+        }
+
+        // canonicalize is insertion-order independent (keys are sorted).
+        // Use a btree_map input so keys are unique — duplicate keys would make
+        // forward vs reverse insertion legitimately differ (last-write-wins).
+        #[test]
+        fn canonicalize_is_key_order_independent(
+            m in prop::collection::btree_map("[a-z]{1,6}", any::<i64>(), 0..8),
+        ) {
+            let mut a = serde_json::Map::new();
+            for (k, v) in m.iter() { a.insert(k.clone(), json!(v)); }
+            let mut b = serde_json::Map::new();
+            for (k, v) in m.iter().rev() { b.insert(k.clone(), json!(v)); }
+            prop_assert_eq!(canonicalize(&Value::Object(a)), canonicalize(&Value::Object(b)));
+        }
+    }
+
     #[test]
     fn canonicalize_sorts_keys_and_is_compact() {
         assert_eq!(
