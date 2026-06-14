@@ -1,0 +1,60 @@
+name: "Verify korg Gold Seal"
+description: >-
+  Independently verify goldseal@v1 certificates or korg-ledger@v1 sessions in CI —
+  hash chain, causal DAG, re-derived summary, and the Ed25519 issuer seal. Zero
+  trust in whoever produced the artifact; no network. Fails the job on any
+  tampered or unverifiable file.
+author: "Korg ecosystem maintainers"
+branding:
+  icon: "shield"
+  color: "green"
+
+inputs:
+  path:
+    description: "Path(s)/glob(s) to the seal(s) or ledger(s) to verify (space- or newline-separated)."
+    required: true
+  pin-pubkey:
+    description: "Require this issuer/signer public key (hex). Optional but recommended for trust."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Verify korg artifacts
+      shell: bash
+      env:
+        KORG_PATH: ${{ inputs.path }}
+        KORG_PIN: ${{ inputs.pin-pubkey }}
+      run: |
+        set -uo pipefail
+        # The verifier travels with this repo — resolve it relative to the action.
+        VERIFY="$(cd "$GITHUB_ACTION_PATH/../../.." && pwd)/spec/korg-ledger-v1/js/verify.mjs"
+        if [ ! -f "$VERIFY" ]; then
+          echo "::error::could not locate verify.mjs at $VERIFY"
+          exit 2
+        fi
+
+        shopt -s nullglob
+        shopt -s globstar 2>/dev/null || true  # recursive ** (bash >=4); harmless if absent
+        matched=0
+        failed=0
+        for pattern in $KORG_PATH; do
+          for f in $pattern; do
+            [ -f "$f" ] || continue
+            matched=$((matched + 1))
+            if node "$VERIFY" "$f" ${KORG_PIN:+--pubkey "$KORG_PIN"}; then
+              echo "::notice file=$f::✓ verified"
+            else
+              echo "::error file=$f::✗ verification FAILED (tampered or unsigned/unpinned)"
+              failed=$((failed + 1))
+            fi
+          done
+        done
+
+        if [ "$matched" -eq 0 ]; then
+          echo "::error::no files matched '$KORG_PATH'"
+          exit 2
+        fi
+        echo "verified $((matched - failed))/$matched artifact(s)"
+        [ "$failed" -eq 0 ]

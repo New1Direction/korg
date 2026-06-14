@@ -1,0 +1,77 @@
+name: Gold Seal demo — mint → verify in CI
+
+# Dogfoods the whole loop in GitHub Actions: build a session ledger, mint a
+# goldseal@v1 with korg-seal, verify it with the independent verifier (pinned to
+# the issuer), and prove a tampered copy is rejected. This is what "verified
+# agent work in CI" looks like.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, feat/goldseal-certificate]
+    paths:
+      - "adapters/korg-seal/**"
+      - "adapters/korg-ledger-py/**"
+      - "spec/korg-ledger-v1/**"
+      - ".github/actions/verify-goldseal/**"
+      - ".github/workflows/goldseal-demo.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  mint-and-verify:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: adapters/korg-ledger-py/src:adapters/korg-seal/src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install cryptography (minting signs)
+        run: python -m pip install --quiet cryptography
+
+      - name: Build a session ledger
+        run: python spec/korg-ledger-v1/tools/make_demo_session.py demo-session.jsonl
+
+      - name: Mint a Gold Seal (capture the issuer key)
+        id: mint
+        run: |
+          python -m korg_seal mint demo-session.jsonl \
+            --claim "CI demo: agent added a /healthz endpoint with a passing test" \
+            --key issuer.ed25519 -o demo.goldseal.json
+          echo "pub=$(python -m korg_seal key --key issuer.ed25519)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the Gold Seal — pinned to the issuer (must PASS)
+        uses: ./.github/actions/verify-goldseal
+        with:
+          path: demo.goldseal.json
+          pin-pubkey: ${{ steps.mint.outputs.pub }}
+
+      - name: A tampered seal must FAIL (negative test)
+        run: |
+          python - <<'PY'
+          import json
+          e = json.load(open("demo.goldseal.json"))
+          e["claim"] = "CI demo: agent fixed an unrelated critical security bug"  # move the claim
+          json.dump(e, open("tampered.goldseal.json", "w"))
+          PY
+          if node spec/korg-ledger-v1/js/verify.mjs tampered.goldseal.json; then
+            echo "::error::a tampered Gold Seal verified — this must never happen"
+            exit 1
+          fi
+          echo "✓ tampered Gold Seal correctly rejected"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### 🛡️ korg Gold Seal — verified in CI"
+            echo ""
+            echo "Minted a Gold Seal from a session ledger and verified it with the independent"
+            echo "verifier, pinned to issuer \`${{ steps.mint.outputs.pub }}\`. A tampered copy was"
+            echo "correctly rejected. Re-verify in a browser: <https://new1direction.github.io/korg/web/seal.html>"
+          } >> "$GITHUB_STEP_SUMMARY"
