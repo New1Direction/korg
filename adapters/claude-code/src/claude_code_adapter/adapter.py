@@ -70,6 +70,9 @@ class ClaudeCodeAdapter:
         # Chain state — persists across ingest() calls so tail mode works.
         self._prompt_seq: int | None = None
         self._llm_seq: int | None = None
+        # True when the current round's llm_inference emit was dropped, so its
+        # sibling tool events must not chain to a stale (earlier) _llm_seq.
+        self._round_dropped: bool = False
         # Parser state — pending_tool_calls and seen_first_user persist
         # between incremental parses.
         self._parser_state = SessionState()
@@ -132,12 +135,16 @@ class ClaudeCodeAdapter:
                 seq = self.emit(body)
                 if seq is None:
                     stats.dropped += 1
+                    self._round_dropped = True  # this round's parent is absent
                 else:
                     self._llm_seq = seq
+                    self._round_dropped = False
                     stats.llm_rounds += 1
 
             elif ev.causal_role == "tool_in_round":
-                if self._llm_seq is not None:
+                # Don't chain to a stale _llm_seq if this round's llm_inference was
+                # dropped — an honest unparented event beats a wrong (earlier) parent.
+                if self._llm_seq is not None and not getattr(self, "_round_dropped", False):
                     body["triggered_by"] = self._llm_seq
                 seq = self.emit(body)
                 if seq is None:

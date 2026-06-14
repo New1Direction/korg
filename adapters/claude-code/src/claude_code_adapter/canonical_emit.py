@@ -6,6 +6,7 @@ so the adapter's triggered_by chaining works unchanged.
 """
 from __future__ import annotations
 
+import math
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -26,6 +27,10 @@ def _canon_safe(value: Any) -> Any:
     if isinstance(value, bool):
         return value
     if isinstance(value, int) and abs(value) > _SAFE_INT_MAX:
+        return str(value)
+    # NaN/Infinity (json.loads accepts these literals by default) would make the
+    # canonical encoder raise — stringify so the event is recorded, not dropped.
+    if isinstance(value, float) and not math.isfinite(value):
         return str(value)
     if isinstance(value, dict):
         return {k: _canon_safe(v) for k, v in value.items()}

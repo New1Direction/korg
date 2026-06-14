@@ -194,6 +194,22 @@ async function run() {
     if (!ok) failures++;
   }
 
+  // Number domain parity: finite floats in envelope fields must stay VALID (Rust
+  // and Python accept them), while an out-of-range integer must be rejected.
+  {
+    const base = readFileSync(here("../../../crates/korg-verify/tests/fixtures/signed-receipt.json"), "utf8");
+    const rf = JSON.parse(base);
+    rf.generated_at = 1718323200.5;
+    rf.summary = { ...(rf.summary || {}), cost_usd: 0.0237 };
+    const rb = JSON.parse(base);
+    rb.nonce = 2 ** 60; // out-of-safe-range integer
+    const floatOk = (await verifyReceipt(rf)).valid === true;
+    const bigRejected = (await verifyReceipt(rb)).valid === false;
+    const ok = floatOk && bigRejected;
+    console.log(`  [${ok ? "PASS" : "FAIL"}] receipt number domain     finite floats ok · big-int rejected`);
+    if (!ok) failures++;
+  }
+
   console.log(`\nkorg-ledger@v1 conformance (js): ${failures ? `${failures} FAILURE(S)` : "PASS"}`);
   return failures ? 1 : 0;
 }
