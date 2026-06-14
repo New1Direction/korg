@@ -347,7 +347,10 @@ impl SessionBackend for SubprocessBackend {
             payload: spec.payload.clone(),
             base_snapshot: "latest-from-blackboard".into(),
             codebase_merkle_root: codebase_root,
-            permissions: vec!["fs:write:worktree".into()],
+            // Per-persona capability list (SP2 Slice 3): implementers (benjamin/
+            // lucas) get fs:write:worktree; read-only personas (harper/captain/
+            // evaluator) get fs:read and analyze-only — they never mutate.
+            permissions: crate::permissions::permissions_for(&spec.persona),
         };
         crate::acp::write_signed_acp_envelope(&mut stdin, signing_key, route_work).await?;
 
