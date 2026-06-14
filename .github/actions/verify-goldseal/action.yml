@@ -2,8 +2,9 @@ name: "Verify korg Gold Seal"
 description: >-
   Independently verify goldseal@v1 certificates or korg-ledger@v1 sessions in CI —
   hash chain, causal DAG, re-derived summary, and the Ed25519 issuer seal. Zero
-  trust in whoever produced the artifact; no network. Fails the job on any
-  tampered or unverifiable file.
+  trust in whoever produced the artifact; no network. Renders a rich report into
+  the job summary and (on pull_request) posts a sticky Gold Seal comment. Fails
+  the job on any tampered or unverifiable file.
 author: "Korg ecosystem maintainers"
 branding:
   icon: "shield"
@@ -17,44 +18,39 @@ inputs:
     description: "Require this issuer/signer public key (hex). Optional but recommended for trust."
     required: false
     default: ""
+  comment:
+    description: "Post/update a sticky Gold Seal comment on the PR (pull_request events). 'true'/'false'."
+    required: false
+    default: "true"
+  github-token:
+    description: "Token used to post the PR comment (needs pull-requests: write)."
+    required: false
+    default: ${{ github.token }}
 
 runs:
   using: "composite"
   steps:
-    - name: Verify korg artifacts
+    - name: Verify korg artifacts & report
       shell: bash
       env:
         KORG_PATH: ${{ inputs.path }}
         KORG_PIN: ${{ inputs.pin-pubkey }}
+        KORG_COMMENT: ${{ inputs.comment }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |
         set -uo pipefail
-        # The verifier travels with this repo — resolve it relative to the action.
-        VERIFY="$(cd "$GITHUB_ACTION_PATH/../../.." && pwd)/spec/korg-ledger-v1/js/verify.mjs"
-        if [ ! -f "$VERIFY" ]; then
-          echo "::error::could not locate verify.mjs at $VERIFY"
-          exit 2
-        fi
-
         shopt -s nullglob
         shopt -s globstar 2>/dev/null || true  # recursive ** (bash >=4); harmless if absent
-        matched=0
-        failed=0
+        files=()
         for pattern in $KORG_PATH; do
           for f in $pattern; do
-            [ -f "$f" ] || continue
-            matched=$((matched + 1))
-            if node "$VERIFY" "$f" ${KORG_PIN:+--pubkey "$KORG_PIN"}; then
-              echo "::notice file=$f::✓ verified"
-            else
-              echo "::error file=$f::✗ verification FAILED (tampered or unsigned/unpinned)"
-              failed=$((failed + 1))
-            fi
+            [ -f "$f" ] && files+=("$f")
           done
         done
-
-        if [ "$matched" -eq 0 ]; then
+        if [ "${#files[@]}" -eq 0 ]; then
           echo "::error::no files matched '$KORG_PATH'"
           exit 2
         fi
-        echo "verified $((matched - failed))/$matched artifact(s)"
-        [ "$failed" -eq 0 ]
+        # report.mjs verifies each file, writes the job summary, upserts the PR
+        # comment, and exits non-zero iff any artifact failed verification.
+        node "$GITHUB_ACTION_PATH/report.mjs" "${files[@]}"
