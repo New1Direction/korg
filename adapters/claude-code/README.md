@@ -2,6 +2,21 @@
 
 Translate Claude Code session JSONL files into korg `AgentToolCall` events.
 
+## What it produces
+
+Each Claude Code session is captured into a **verifiable per-session ledger** at
+`~/.korg/sessions/<session_id>.jsonl` — a `korg-ledger@v1` hash-chain you can
+independently verify with `korg-verify` (or the JS verifier in a browser). Capture
+is passive and zero-config once `korg-setup` registers the `korg-hook`
+PostToolUse/Stop hook; `korg-backfill` re-derives the same verifiable ledgers for
+every historical session.
+
+> The earlier flat `~/.korg/claude-events.jsonl` (one un-chained `{seq, ...}` line
+> per event, written by the legacy `korg-ingest-claude --tail` daemon and
+> `make_jsonl_emit`) is **legacy** — it carried no hash chain and is superseded by
+> the per-session verifiable ledgers. `korg-backfill --migrate-flat <path>` converts
+> an existing flat ledger into the per-session format.
+
 ## What this proves
 
 Claude Code is the production-default Anthropic CLI. Its session files
