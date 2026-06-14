@@ -18,6 +18,9 @@ use uuid::Uuid;
 pub struct SingleWorkerHarness {
     pub worker_id: String,
     current_worktree: Option<PathBuf>,
+    /// Real observation metrics from the last task (apply+measure), stashed by
+    /// `run_task_in_worktree` so the completion pulse can attest them.
+    last_observation: Option<serde_json::Value>,
 }
 
 impl SingleWorkerHarness {
@@ -25,6 +28,7 @@ impl SingleWorkerHarness {
         Self {
             worker_id,
             current_worktree: None,
+            last_observation: None,
         }
     }
 
@@ -379,15 +383,6 @@ impl SingleWorkerHarness {
             std::process::exit(101);
         }
 
-        // Final completion pulse
-        let final_pulse = AcpMessage::SwarmTelemetryPulse {
-            agent_id: self.worker_id.clone(),
-            per_agent: serde_json::json!({ self.worker_id.clone(): {"phase": "complete"} }),
-            aggregate: serde_json::json!({}),
-            scaling_recommendation: None,
-        };
-        let _ = client.send(&final_pulse).await;
-
         // 3. Emit terminal .ktrans (mandatory on every exit path)
         // Write to disk (new in this increment)
         write_terminal_ktrans(
@@ -409,6 +404,7 @@ impl SingleWorkerHarness {
             "doom_loop_detected": result.doom_loop,
             "provenance": result.provenance,
             "codebase_merkle_root": result.codebase_merkle_root,
+            "files_changed": result.files_changed,
         });
 
         client
@@ -420,9 +416,13 @@ impl SingleWorkerHarness {
             .await?;
 
         // Emit completion telemetry pulse with real observed metrics (the key data for the Evaluator)
+        let obs = self
+            .last_observation
+            .clone()
+            .unwrap_or_else(|| serde_json::json!({"phase": "complete"}));
         let completion_pulse = AcpMessage::SwarmTelemetryPulse {
             agent_id: self.worker_id.clone(),
-            per_agent: serde_json::json!({ self.worker_id.clone(): {"phase": "complete"} }),
+            per_agent: serde_json::json!({ self.worker_id.clone(): obs }),
             aggregate: serde_json::json!({}),
             scaling_recommendation: None,
         };
@@ -518,7 +518,7 @@ impl SingleWorkerHarness {
         Ok(())
     }
 
-    async fn run_task_in_worktree(&self, payload: &str) -> Result<TaskResult> {
+    async fn run_task_in_worktree(&mut self, payload: &str) -> Result<TaskResult> {
         // Route persona from worker_id when possible (real 4-persona topology)
         let persona = self.infer_persona_from_worker_id();
         eprintln!(
@@ -528,6 +528,33 @@ impl SingleWorkerHarness {
         );
 
         let persona_result = run_persona(persona, payload, "worker-task").await;
+
+        // Honest observation: apply the persona's patch to THIS worktree, then
+        // measure reality. The worktree is the process CWD (set at harness.rs:267).
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let started = std::time::Instant::now();
+        let apply = crate::observation::apply_mutations(&cwd, &persona_result.mutations).await;
+        let numstat = crate::observation::numstat(&cwd).await;
+        let check = crate::observation::cargo_check(&cwd).await;
+        let elapsed = started.elapsed().as_secs_f64().max(1e-3);
+        let cpu = crate::observation::cpu_load_proxy();
+        let surface = format!(
+            "{} applied {} file(s), {} added / {} removed",
+            persona.name(),
+            numstat.files,
+            numstat.added,
+            numstat.removed
+        );
+        // Real token usage if the provider surfaced it (Unit A reports it); else 0.
+        let tokens = persona_result
+            .output
+            .get("__tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        self.last_observation = Some(crate::observation::honest_metrics(
+            &apply, &check, &numstat, tokens, elapsed, cpu, &surface,
+        ));
+        let files_changed = numstat.files;
 
         // Stage all modifications so git write-tree will capture them
         let _ = tokio::process::Command::new("git")
@@ -557,6 +584,7 @@ impl SingleWorkerHarness {
             confidence: persona_result.confidence,
             arena_scores: persona_result.arena_self_score.clone(),
             codebase_merkle_root,
+            files_changed,
         })
     }
 
@@ -576,44 +604,6 @@ impl SingleWorkerHarness {
     }
 } // end of impl SingleWorkerHarness
 
-/// Builds a live, time-evolving SwarmTelemetryPulse used by the background emitter.
-/// Metrics drift realistically so the Evaluator can see trends for doom-loop detection.
-fn build_live_evolving_pulse(worker_id: &str, routing_id: &str, tick: u32) -> AcpMessage {
-    // Simulate realistic drift over time
-    let base_velocity = 70.0 + (tick as f64 * 8.0).min(90.0);
-    let risk = (0.35 + (tick as f64 * 0.015).sin().abs() * 0.35).min(0.82);
-    let confidence = (0.78 - (tick as f64 * 0.008)).max(0.42);
-    let conflict = (0.12 + (tick as f64 * 0.01) % 0.18).min(0.38);
-    let gpu = (0.48 + (tick as f64 * 0.012) % 0.35).min(0.91);
-
-    let surface = format!(
-        "live tick {} – velocity {:.0}, risk drifting, confidence {:.2}",
-        tick, base_velocity, confidence
-    );
-
-    let per_agent = serde_json::json!({
-        worker_id: {
-            "risk_score": risk,
-            "epistemic_confidence": confidence,
-            "conflict_rate": conflict,
-            "token_velocity": base_velocity,
-            "gpu_util": gpu,
-            "verified_count_delta": if tick.is_multiple_of(3) { 1 } else { 0 },
-            "authority_improvement": (0.12 - (tick as f64 * 0.005)).max(0.03),
-            "surface_text": surface,
-            "phase": "live",
-            "routing_id": routing_id,
-        }
-    });
-
-    AcpMessage::SwarmTelemetryPulse {
-        agent_id: worker_id.to_string(),
-        per_agent,
-        aggregate: serde_json::json!({ "tick": tick }),
-        scaling_recommendation: None,
-    }
-}
-
 #[derive(Debug)]
 struct TaskResult {
     mutations: Vec<serde_json::Value>,
@@ -623,6 +613,7 @@ struct TaskResult {
     confidence: f32,
     arena_scores: serde_json::Value,
     codebase_merkle_root: String,
+    files_changed: usize,
 }
 
 /// Writes a proper .ktrans file to disk (terminal transaction).

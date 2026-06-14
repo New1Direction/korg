@@ -773,6 +773,9 @@ pub async fn spawn_worker_process(
         if let Some(muts) = tx.get("mutations").and_then(|v| v.as_array()) {
             res.mutations = muts.clone();
         }
+        if let Some(fc) = tx.get("files_changed").and_then(|v| v.as_u64()) {
+            res.files_changed = fc as usize;
+        }
     }
 
     Ok(res)
