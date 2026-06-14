@@ -18,10 +18,11 @@ the key), not merely tamper-evident.
 | File | Role |
 |---|---|
 | [`SPEC.md`](./SPEC.md) | the normative specification (canonicalization, preimage, chaining, HMAC, verify + DAG algorithms) |
+| [`GOLDSEAL.md`](./GOLDSEAL.md) | **`goldseal@v1`** — the normative spec for the public, independently-verifiable *certificate*: a receipt superset that binds a re-derived (un-spoofable) human summary + an issuer Ed25519 seal. |
 | [`vectors/`](./vectors/) + [`conformance.json`](./conformance.json) | the golden conformance vectors with **frozen tip hashes** — the cross-language oracle |
 | [`conformance.py`](./conformance.py) | a dependency-free Python reference verifier (the executable oracle) |
 | [`js/`](./js/) | a dependency-free JavaScript verifier (`verify.mjs`) + its conformance harness, for Node and the browser |
-| [`web/`](./web/) | **a zero-install in-browser verifier** — drop a `ledger.jsonl` and it recomputes the hash-chain, causal DAG, per-event Ed25519 signatures, and anchors entirely client-side (Web Crypto). Sends nothing. Host it (e.g. GitHub Pages) and anyone can verify a shared session in a tab. |
+| [`web/`](./web/) | **two zero-install in-browser verifiers** (Web Crypto, send nothing): [`index.html`](./web/index.html) checks a raw `ledger.jsonl`; [`seal.html`](./web/seal.html) checks a **Gold Seal** — re-deriving the summary live so you can watch it match (or, when tampered, fail). Host on GitHub Pages and anyone verifies a shared session or seal in a tab. |
 
 ## Conformance
 

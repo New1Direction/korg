@@ -9,7 +9,15 @@
 //     node conformance.mjs        # exit 0 = this JS impl reproduces the vectors
 
 import { readFileSync } from "node:fs";
-import { canonicalize, chainHash, verifyChain, verifyEventSig, verifyAnchors } from "./verify.mjs";
+import {
+  canonicalize,
+  chainHash,
+  verifyChain,
+  verifyEventSig,
+  verifyAnchors,
+  verifyGoldSeal,
+  deriveSummary,
+} from "./verify.mjs";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -105,6 +113,31 @@ async function run() {
     const badAnchor = [{ seq_id: tip.seq_id, entry_hash: "deadbeef" }];
     const ok = verifyAnchors(basic, okAnchor).length === 0 && verifyAnchors(basic, badAnchor).length > 0;
     console.log(`  [${ok ? "PASS" : "FAIL"}] anchors structural        verify_anchors (entry_hash ↔ chain)`);
+    if (!ok) failures++;
+  }
+
+  // Cross-impl goldseal@v1: the frozen goldseal-v1.json was MINTED BY PYTHON.
+  // JS must (a) verify it valid, (b) re-derive the identical summary, and (c)
+  // reject a lying summary + a stripped seal — proving Python-mint / JS-verify.
+  {
+    const env = JSON.parse(
+      readFileSync(here("../../../crates/korg-verify/tests/fixtures/goldseal-v1.json"), "utf8")
+    );
+    const v = await verifyGoldSeal(env);
+    const derived = dec.decode(canonicalize(deriveSummary(env.events)));
+    const embedded = dec.decode(canonicalize(env.summary));
+    const lying = JSON.parse(JSON.stringify(env));
+    lying.summary.files = [];
+    const stripped = JSON.parse(JSON.stringify(env));
+    delete stripped.seal;
+    const ok =
+      v.valid &&
+      v.kind === "goldseal" &&
+      v.summary_ok === true &&
+      derived === embedded &&
+      !(await verifyGoldSeal(lying)).valid &&
+      !(await verifyGoldSeal(stripped)).valid;
+    console.log(`  [${ok ? "PASS" : "FAIL"}] goldseal-v1.json          cross-impl seal + summary (Python→JS)`);
     if (!ok) failures++;
   }
 

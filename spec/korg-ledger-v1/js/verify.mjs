@@ -87,6 +87,12 @@ function hexToBytes(hex) {
   return out;
 }
 
+function bytesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 // ── §3 entry_hash ────────────────────────────────────────────────────────────
 // preimage = canonicalize(event minus entry_hash); SHA-256, or HMAC-SHA256 when a
 // key is present. `prev_hash` is kept in the preimage — that is the chain link.
@@ -280,6 +286,154 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
   };
 }
 
+// ── goldseal@v1 ──────────────────────────────────────────────────────────────
+// A Gold Seal is a public, independently-verifiable certificate: a receipt
+// superset that additionally binds a human-legible summary (re-derived from the
+// events, so it cannot lie) and an issuer Ed25519 seal over the canonical header.
+// Byte-identical derivation + header to the Python (korg_ledger.goldseal) and
+// Rust (korg-verify) implementations.
+
+const GOLDSEAL_NON_HEADER = ["events", "seal", "anchors"];
+
+function eventView(e) {
+  const inner = e && e.event;
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+    return [inner.source_agent, inner.tool_name, inner.args];
+  }
+  return [e.source_agent, e.tool_name, e.args];
+}
+
+/** Deterministically derive the bound summary from the event chain. */
+export function deriveSummary(events) {
+  const byTool = {};
+  const files = new Set();
+  const agents = new Set();
+  for (const e of events) {
+    const [agent, tool, args] = eventView(e);
+    if (typeof tool === "string") byTool[tool] = (byTool[tool] || 0) + 1;
+    if (typeof agent === "string") agents.add(agent);
+    if (args && typeof args === "object" && !Array.isArray(args)) {
+      for (const k of ["file_path", "path"]) {
+        if (typeof args[k] === "string") files.add(args[k]);
+      }
+    }
+  }
+  const seqs = events.map((e) => e.seq_id).filter((s) => typeof s === "number" && Number.isInteger(s));
+  const byToolSorted = {};
+  for (const k of Object.keys(byTool).sort()) byToolSorted[k] = byTool[k];
+  return {
+    agents: [...agents].sort(),
+    by_tool: byToolSorted,
+    files: [...files].sort(),
+    seq_first: seqs.length ? Math.min(...seqs) : 0,
+    seq_last: seqs.length ? Math.max(...seqs) : 0,
+  };
+}
+
+/** The signed portion of a Gold Seal: the envelope minus events/seal/anchors. */
+export function sealHeader(envelope) {
+  const h = { ...envelope };
+  for (const k of GOLDSEAL_NON_HEADER) delete h[k];
+  return h;
+}
+
+/**
+ * Verify an Ed25519 seal signature over a header's canonical bytes — the
+ * seal-level analogue of verifyEventSig. False on any error.
+ */
+export async function verifySealSig(pubkeyHex, header, sigHex) {
+  try {
+    const pk = hexToBytes(pubkeyHex);
+    const sig = hexToBytes(sigHex);
+    if (!pk || !sig || pk.length !== 32 || sig.length !== 64) return false;
+    const msg = canonicalize(header);
+    const key = await subtle.importKey("raw", pk, { name: "Ed25519" }, false, ["verify"]);
+    return await subtle.verify({ name: "Ed25519" }, key, sig, msg);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify a goldseal@v1 envelope: chain + DAG, tip matches head, event_count,
+ * the re-derived summary matches byte-for-byte, and the Ed25519 seal signature.
+ * `pinPubkey` requires the issuer to equal a key the relying party trusts.
+ */
+export async function verifyGoldSeal(envelope, { pinPubkey = null } = {}) {
+  const events = Array.isArray(envelope.events) ? envelope.events : [];
+  const errors = await verifyChain(events);
+  const dag = verifyDag(events);
+  const chainOk = errors.length === 0;
+  const dagOk = dag.length === 0;
+  for (const e of dag) errors.push(e);
+
+  const claimedTip = typeof envelope.tip === "string" ? envelope.tip : null;
+  const head = events.length ? events[events.length - 1].entry_hash : null;
+  const tipOk = claimedTip == null ? false : head != null && claimedTip === head;
+  if (!tipOk) errors.push("recorded tip does not match the chain head");
+
+  const countOk = envelope.event_count === events.length;
+  if (!countOk) {
+    errors.push(`event_count ${envelope.event_count} does not match the ${events.length} embedded events`);
+  }
+
+  let summaryOk = false;
+  try {
+    summaryOk = bytesEqual(canonicalize(envelope.summary ?? null), canonicalize(deriveSummary(events)));
+  } catch {
+    summaryOk = false;
+  }
+  if (!summaryOk) errors.push("summary does not match the events (re-derivation mismatch)");
+
+  let anchorsOk = null;
+  if (Array.isArray(envelope.anchors) && envelope.anchors.length) {
+    const ae = verifyAnchors(events, envelope.anchors);
+    anchorsOk = ae.length === 0;
+    for (const e of ae) errors.push(e);
+  }
+
+  let sealOk = null;
+  let signer = null;
+  const seal = envelope.seal;
+  if (seal && typeof seal === "object") {
+    signer = typeof seal.pubkey === "string" ? seal.pubkey : "";
+    let ok = await verifySealSig(signer, sealHeader(envelope), seal.sig || "");
+    if (!ok) errors.push("seal signature does not verify for the header");
+    if (pinPubkey != null && pinPubkey !== signer) {
+      ok = false;
+      errors.push(`issuer ${signer} does not match the pinned key ${pinPubkey}`);
+    }
+    sealOk = ok;
+  } else {
+    // A goldseal@v1 envelope MUST carry a seal — a stripped seal is a downgrade,
+    // not a valid (merely unsigned) artifact. Fails the verdict in all impls.
+    sealOk = false;
+    errors.push(
+      pinPubkey != null
+        ? `seal is absent but signer ${pinPubkey} was required`
+        : "seal is absent (unsigned Gold Seal)"
+    );
+  }
+
+  const valid = chainOk && dagOk && tipOk && countOk && summaryOk && sealOk !== false && anchorsOk !== false;
+  return {
+    valid,
+    kind: "goldseal",
+    event_count: events.length,
+    chain_ok: chainOk,
+    dag_ok: dagOk,
+    tip_ok: tipOk,
+    summary_ok: summaryOk,
+    seal_ok: sealOk,
+    signature_ok: sealOk, // alias so the generic CLI line works
+    anchors_ok: anchorsOk,
+    signer,
+    claim: typeof envelope.claim === "string" ? envelope.claim : null,
+    summary: envelope.summary ?? null,
+    errors,
+  };
+}
+
 /** Parse a journal from a JSON array or JSON Lines. */
 export function loadEvents(text) {
   const trimmed = text.trimStart();
@@ -308,6 +462,9 @@ export async function verifyText(text, { key = null, pinPubkey = null } = {}) {
       v = null;
     }
     if (v && typeof v === "object" && !Array.isArray(v)) {
+      if (typeof v.schema === "string" && v.schema.startsWith("goldseal")) {
+        return verifyGoldSeal(v, { pinPubkey });
+      }
       const isReceipt =
         v.events !== undefined || (typeof v.schema === "string" && v.schema.startsWith("korgex-receipt"));
       if (isReceipt) return verifyReceipt(v, { key, pinPubkey });

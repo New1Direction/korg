@@ -69,3 +69,26 @@ def verify_chain(events: list, key: bytes | None = None) -> list:
             errors.append(f"seq {sid}: entry_hash mismatch (content tampered)")
         expected_prev = stored
     return errors
+
+
+def verify_dag(events: list) -> list:
+    """Check the causal DAG: unique seq_ids and strictly-earlier triggered_by
+    links. Byte-for-byte equivalent to the JS ``verifyDag`` and the Rust
+    ``verify_dag``; ``triggered_by`` is read at the top level, so nested
+    JournalEvent records (which carry it under ``metadata``) get the
+    uniqueness check only — matching the other two implementations."""
+    errors: list[str] = []
+    seqs = [e.get("seq_id") for e in events if isinstance(e.get("seq_id"), int)]
+    seqset = set(seqs)
+    if len(seqset) != len(seqs):
+        errors.append("duplicate seq_id present")
+    for e in events:
+        tb = e.get("triggered_by")
+        if not isinstance(tb, int):
+            continue
+        sid = e.get("seq_id")
+        if tb not in seqset:
+            errors.append(f"seq {sid}: triggered_by {tb} does not exist")
+        elif isinstance(sid, int) and tb >= sid:
+            errors.append(f"seq {sid}: triggered_by {tb} is not strictly earlier")
+    return errors
