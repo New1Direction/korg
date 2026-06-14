@@ -164,6 +164,27 @@ export async function verifyTipSig(pubkeyHex, tipHex, sigHex) {
   }
 }
 
+/**
+ * Verify an Ed25519 `event_sig` over an event's canonical preimage (the event
+ * minus HASH_FIELDS, canonicalized) — the per-event analogue of verifyTipSig.
+ * Byte-identical message to the Rust `verify_event_sig` and Python signing.
+ * Any malformed input or unsupported algorithm returns false rather than throwing.
+ */
+export async function verifyEventSig(pubkeyHex, event, sigHex) {
+  try {
+    const pk = hexToBytes(pubkeyHex);
+    const sig = hexToBytes(sigHex);
+    if (!pk || !sig || pk.length !== 32 || sig.length !== 64) return false;
+    const obj = { ...event };
+    for (const f of HASH_FIELDS) delete obj[f];
+    const msg = canonicalize(obj);
+    const key = await subtle.importKey("raw", pk, { name: "Ed25519" }, false, ["verify"]);
+    return await subtle.verify({ name: "Ed25519" }, key, sig, msg);
+  } catch {
+    return false;
+  }
+}
+
 /** Verify a list of events as a journal: hash chain + causal DAG. */
 export async function verifyJournal(events, keyBytes = null) {
   const errors = await verifyChain(events, keyBytes);

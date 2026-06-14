@@ -18,6 +18,14 @@
 use korg_ledger::{verify_chain, verify_dag};
 use serde_json::Value;
 
+/// Verify a single event's `event_sig` (lowercase hex) against a hex Ed25519
+/// public key, over the event's canonical preimage. Delegates to the
+/// conformance-tested `korg_ledger::verify_event_sig` so Rust, Python, and JS
+/// all check the identical message bytes. False on any error.
+pub fn verify_event_sig(pubkey_hex: &str, event: &Value, sig_hex: &str) -> bool {
+    korg_ledger::verify_event_sig(pubkey_hex, event, sig_hex)
+}
+
 /// The outcome of verifying a receipt or journal. `valid` is the conjunction of every
 /// applicable check; `signature_ok` is `None` when the artifact is unsigned (not
 /// applicable — not a failure).

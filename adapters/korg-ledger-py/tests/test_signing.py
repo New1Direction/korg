@@ -41,6 +41,21 @@ def test_writer_with_signing_key_sets_verifiable_event_sig(tmp_path):
     assert verify_event_sig(PUB, rec, rec["event_sig"])
 
 
+def test_frozen_cross_impl_fixture_verifies(tmp_path=None):
+    # The committed signed-events.jsonl fixture (Python-signed) must verify here
+    # and is the same artifact the Rust and JS verifiers check — one cross-impl oracle.
+    from pathlib import Path
+
+    fix = Path(__file__).resolve().parents[3] / "crates" / "korg-verify" / "tests" / "fixtures"
+    pub = bytes.fromhex((fix / "signed-events.pubkey").read_text().strip())
+    events = [json.loads(l) for l in (fix / "signed-events.jsonl").read_text().splitlines() if l.strip()]
+    assert len(events) == 2
+    for e in events:
+        assert verify_event_sig(pub, e, e["event_sig"]), f"seq {e['seq_id']} sig must verify"
+    # a flipped signature must be rejected
+    assert not verify_event_sig(pub, events[0], "00" * 64)
+
+
 def test_writer_without_key_omits_event_sig(tmp_path):
     led = tmp_path / "l.jsonl"
     w = LedgerWriter(led)
