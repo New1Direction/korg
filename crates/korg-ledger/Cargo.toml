@@ -14,3 +14,6 @@ readme = false
 serde_json = { workspace = true }
 sha2 = "0.10"
 hmac = "0.12"
+
+[dev-dependencies]
+proptest = "1"
