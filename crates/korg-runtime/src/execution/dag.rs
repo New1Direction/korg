@@ -210,7 +210,13 @@ impl SpeculativeScheduler {
         }
     }
 
-    /// Pre-warm execution resources. No-op in the embedded form (no bun discovery needed).
+    /// Legacy no-op stub. The `SpeculativeScheduler` is a test-only path with no
+    /// production caller, so "warming" it primed nothing the real campaign runs —
+    /// theater. The REAL warm boot now lives in [`super::warm_boot::warm_boot`]:
+    /// it pre-warms a shared `CARGO_TARGET_DIR` (`warm_target_dir(session)`) that
+    /// the live worker child (`SubprocessBackend::spawn`) reuses. This stub only
+    /// flips its idempotency flag and does no work; the campaign-level
+    /// `warm_boot(...)` call (gated by `--speculative`) is the real mechanism.
     pub async fn speculative_warm_boot(&mut self) -> Result<()> {
         if self.warm_boot_started {
             return Ok(());
