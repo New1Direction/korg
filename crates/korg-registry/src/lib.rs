@@ -803,7 +803,11 @@ impl CapabilityResolver {
 
     /// Restore the capability resolver state from a deterministic execution checkpoint
     pub fn restore_checkpoint(&mut self, checkpoint: &ExecutionCheckpoint) -> Result<(), String> {
-        // 1. Revert ledger events back to the snapshot playhead
+        // 1. Revert ledger events back to the snapshot playhead. This uses the
+        //    destructive rewind (not rewind_with_seal) on purpose: a checkpoint
+        //    restore must reproduce the snapshot state EXACTLY, so it must not
+        //    append a LedgerRewind tip. The tamper-evident seal is for
+        //    operator-initiated rewinds (CLI / TUI), not deterministic restore.
         self.journal.rewind(checkpoint.ledger_offset)?;
 
         // 2. Restore logical clocks
