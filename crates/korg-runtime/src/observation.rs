@@ -32,6 +32,42 @@ pub async fn cargo_check(worktree: &Path) -> CargoCheck {
     }
 }
 
+/// Real diff size of the worktree vs HEAD. Stages all changes (`git add -A`) so
+/// new *and* modified files are counted, then parses `git diff --cached --numstat`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Numstat {
+    pub files: usize,
+    pub added: u64,
+    pub removed: u64,
+}
+
+pub async fn numstat(worktree: &Path) -> Numstat {
+    let _ = tokio::process::Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(worktree)
+        .output()
+        .await;
+    let out = tokio::process::Command::new("git")
+        .args(["diff", "--cached", "--numstat"])
+        .current_dir(worktree)
+        .output()
+        .await;
+    let mut n = Numstat::default();
+    if let Ok(o) = out {
+        for line in String::from_utf8_lossy(&o.stdout).lines() {
+            let mut cols = line.split('\t');
+            let added = cols.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0); // "-" (binary) → 0
+            let removed = cols.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            if cols.next().is_some() {
+                n.files += 1;
+                n.added += added;
+                n.removed += removed;
+            }
+        }
+    }
+    n
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,6 +107,27 @@ mod tests {
         let d = tmp();
         init_crate(&d, "pub fn f() -> i64 { \"nope\" }\n").await;
         assert!(matches!(cargo_check(&d).await, CargoCheck::Failed(_)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[tokio::test]
+    async fn numstat_counts_a_modified_file() {
+        let d = tmp();
+        init_crate(&d, "pub fn f() -> i64 { 1 }\n").await;
+        std::fs::write(d.join("src/lib.rs"), "pub fn f() -> i64 { 2 }\n").unwrap();
+        let n = numstat(&d).await;
+        assert_eq!(n.files, 1, "one file changed");
+        assert!(n.added >= 1 && n.removed >= 1);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[tokio::test]
+    async fn numstat_counts_a_new_file() {
+        let d = tmp();
+        init_crate(&d, "pub fn f() -> i64 { 1 }\n").await;
+        std::fs::write(d.join("src/extra.rs"), "pub fn g() {}\n").unwrap();
+        let n = numstat(&d).await;
+        assert_eq!(n.files, 1, "a newly created file counts");
         let _ = std::fs::remove_dir_all(&d);
     }
 }
