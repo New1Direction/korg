@@ -1853,7 +1853,8 @@ pub struct KorgConfig {
 impl KorgConfig {
     pub fn from_env() -> Self {
         Self {
-            default_llm: std::env::var("KORG_DEFAULT_LLM").unwrap_or_else(|_| "mock".to_string()),
+            default_llm: std::env::var("KORG_DEFAULT_LLM")
+                .unwrap_or_else(|_| "deterministic".to_string()),
             openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
             openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
             anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
@@ -2051,7 +2052,7 @@ impl KorgConfig {
         }
 
         Self {
-            default_llm: default_llm.unwrap_or_else(|| "mock".to_string()),
+            default_llm: default_llm.unwrap_or_else(|| "deterministic".to_string()),
             openai_api_key,
             openai_base_url,
             anthropic_api_key,
@@ -2204,6 +2205,7 @@ fn build_provider_with(
             }
             Arc::new(RotatorProvider::new(candidates))
         }
+        "deterministic" => Arc::new(DeterministicProvider::new()),
         _ => Arc::new(MockProvider::new()),
     };
 
@@ -2246,6 +2248,50 @@ mod tests {
             .content
             .contains("Evaluate transaction authenticity"));
         assert_eq!(response.model, "mock-model-v1");
+    }
+
+    #[tokio::test]
+    async fn build_provider_default_is_deterministic_and_honest() {
+        let mut cfg = KorgConfig::from_env();
+        cfg.default_llm = "deterministic".to_string();
+        let provider = build_provider(&cfg); // wrapped in ResilientLlmProvider
+        let request = LlmRequest {
+            messages: vec![
+                Message {
+                    role: Role::System,
+                    content: "You are Benjamin, the Builder & Implementer.".to_string(),
+                    name: None,
+                    tool_calls: None,
+                },
+                Message {
+                    role: Role::User,
+                    content: "Implement a distributed consensus protocol".to_string(),
+                    name: None,
+                    tool_calls: None,
+                },
+            ],
+            temperature: 0.3,
+            max_tokens: None,
+            tools: None,
+            stop_sequences: None,
+            multimodal: None,
+            tx_id: None,
+            session_id: None,
+            policy_hash: None,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+        };
+        let resp = provider.complete(request).await.unwrap();
+        // honest null for an unknown task: empty mutations, NOT the mock echo string
+        assert!(
+            !resp.content.contains("[Mock Response to:"),
+            "default must not be the mock echo"
+        );
+        assert!(
+            resp.content.contains("\"mutations\": []"),
+            "unknown task → honest null"
+        );
     }
 
     #[test]

@@ -63,7 +63,9 @@ pub struct DeterministicProvider {
 
 impl DeterministicProvider {
     pub fn new() -> Self {
-        Self { name: "deterministic-honest" }
+        Self {
+            name: "deterministic-honest",
+        }
     }
 
     /// Pure rendering core (no async, no I/O) so it is trivially testable.
@@ -71,9 +73,8 @@ impl DeterministicProvider {
         let role = role_marker(req);
         let task = task_text(req).to_ascii_lowercase();
         // Recognize the fixture task by a stable signature.
-        let is_fixture = role == "benjamin"
-            && task.contains("add function")
-            && task.contains("src/lib.rs");
+        let is_fixture =
+            role == "benjamin" && task.contains("add function") && task.contains("src/lib.rs");
         if is_fixture {
             let content = serde_json::Value::String(FIXTURE_LIB_RS.to_string());
             let mutations = format!(
@@ -101,7 +102,11 @@ impl LlmProvider for DeterministicProvider {
     }
 
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
-        let prompt_tokens: u32 = req.messages.iter().map(|m| estimate_tokens(&m.content)).sum();
+        let prompt_tokens: u32 = req
+            .messages
+            .iter()
+            .map(|m| estimate_tokens(&m.content))
+            .sum();
         let content = self.render_for(&req);
         let completion_tokens = estimate_tokens(&content);
         Ok(LlmResponse {
@@ -122,7 +127,11 @@ impl LlmProvider for DeterministicProvider {
         req: LlmRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmDelta, LlmError>> + Send>>, LlmError> {
         let content = self.render_for(&req);
-        let delta = LlmDelta { content, tool_calls: None, finish_reason: Some(FinishReason::Stop) };
+        let delta = LlmDelta {
+            content,
+            tool_calls: None,
+            finish_reason: Some(FinishReason::Stop),
+        };
         Ok(Box::pin(stream::iter(vec![Ok(delta)])))
     }
 }
@@ -133,16 +142,23 @@ impl LlmProvider for DeterministicProvider {
 #[cfg(test)]
 pub(crate) fn parse_for_test(response: &str) -> (serde_json::Value, f32, serde_json::Value) {
     let mut confidence = 0.85_f32;
-    if let Some(line) = response.lines().find(|l| l.trim_start().starts_with("confidence:")) {
+    if let Some(line) = response
+        .lines()
+        .find(|l| l.trim_start().starts_with("confidence:"))
+    {
         if let Some(v) = line.split(':').nth(1) {
-            if let Ok(f) = v.trim().parse::<f32>() { confidence = f; }
+            if let Ok(f) = v.trim().parse::<f32>() {
+                confidence = f;
+            }
         }
     }
     let mut output = serde_json::json!({});
     if let Some(s) = response.find("```json") {
         let sub = &response[s + 7..];
         if let Some(e) = sub.find("```") {
-            if let Ok(v) = serde_json::from_str(sub[..e].trim()) { output = v; }
+            if let Ok(v) = serde_json::from_str(sub[..e].trim()) {
+                output = v;
+            }
         }
     }
     (output, confidence, serde_json::json!({}))
@@ -156,12 +172,30 @@ mod tests {
     fn req(system: &str, user: &str) -> LlmRequest {
         LlmRequest {
             messages: vec![
-                Message { role: Role::System, content: system.to_string(), name: None, tool_calls: None },
-                Message { role: Role::User, content: user.to_string(), name: None, tool_calls: None },
+                Message {
+                    role: Role::System,
+                    content: system.to_string(),
+                    name: None,
+                    tool_calls: None,
+                },
+                Message {
+                    role: Role::User,
+                    content: user.to_string(),
+                    name: None,
+                    tool_calls: None,
+                },
             ],
-            temperature: 0.3, max_tokens: None, tools: None, stop_sequences: None,
-            multimodal: None, tx_id: None, session_id: None, policy_hash: None,
-            top_p: None, presence_penalty: None, frequency_penalty: None,
+            temperature: 0.3,
+            max_tokens: None,
+            tools: None,
+            stop_sequences: None,
+            multimodal: None,
+            tx_id: None,
+            session_id: None,
+            policy_hash: None,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
         }
     }
 
@@ -169,41 +203,93 @@ mod tests {
     async fn fixture_task_returns_canonical_applyable_patch() {
         let p = DeterministicProvider::new();
         // Benjamin system marker + the fixture task signature
-        let r = p.complete(req("You are Benjamin, the Builder & Implementer.",
-                               "Fix the add function in src/lib.rs so it adds")).await.unwrap();
+        let r = p
+            .complete(req(
+                "You are Benjamin, the Builder & Implementer.",
+                "Fix the add function in src/lib.rs so it adds",
+            ))
+            .await
+            .unwrap();
         let (output, _conf, _fm) = crate::deterministic::parse_for_test(&r.content);
-        let muts = output.get("mutations").and_then(|m| m.as_array()).expect("mutations array");
+        let muts = output
+            .get("mutations")
+            .and_then(|m| m.as_array())
+            .expect("mutations array");
         assert_eq!(muts.len(), 1, "exactly one applyable mutation");
         let m0 = &muts[0];
-        assert_eq!(m0.get("target").and_then(|v| v.as_str()), Some("src/lib.rs"));
-        let content = m0.get("content").and_then(|v| v.as_str()).expect("applyable content field");
-        assert!(content.contains("a + b"), "the patch must actually fix the bug");
+        assert_eq!(
+            m0.get("target").and_then(|v| v.as_str()),
+            Some("src/lib.rs")
+        );
+        let content = m0
+            .get("content")
+            .and_then(|v| v.as_str())
+            .expect("applyable content field");
+        assert!(
+            content.contains("a + b"),
+            "the patch must actually fix the bug"
+        );
     }
 
     #[tokio::test]
     async fn unknown_task_returns_honest_null_not_fabricated_success() {
         let p = DeterministicProvider::new();
-        let r = p.complete(req("You are Benjamin, the Builder & Implementer.",
-                               "Implement a distributed consensus protocol")).await.unwrap();
+        let r = p
+            .complete(req(
+                "You are Benjamin, the Builder & Implementer.",
+                "Implement a distributed consensus protocol",
+            ))
+            .await
+            .unwrap();
         let (output, conf, _fm) = crate::deterministic::parse_for_test(&r.content);
-        let muts = output.get("mutations").and_then(|m| m.as_array()).expect("mutations array");
-        assert!(muts.is_empty(), "honest null: no fabricated mutations for an unknown task");
+        let muts = output
+            .get("mutations")
+            .and_then(|m| m.as_array())
+            .expect("mutations array");
+        assert!(
+            muts.is_empty(),
+            "honest null: no fabricated mutations for an unknown task"
+        );
         assert!(conf < 0.5, "honest null reports low confidence, got {conf}");
     }
 
     #[tokio::test]
     async fn output_is_byte_identical_for_same_inputs() {
         let p = DeterministicProvider::new();
-        let a = p.complete(req("You are Benjamin, the Builder & Implementer.", "Fix the add function in src/lib.rs so it adds")).await.unwrap();
-        let b = p.complete(req("You are Benjamin, the Builder & Implementer.", "Fix the add function in src/lib.rs so it adds")).await.unwrap();
-        assert_eq!(a.content, b.content, "deterministic: same inputs → byte-identical output");
+        let a = p
+            .complete(req(
+                "You are Benjamin, the Builder & Implementer.",
+                "Fix the add function in src/lib.rs so it adds",
+            ))
+            .await
+            .unwrap();
+        let b = p
+            .complete(req(
+                "You are Benjamin, the Builder & Implementer.",
+                "Fix the add function in src/lib.rs so it adds",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            a.content, b.content,
+            "deterministic: same inputs → byte-identical output"
+        );
     }
 
     #[tokio::test]
     async fn reports_truthful_nonzero_token_usage() {
         let p = DeterministicProvider::new();
-        let r = p.complete(req("You are Benjamin, the Builder & Implementer.", "Fix the add function in src/lib.rs so it adds")).await.unwrap();
+        let r = p
+            .complete(req(
+                "You are Benjamin, the Builder & Implementer.",
+                "Fix the add function in src/lib.rs so it adds",
+            ))
+            .await
+            .unwrap();
         assert!(r.usage.total_tokens > 0);
-        assert_eq!(r.usage.total_tokens, r.usage.prompt_tokens + r.usage.completion_tokens);
+        assert_eq!(
+            r.usage.total_tokens,
+            r.usage.prompt_tokens + r.usage.completion_tokens
+        );
     }
 }
