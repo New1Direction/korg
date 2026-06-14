@@ -2549,7 +2549,7 @@ impl LeaderOrchestrator {
             "work_packages": [
                 {"id": "pkg-captain", "personas": ["captain"], "description": format!("Plan: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
                 {"id": "pkg-harper",  "personas": ["harper"],  "description": format!("Research: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
-                {"id": "pkg-benjamin","personas": ["benjamin"],"description": format!("Implement (simulate-crash): {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
+                {"id": "pkg-benjamin","personas": ["benjamin"],"description": format!("Implement: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
                 {"id": "pkg-lucas",   "personas": ["lucas"],   "description": format!("Synthesize: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())}
             ]
         })
@@ -3419,6 +3419,30 @@ mod tests {
         assert!(
             !leader.inject_stress,
             "the default campaign path must inject no synthetic signal"
+        );
+    }
+
+    #[tokio::test]
+    async fn default_decomposition_does_not_simulate_crash() {
+        // De-theater: the default Benjamin package must do real work, not bake
+        // the fake-crash directive. (The simulate-crash handler stays in the
+        // harness for explicit fault-injection tests.)
+        let leader = LeaderOrchestrator::new("Fix the add bug".to_string(), None);
+        let plan = leader.decompose_into_persona_packages();
+        let benjamin = plan["work_packages"]
+            .as_array()
+            .expect("work_packages array")
+            .iter()
+            .find(|p| p["id"] == "pkg-benjamin")
+            .expect("benjamin package present");
+        let desc = benjamin["description"].as_str().unwrap_or("");
+        assert!(
+            !desc.contains("simulate-crash"),
+            "benjamin's default package must not contain 'simulate-crash', got: {desc}"
+        );
+        assert!(
+            desc.starts_with("Implement:"),
+            "benjamin's default package should be a real implement task, got: {desc}"
         );
     }
 
