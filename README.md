@@ -151,7 +151,7 @@ The crate is not yet published to crates.io; install from source:
 git clone https://github.com/New1Direction/korg
 cd korg
 cargo build --release
-./target/release/korg-tui --help
+./target/release/korg --help
 ```
 
 ### Python bridge (for korgex / korgchat)
@@ -171,11 +171,11 @@ korg campaign --tui --prompt "Refactor the auth layer to use JWTs"
 # Web cockpit at localhost:8080
 korg campaign --web --prompt "Optimize the database connection pool"
 
-# Pure autonomous goal mode
-korg goal "Write and validate a full test suite for src/parser.rs"
+# Pure autonomous goal mode (--goal is a top-level flag)
+korg --goal "Write and validate a full test suite for src/parser.rs"
 
-# Preview without committing (speculative sandbox)
-korg run --preview "Refactor the main event loop"
+# Preview without committing (dry-run; --preview is a top-level flag)
+korg --preview "Refactor the main event loop"
 ```
 
 ### Rewind & Verify
@@ -212,8 +212,8 @@ Korg adapts its intelligence tier based on task complexity. Modes are governed e
 | `heavy-consciousness` | Maximum depth. Full HeavyConsciousness context injection. |
 
 ```bash
-korg run --mode research "Explore alternative approaches to the rate limiter"
-korg run --mode recovery "Carefully migrate the database schema"
+korg --mode research "Explore alternative approaches to the rate limiter"
+korg --mode recovery "Carefully migrate the database schema"
 ```
 
 ---
@@ -239,8 +239,8 @@ Korg treats AI cognition the same way a hypervisor treats compute and Git treats
 | Deterministic replay | ✅ | ❌ | ❌ | ❌ |
 | Causal HLC ordering | ✅ | ❌ | ❌ | ❌ |
 | Rewind execution | ✅ | ❌ | ❌ | ❌ |
-| Speculative branches | ✅ | ❌ | ❌ | ❌ |
-| Execution checkpoints | ✅ | ❌ | ❌ | ❌ |
+| Speculative branches | 🚧 planned | ❌ | ❌ | ❌ |
+| Execution checkpoints | 🚧 planned | ❌ | ❌ | ❌ |
 | Cryptographic audit trail | ✅ | ❌ | ❌ | ❌ |
 | Micro-healing | ✅ | ❌ | ❌ | ❌ |
 | Model-agnostic | ✅ | ✅ | ✅ | ✅ |
@@ -288,8 +288,9 @@ Korg is in active development. Current test coverage: **175 tests, 0 failures** 
 
 - [x] Append-only cognitive ledger with HLC ordering
 - [x] Deterministic replay and projection rebuilds
-- [x] Speculative execution + preview mode
-- [x] Execution checkpoints (O(1) restore)
+- [x] Preview / dry-run mode (`--preview`)
+- [ ] Speculative warm-boot execution (in progress)
+- [ ] Execution checkpoints / restore CLI (primitive exists; CLI planned)
 - [x] Micro-healing effect layer
 - [x] Multi-agent swarm orchestration (Captain, Harper, Benjamin, Lucas)
 - [x] TUI dashboard + Web cockpit
