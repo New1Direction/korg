@@ -91,8 +91,11 @@ jobs:
       - name: JS spec oracle reproduces the frozen vectors
         run: node spec/korg-ledger-v1/js/conformance.mjs
 
-      - name: Install pytest
-        run: python3 -m pip install --quiet pytest
+      - name: Install test deps
+        # pytest + the optional-extra deps so the FULL suite runs in CI rather
+        # than skipping: hypothesis (property tests) and cryptography (Ed25519
+        # signing / goldseal mint+verify / korg-seal).
+        run: python3 -m pip install --quiet pytest hypothesis cryptography
 
       - name: Producer + capture + setup + reader test suites
         run: |
