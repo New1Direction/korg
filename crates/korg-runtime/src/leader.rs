@@ -1622,80 +1622,91 @@ impl LeaderOrchestrator {
                     });
 
                     let _ = tx.try_send(crate::tui_bridge::TuiUpdate::PersonaTelemetry {
-                        scores: [
-                            real_scores[0] + (round as f32 * 0.08).sin() * 0.02,
-                            real_scores[1] + (round as f32 * 0.12).cos() * 0.02,
-                            real_scores[2] + (round as f32 * 0.06).sin() * 0.02,
-                            real_scores[3] + (round as f32 * 0.10).cos() * 0.02,
-                        ],
+                        // Raw real arena scores — no cosmetic sin/cos jitter.
+                        scores: real_scores,
                         telemetry_merges: (round * 12) as u32,
-                        crdt_sync_frequency: 1.2 + (round as f32 * 0.15),
-                        conflicts_count: (round / 3) as u32,
+                        // The lock/CRDT sub-fields have no real subsystem feeding them,
+                        // so they are honest zeros on the default path; --inject-stress
+                        // restores the synthetic demo values.
+                        crdt_sync_frequency: if self.inject_stress {
+                            1.2 + (round as f32 * 0.15)
+                        } else {
+                            0.0
+                        },
+                        conflicts_count: if self.inject_stress {
+                            (round / 3) as u32
+                        } else {
+                            0
+                        },
                         provenance_chain_length: (round + 1) as u32,
-                        lock_states: vec![
-                            (
-                                "Captain".to_string(),
-                                if round % 3 == 0 {
-                                    "WRITE".to_string()
-                                } else {
-                                    "READ".to_string()
-                                },
-                                format!("{:.2}ms", 0.12 + (round as f32 * 0.01)),
-                                if round % 3 == 0 {
-                                    "Negotiating contract".to_string()
-                                } else {
-                                    "Monitoring".to_string()
-                                },
-                            ),
-                            (
-                                "Harper".to_string(),
-                                if round % 4 == 1 {
-                                    "WRITE".to_string()
-                                } else if round % 4 == 0 {
-                                    "READ".to_string()
-                                } else {
-                                    "IDLE".to_string()
-                                },
-                                format!("{:.2}ms", 0.18 + (round as f32 * 0.015)),
-                                if round % 4 == 1 {
-                                    "Generating edits".to_string()
-                                } else {
-                                    "Idle".to_string()
-                                },
-                            ),
-                            (
-                                "Benjamin".to_string(),
-                                if round % 4 == 2 {
-                                    "WRITE".to_string()
-                                } else if round % 4 == 0 {
-                                    "READ".to_string()
-                                } else {
-                                    "IDLE".to_string()
-                                },
-                                format!("{:.2}ms", 0.15 + (round as f32 * 0.02)),
-                                if round % 4 == 2 {
-                                    "Synthesizing patch".to_string()
-                                } else {
-                                    "Idle".to_string()
-                                },
-                            ),
-                            (
-                                "Lucas".to_string(),
-                                if round % 4 == 3 {
-                                    "WRITE".to_string()
-                                } else if round % 4 == 0 {
-                                    "READ".to_string()
-                                } else {
-                                    "IDLE".to_string()
-                                },
-                                format!("{:.2}ms", 0.22 + (round as f32 * 0.008)),
-                                if round % 4 == 3 {
-                                    "Verifying test cases".to_string()
-                                } else {
-                                    "Idle".to_string()
-                                },
-                            ),
-                        ],
+                        lock_states: if self.inject_stress {
+                            vec![
+                                (
+                                    "Captain".to_string(),
+                                    if round % 3 == 0 {
+                                        "WRITE".to_string()
+                                    } else {
+                                        "READ".to_string()
+                                    },
+                                    format!("{:.2}ms", 0.12 + (round as f32 * 0.01)),
+                                    if round % 3 == 0 {
+                                        "Negotiating contract".to_string()
+                                    } else {
+                                        "Monitoring".to_string()
+                                    },
+                                ),
+                                (
+                                    "Harper".to_string(),
+                                    if round % 4 == 1 {
+                                        "WRITE".to_string()
+                                    } else if round % 4 == 0 {
+                                        "READ".to_string()
+                                    } else {
+                                        "IDLE".to_string()
+                                    },
+                                    format!("{:.2}ms", 0.18 + (round as f32 * 0.015)),
+                                    if round % 4 == 1 {
+                                        "Generating edits".to_string()
+                                    } else {
+                                        "Idle".to_string()
+                                    },
+                                ),
+                                (
+                                    "Benjamin".to_string(),
+                                    if round % 4 == 2 {
+                                        "WRITE".to_string()
+                                    } else if round % 4 == 0 {
+                                        "READ".to_string()
+                                    } else {
+                                        "IDLE".to_string()
+                                    },
+                                    format!("{:.2}ms", 0.15 + (round as f32 * 0.02)),
+                                    if round % 4 == 2 {
+                                        "Synthesizing patch".to_string()
+                                    } else {
+                                        "Idle".to_string()
+                                    },
+                                ),
+                                (
+                                    "Lucas".to_string(),
+                                    if round % 4 == 3 {
+                                        "WRITE".to_string()
+                                    } else if round % 4 == 0 {
+                                        "READ".to_string()
+                                    } else {
+                                        "IDLE".to_string()
+                                    },
+                                    format!("{:.2}ms", 0.22 + (round as f32 * 0.008)),
+                                    if round % 4 == 3 {
+                                        "Verifying test cases".to_string()
+                                    } else {
+                                        "Idle".to_string()
+                                    },
+                                ),
+                            ]
+                        } else {
+                            vec![]
+                        },
                     });
 
                     let total_tokens =
