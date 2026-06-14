@@ -148,6 +148,45 @@ def main() -> None:
         diverged += 1
     print(f"  [{'ok' if agree else 'DIVERGE':>7}] {'edge-valid (astral/maxint/unicode)':16} py={py} rust={rust} js={js}")
 
+    # Negative-seq bound anchor: seq_id is a SIGNED integer, so a valid seal can
+    # carry a bound anchor at a negative seq_id. This is the exact artifact the old
+    # Rust as_u64 anchor matcher split on (Rust REJECT vs Py/JS ACCEPT) — mint it
+    # valid and assert all three still agree it is VALID.
+    neg_events = []
+    prev = "0" * 64
+    for sid in (-2, -1):
+        rec = {
+            "schema_version": "1.0", "seq_id": sid, "source_agent": "a", "tool_name": "Edit",
+            "args": {"file_path": "src/x.py"}, "result": {}, "payload_refs": [], "success": True,
+            "duration_ms": 0, "prev_hash": prev,
+        }
+        rec["entry_hash"] = chain_hash(rec)
+        prev = rec["entry_hash"]
+        neg_events.append(rec)
+    neg_anchor = [{
+        "seq_id": -1, "entry_hash": neg_events[-1]["entry_hash"], "anchor_kind": "git-tip",
+        "anchor_proof": {"repo": "https://github.com/New1Direction/korg", "commit": "0" * 40},
+        "anchored_at": "2026-06-14T00:00:00Z",
+    }]
+    neg_seal = mint_seal(
+        events=neg_events, claim="neg-seq", issuer_agent="a", issued_at=1,
+        private_seed=bytes([7]) * 32, anchors=neg_anchor,
+    )
+    total += 1
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump(neg_seal, f, ensure_ascii=False)
+        path = f.name
+    try:
+        py = verify_seal(neg_seal) == []
+        rust = _cli_valid([str(RUST_BIN), path, "--json"])
+        js = _cli_valid(["node", str(VERIFY_MJS), path, "--json"])
+    finally:
+        os.unlink(path)
+    agree = py is True and rust is True and js is True
+    if not agree:
+        diverged += 1
+    print(f"  [{'ok' if agree else 'DIVERGE':>7}] {'neg-seq bound anchor':16} py={py} rust={rust} js={js}")
+
     print(f"\ndifferential fuzz: {total} candidates · {diverged} divergence(s)")
     sys.exit(1 if diverged else 0)
 

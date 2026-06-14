@@ -298,13 +298,17 @@ pub fn verify_dag(events: &[Value]) -> Vec<String> {
 pub fn verify_anchors(chain: &[Value], anchors: &[Value]) -> Vec<String> {
     let mut errors = Vec::new();
     for a in anchors {
-        let seq = a.get("seq_id").and_then(|v| v.as_u64());
+        // seq_id is matched as a signed integer to stay byte-for-byte in lockstep
+        // with verify_dag (as_i64) and the Python/JS verifiers (raw int equality).
+        // as_u64 would silently reject negative seq_ids that the other two accept —
+        // a same-bytes verdict split, the one failure this product must never have.
+        let seq = a.get("seq_id").and_then(|v| v.as_i64());
         let want = a.get("entry_hash").and_then(|v| v.as_str());
         match (seq, want) {
             (Some(seq), Some(want)) => {
                 match chain
                     .iter()
-                    .find(|e| e.get("seq_id").and_then(|v| v.as_u64()) == Some(seq))
+                    .find(|e| e.get("seq_id").and_then(|v| v.as_i64()) == Some(seq))
                 {
                     None => errors.push(format!(
                         "anchor seq {seq}: no event with that seq_id in the chain"
@@ -349,6 +353,32 @@ mod tests {
 
         let missing = json!([{"seq_id": 99, "entry_hash": tip}]);
         assert!(!verify_anchors(&chain, missing.as_array().unwrap()).is_empty());
+    }
+
+    #[test]
+    fn verify_anchors_matches_negative_and_zero_seq_ids() {
+        // Regression: seq_id is a signed integer everywhere else (verify_dag,
+        // canon domain bound, and the Python/JS verifiers all accept it). An
+        // anchor matcher using as_u64 would reject negative seq_ids that the
+        // other two verifiers ACCEPT — a same-bytes verdict split. Build chains
+        // with seq_id -5 and 0 and confirm the anchor matches by raw equality.
+        for sid in [-5i64, 0i64] {
+            let mut ev = json!({"seq_id": sid, "prev_hash": GENESIS_HASH, "x": 1});
+            let h = chain_hash(&ev, None);
+            ev["entry_hash"] = json!(h);
+            let chain = vec![ev];
+
+            let good =
+                json!([{"seq_id": sid, "entry_hash": h, "anchor_kind": ANCHOR_KIND_GIT_TIP}]);
+            assert!(
+                verify_anchors(&chain, good.as_array().unwrap()).is_empty(),
+                "seq_id {sid}: matching anchor must verify clean (parity with Python/JS)"
+            );
+
+            // a wrong hash at the same negative/zero seq must still be flagged
+            let wrong = json!([{"seq_id": sid, "entry_hash": "deadbeef"}]);
+            assert!(!verify_anchors(&chain, wrong.as_array().unwrap()).is_empty());
+        }
     }
 
     // local helper so the anchor test doesn't depend on the proptest build_chain

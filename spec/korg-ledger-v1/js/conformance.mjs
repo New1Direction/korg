@@ -117,6 +117,25 @@ async function run() {
     if (!ok) failures++;
   }
 
+  // Cross-language parity regression: seq_id is a SIGNED integer, so a chain with
+  // a negative or zero seq_id is valid and in-domain. JS matches anchors by raw
+  // value (bySeq.get) and accepts these; Rust must agree (it previously used
+  // as_u64, silently rejecting negatives — a same-bytes verdict split). Build
+  // single-event chains at seq -5 and 0 and confirm match + mismatch behavior.
+  {
+    let ok = true;
+    for (const sid of [-5, 0]) {
+      const ev = { seq_id: sid, prev_hash: "0".repeat(64), x: 1 };
+      ev.entry_hash = await chainHash(ev);
+      const chain = [ev];
+      const good = [{ seq_id: sid, entry_hash: ev.entry_hash, anchor_kind: "git-tip" }];
+      const bad = [{ seq_id: sid, entry_hash: "deadbeef" }];
+      ok = ok && verifyAnchors(chain, good).length === 0 && verifyAnchors(chain, bad).length > 0;
+    }
+    console.log(`  [${ok ? "PASS" : "FAIL"}] anchors signed seq        negative + zero seq_id parity (Rust/Py/JS agree)`);
+    if (!ok) failures++;
+  }
+
   // Cross-impl goldseal@v1: the frozen goldseal-v1.json was MINTED BY PYTHON.
   // JS must (a) verify it valid, (b) re-derive the identical summary, and (c)
   // reject a lying summary + a stripped seal — proving Python-mint / JS-verify.
