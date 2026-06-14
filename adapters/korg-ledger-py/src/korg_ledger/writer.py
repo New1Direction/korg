@@ -31,12 +31,22 @@ class CausalityError(ValueError):
 
 
 class LedgerWriter:
-    def __init__(self, path, hmac_key: bytes | None = None, hlc_actor_id: int = 1) -> None:
+    def __init__(
+        self,
+        path,
+        hmac_key: bytes | None = None,
+        hlc_actor_id: int = 1,
+        signing_key: bytes | None = None,
+    ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.touch(exist_ok=True)
         self._key = hmac_key
         self._hlc_actor_id = hlc_actor_id
+        # Optional raw 32-byte Ed25519 seed. When set, each appended event is
+        # signed (requires the `signing` extra / `cryptography`). Default None
+        # keeps the writer stdlib-only.
+        self._signing_key = signing_key
         with self.path.open("r") as f:
             self._last_seq, self._last_hash, self._last_hlc = self._read_tip(f)
 
@@ -109,6 +119,10 @@ class LedgerWriter:
                     "prev_hash": last_hash,
                 }
                 record["entry_hash"] = chain_hash(record, self._key)
+                if self._signing_key is not None:
+                    from . import signing  # lazy: keeps the stdlib path import-clean
+
+                    record["event_sig"] = signing.sign_event(self._signing_key, record)
                 f.seek(0, os.SEEK_END)
                 f.write(json.dumps(record, separators=(",", ":")) + "\n")
                 f.flush()
