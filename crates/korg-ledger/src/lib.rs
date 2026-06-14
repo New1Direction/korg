@@ -285,6 +285,15 @@ mod tests {
             prop_assert!(!verify_chain(&chain, None).is_empty());
         }
 
+        // canonicalize is stable across a JSON round-trip for arbitrary unicode.
+        #[test]
+        fn canonicalize_round_trips_unicode(s in ".*") {
+            let v = json!({ "k": s });
+            let once = canonicalize(&v);
+            let reparsed: Value = serde_json::from_slice(&once).unwrap();
+            prop_assert_eq!(once, canonicalize(&reparsed));
+        }
+
         // canonicalize is insertion-order independent (keys are sorted).
         // Use a btree_map input so keys are unique — duplicate keys would make
         // forward vs reverse insertion legitimately differ (last-write-wins).
