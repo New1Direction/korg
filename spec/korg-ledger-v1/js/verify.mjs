@@ -114,8 +114,14 @@ export async function chainHash(event, keyBytes = null) {
 /** Recompute the hash-chain. Returns [] iff intact; each error names a seq_id. */
 export async function verifyChain(events, keyBytes = null) {
   const errors = [];
+  if (!Array.isArray(events)) return ["events is not a list"];
   let expectedPrev = GENESIS;
   for (const e of events) {
+    if (e === null || typeof e !== "object" || Array.isArray(e)) {
+      errors.push("event is not a JSON object");
+      expectedPrev = null;
+      continue;
+    }
     const sid = e.seq_id;
     const stored = e.entry_hash;
     if (stored == null) {
@@ -137,10 +143,12 @@ export async function verifyChain(events, keyBytes = null) {
 /** Check the causal DAG: unique seq_ids and strictly-earlier triggered_by links. */
 export function verifyDag(events) {
   const errors = [];
-  const seqs = events.map((e) => e.seq_id).filter((s) => typeof s === "number");
+  if (!Array.isArray(events)) return ["events is not a list"];
+  const dicts = events.filter((e) => e !== null && typeof e === "object" && !Array.isArray(e));
+  const seqs = dicts.map((e) => e.seq_id).filter((s) => typeof s === "number");
   const seqset = new Set(seqs);
   if (seqset.size !== seqs.length) errors.push("duplicate seq_id present");
-  for (const e of events) {
+  for (const e of dicts) {
     const tb = e.triggered_by;
     if (typeof tb !== "number") continue;
     const sid = e.seq_id;
@@ -199,8 +207,15 @@ export async function verifyEventSig(pubkeyHex, event, sigHex) {
  */
 export function verifyAnchors(chain, anchors) {
   const errors = [];
-  const bySeq = new Map(chain.map((e) => [e.seq_id, e]));
+  if (!Array.isArray(chain) || !Array.isArray(anchors)) return ["chain or anchors is not a list"];
+  const bySeq = new Map(
+    chain.filter((e) => e !== null && typeof e === "object" && !Array.isArray(e)).map((e) => [e.seq_id, e])
+  );
   for (const a of anchors) {
+    if (a === null || typeof a !== "object" || Array.isArray(a)) {
+      errors.push("anchor record is not a JSON object");
+      continue;
+    }
     const seq = a.seq_id;
     const want = a.entry_hash;
     if (seq == null || want == null) {
@@ -298,7 +313,8 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
 const GOLDSEAL_NON_HEADER = ["events", "seal"];
 
 function eventView(e) {
-  const inner = e && e.event;
+  if (e === null || typeof e !== "object" || Array.isArray(e)) return [undefined, undefined, undefined];
+  const inner = e.event;
   if (inner && typeof inner === "object" && !Array.isArray(inner)) {
     return [inner.source_agent, inner.tool_name, inner.args];
   }
@@ -310,7 +326,8 @@ export function deriveSummary(events) {
   const byTool = {};
   const files = new Set();
   const agents = new Set();
-  for (const e of events) {
+  const safe = Array.isArray(events) ? events : [];
+  for (const e of safe) {
     const [agent, tool, args] = eventView(e);
     if (typeof tool === "string") byTool[tool] = (byTool[tool] || 0) + 1;
     if (typeof agent === "string") agents.add(agent);
@@ -320,7 +337,10 @@ export function deriveSummary(events) {
       }
     }
   }
-  const seqs = events.map((e) => e.seq_id).filter((s) => typeof s === "number" && Number.isInteger(s));
+  const seqs = safe
+    .filter((e) => e !== null && typeof e === "object" && !Array.isArray(e))
+    .map((e) => e.seq_id)
+    .filter((s) => typeof s === "number" && Number.isInteger(s));
   const byToolSorted = {};
   for (const k of Object.keys(byTool).sort()) byToolSorted[k] = byTool[k];
   return {
@@ -363,6 +383,8 @@ export async function verifySealSig(pubkeyHex, header, sigHex) {
  * `pinPubkey` requires the issuer to equal a key the relying party trusts.
  */
 export async function verifyGoldSeal(envelope, { pinPubkey = null } = {}) {
+  // Hostile/non-object input → empty envelope → invalid, never throws.
+  if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) envelope = {};
   const events = Array.isArray(envelope.events) ? envelope.events : [];
   const errors = await verifyChain(events);
   const dag = verifyDag(events);
@@ -371,7 +393,8 @@ export async function verifyGoldSeal(envelope, { pinPubkey = null } = {}) {
   for (const e of dag) errors.push(e);
 
   const claimedTip = typeof envelope.tip === "string" ? envelope.tip : null;
-  const head = events.length ? events[events.length - 1].entry_hash : null;
+  const last = events.length ? events[events.length - 1] : null;
+  const head = last && typeof last === "object" ? last.entry_hash : null;
   const tipOk = claimedTip == null ? false : head != null && claimedTip === head;
   if (!tipOk) errors.push("recorded tip does not match the chain head");
 

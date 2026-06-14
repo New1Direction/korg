@@ -46,7 +46,10 @@ def _event_view(event: dict) -> tuple:
     Capture ledgers nest the payload under ``event`` (the LedgerWriter
     JournalEvent shape); receipts/flat captures put these at the top level.
     Both are valid korg-ledger@v1 records and must derive the same summary.
+    Non-object events contribute nothing (the verifier never crashes on them).
     """
+    if not isinstance(event, dict):
+        return None, None, None
     inner = event.get("event")
     if isinstance(inner, dict):
         return inner.get("source_agent"), inner.get("tool_name"), inner.get("args")
@@ -64,7 +67,8 @@ def derive_summary(events: list) -> dict:
     by_tool: dict[str, int] = {}
     files: set[str] = set()
     agents: set[str] = set()
-    for e in events:
+    safe = events if isinstance(events, list) else []
+    for e in safe:
         agent, tool, args = _event_view(e)
         if isinstance(tool, str):
             by_tool[tool] = by_tool.get(tool, 0) + 1
@@ -75,7 +79,11 @@ def derive_summary(events: list) -> dict:
                 val = args.get(key)
                 if isinstance(val, str):
                     files.add(val)
-    seqs = [e.get("seq_id") for e in events if isinstance(e.get("seq_id"), int)]
+    seqs = [
+        e.get("seq_id")
+        for e in safe
+        if isinstance(e, dict) and isinstance(e.get("seq_id"), int)
+    ]
     return {
         "agents": sorted(agents),
         "by_tool": dict(sorted(by_tool.items())),
@@ -93,6 +101,8 @@ def seal_header(envelope: dict) -> dict:
     preimage. Identical at mint time and verify time, so the signature is
     reproducible.
     """
+    if not isinstance(envelope, dict):
+        return {}
     return {k: v for k, v in envelope.items() if k not in _NON_HEADER_KEYS}
 
 
@@ -139,6 +149,8 @@ def verify_structure(envelope: dict) -> list:
     signature is checked separately by :func:`korg_ledger.signing.verify_seal`.
     """
     errors: list[str] = []
+    if not isinstance(envelope, dict):
+        return ["envelope is not a JSON object"]
     if envelope.get("schema") != SCHEMA:
         errors.append(f"schema is {envelope.get('schema')!r}, expected {SCHEMA!r}")
 
@@ -153,7 +165,8 @@ def verify_structure(envelope: dict) -> list:
     errors.extend(verify_dag(events))
 
     claimed_tip = envelope.get("tip")
-    head = events[-1].get("entry_hash")
+    last = events[-1]
+    head = last.get("entry_hash") if isinstance(last, dict) else None
     if claimed_tip != head:
         errors.append("recorded tip does not match the chain head")
 
