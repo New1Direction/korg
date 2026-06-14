@@ -104,6 +104,64 @@ pub async fn apply_mutations(worktree: &Path, mutations: &[serde_json::Value]) -
     out
 }
 
+// Honest mapping constants (tunable; named so the policy is explicit).
+const RISK_PASS: f64 = 0.20;
+const RISK_FAIL: f64 = 0.75;
+const BLAST_PER_FILE: f64 = 0.05; // risk add per changed file, capped
+const BLAST_CAP: f64 = 0.20;
+const CONF_PASS: f64 = 0.85;
+const CONF_FAIL: f64 = 0.25;
+
+/// Probe real system CPU load as an honest compute-utilization proxy for the
+/// `gpu_util` wire field. Returns 0.0 only if the probe yields nothing.
+pub fn cpu_load_proxy() -> f64 {
+    use sysinfo::System;
+    let mut sys = System::new();
+    sys.refresh_cpu_usage();
+    let cpus = sys.cpus();
+    if cpus.is_empty() {
+        return 0.0;
+    }
+    let avg = cpus.iter().map(|c| c.cpu_usage() as f64).sum::<f64>() / cpus.len() as f64;
+    (avg / 100.0).clamp(0.0, 1.0)
+}
+
+/// Compose real measurements into the `per_agent` metrics JSON the blackboard
+/// reads (keys must match `metrics_to_trace_event`). Every value is derived from
+/// an observed fact — nothing invented.
+#[allow(clippy::too_many_arguments)]
+pub fn honest_metrics(
+    apply: &ApplyOutcome,
+    check: &CargoCheck,
+    numstat: &Numstat,
+    tokens: u32,
+    elapsed_secs: f64,
+    cpu_load: f64,
+    surface_text: &str,
+) -> serde_json::Value {
+    let passed = matches!(check, CargoCheck::Passed);
+    let unavailable = matches!(check, CargoCheck::Unavailable);
+    let blast = (numstat.files as f64 * BLAST_PER_FILE).min(BLAST_CAP);
+    let risk = if passed { RISK_PASS } else { RISK_FAIL } + if passed { blast } else { 0.0 };
+    let confidence = if passed { CONF_PASS } else { CONF_FAIL };
+    // verified delta: a real compile pass is +1; fail or unavailable is 0 (never faked).
+    let verified: i64 = if passed { 1 } else { 0 };
+    let velocity = if elapsed_secs > 0.0 { tokens as f64 / elapsed_secs } else { 0.0 };
+    serde_json::json!({
+        "phase": "complete",
+        "risk_score": risk.clamp(0.0, 1.0),
+        "epistemic_confidence": confidence,
+        "conflict_rate": apply.conflict_rate,
+        "token_velocity": velocity,
+        "gpu_util": cpu_load.clamp(0.0, 1.0),
+        "verified_count_delta": verified,
+        "authority_improvement": if verified > 0 { 0.1 } else { 0.0 },
+        "surface_text": surface_text,
+        "files_changed": numstat.files,
+        "tool_unavailable": unavailable,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +239,46 @@ mod tests {
         assert_eq!(std::fs::read_to_string(d.join("src/lib.rs")).unwrap(), "pub fn f() -> i64 { 2 }\n");
         assert!((outcome.conflict_rate - 0.5).abs() < 1e-6);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn honest_metrics_map_real_measurements() {
+        // A clean apply that compiles → low risk, high confidence, positive verified delta.
+        let m = honest_metrics(
+            &ApplyOutcome { applied: 1, rejected: 0, conflict_rate: 0.0 },
+            &CargoCheck::Passed,
+            &Numstat { files: 1, added: 1, removed: 1 },
+            120, 2.0, 0.30, "fixed add()",
+        );
+        assert!(m["risk_score"].as_f64().unwrap() < 0.4);
+        assert!(m["epistemic_confidence"].as_f64().unwrap() > 0.6);
+        assert_eq!(m["verified_count_delta"].as_i64().unwrap(), 1);
+        assert!((m["token_velocity"].as_f64().unwrap() - 60.0).abs() < 1e-6); // 120 tok / 2.0 s
+        assert_eq!(m["conflict_rate"].as_f64().unwrap(), 0.0);
+        assert_eq!(m["gpu_util"].as_f64().unwrap(), 0.30);
+    }
+
+    #[test]
+    fn honest_metrics_failed_compile_is_high_risk_zero_verified() {
+        let m = honest_metrics(
+            &ApplyOutcome { applied: 1, rejected: 0, conflict_rate: 0.0 },
+            &CargoCheck::Failed("E0308".into()),
+            &Numstat { files: 1, added: 5, removed: 0 },
+            80, 1.0, 0.1, "broke the build",
+        );
+        assert!(m["risk_score"].as_f64().unwrap() > 0.6);
+        assert_eq!(m["verified_count_delta"].as_i64().unwrap(), 0);
+    }
+
+    #[test]
+    fn honest_metrics_unavailable_cargo_marks_tool_unavailable() {
+        let m = honest_metrics(
+            &ApplyOutcome { applied: 1, rejected: 0, conflict_rate: 0.0 },
+            &CargoCheck::Unavailable,
+            &Numstat { files: 1, added: 1, removed: 0 },
+            10, 1.0, 0.0, "no cargo here",
+        );
+        assert_eq!(m["verified_count_delta"].as_i64().unwrap(), 0);
+        assert_eq!(m["tool_unavailable"].as_bool(), Some(true));
     }
 }
