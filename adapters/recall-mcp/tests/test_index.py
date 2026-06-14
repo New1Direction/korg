@@ -149,3 +149,26 @@ def test_index_preserves_triggered_by_and_success(tmp_path):
     idx.refresh()
     bash_event = [e for e in idx.events if e.tool_name == "Bash"][0]
     assert bash_event.triggered_by == 1
+
+
+def test_reads_canonical_journalevent_records(tmp_path):
+    from korg_recall_mcp.index import EventIndex
+    led = tmp_path / "sess.jsonl"
+    # one canonical korg-ledger@v1 JournalEvent line (nested event/metadata)
+    led.write_text(json.dumps({
+        "schema_version": "1.0", "seq_id": 7,
+        "metadata": {"triggered_by": 6, "actor_id": "korg:claude-hook"},
+        "event": {"event_type": "AgentToolCall", "source_agent": "agent:claude-code#s1",
+                  "tool_name": "Read", "args": {"file_path": "rate_limiter.py"},
+                  "result": {"output": "TODO: token bucket"}, "success": True, "duration_ms": 5},
+        "prev_hash": "0" * 64, "entry_hash": "abc",
+    }) + "\n")
+    idx = EventIndex.from_paths(led)
+    assert idx.refresh() == 1
+    e = idx.events[0]
+    assert e.seq == 7
+    assert e.source_agent == "agent:claude-code#s1"
+    assert e.tool_name == "Read"
+    assert e.args == {"file_path": "rate_limiter.py"}
+    assert e.triggered_by == 6
+    assert "rate_limiter.py" in e.embed_text  # searchable via the nested args
