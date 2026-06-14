@@ -153,3 +153,65 @@ def test_oversized_int_arg_is_recorded_not_crashing(tmp_path):
     bash = [e for e in events if e["event"]["tool_name"] == "Bash"]
     assert len(bash) == 1, "must not duplicate on re-firing"
     assert bash[0]["event"]["args"]["offset"] == str(2**53), "big int coerced to string + recorded"
+
+
+def test_nonfinite_float_arg_is_recorded_not_dropped(tmp_path):
+    """NaN/Infinity (json.loads accepts these literals) in a tool arg must be
+    coerced canon-safe and RECORDED, not silently dropped."""
+    from claude_code_adapter.canonical_emit import make_canonical_emit
+    led = tmp_path / "l.jsonl"
+    emit = make_canonical_emit(led, actor_id="a")
+    seq = emit({"source_agent": "a", "tool_name": "T",
+                "args": {"x": float("inf"), "y": float("nan")}, "result": {}})
+    assert seq is not None, "event must be recorded, not dropped"
+    events = [json.loads(l) for l in led.read_text().splitlines() if l.strip()]
+    assert events[0]["event"]["args"] == {"x": "inf", "y": "nan"}
+
+
+def test_stop_flushes_incomplete_tool_with_abort_marker(tmp_path):
+    """A session that ends mid-tool (Stop fires, no tool_result) must record the
+    in-flight tool with an abort marker, not silently omit it."""
+    korg_home = tmp_path / ".korg"
+    transcript = tmp_path / "sess-abort.jsonl"
+    recs = [
+        {"type": "user", "message": {"content": "go"}},
+        {"type": "assistant", "message": {"model": "c", "usage": {"input_tokens": 1, "output_tokens": 1},
+            "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "sleep 999"}}]}},
+    ]
+    _write_transcript(transcript, recs)
+    # PostToolUse holds the incomplete tool back; Stop must flush it
+    run_hook({"session_id": "sess-abort", "transcript_path": str(transcript), "hook_event_name": "PostToolUse"}, korg_home=korg_home)
+    run_hook({"session_id": "sess-abort", "transcript_path": str(transcript), "hook_event_name": "Stop"}, korg_home=korg_home)
+    events = _ledger(korg_home, "sess-abort")
+    assert verify_chain(events) == []
+    bash = [e for e in events if e["event"]["tool_name"] == "Bash"]
+    assert len(bash) == 1 and bash[0]["event"]["result"] == {"aborted": True}
+    assert bash[0]["event"]["success"] is False
+
+
+def test_concurrent_firings_do_not_duplicate_the_session(tmp_path):
+    """Two firings racing on the same session must not each emit the whole tail
+    (the per-session lock serializes the read-modify-write)."""
+    import threading
+    korg_home = tmp_path / ".korg"
+    transcript = tmp_path / "sess-race.jsonl"
+    _write_transcript(transcript, SESSION)
+    payload = {"session_id": "sess-race", "transcript_path": str(transcript), "hook_event_name": "PostToolUse"}
+
+    barrier = threading.Barrier(2)
+
+    def fire():
+        barrier.wait()
+        run_hook(payload, korg_home=korg_home)
+
+    threads = [threading.Thread(target=fire) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    events = _ledger(korg_home, "sess-race")
+    assert verify_chain(events) == []
+    # the 3-record SESSION yields a fixed set of events — never doubled
+    seqs = [e["seq_id"] for e in events]
+    assert len(seqs) == len(set(seqs)), f"duplicate seq_ids → session was duplicated: {seqs}"

@@ -88,6 +88,36 @@ export function canonicalize(value) {
   return enc.encode(canonicalString(value));
 }
 
+/**
+ * First out-of-domain number in a value, or null — the exact parallel of Rust
+ * `canon_domain_error` / Python `_reject_out_of_domain`: flags ONLY integers
+ * beyond ±(2^53-1). Finite floats are out of scope but NOT flagged (Rust/Python
+ * accept them); this is for envelope-field scanning where canonicalize() (which
+ * THROWS on any float) would wrongly reject a valid receipt.
+ */
+export function numberDomainError(value) {
+  if (typeof value === "number") {
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      return `integer out of safe range (|n| > 2^53-1): ${value}`;
+    }
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const x of value) {
+      const m = numberDomainError(x);
+      if (m) return m;
+    }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    for (const x of Object.values(value)) {
+      const m = numberDomainError(x);
+      if (m) return m;
+    }
+  }
+  return null;
+}
+
 function toHex(buf) {
   const b = new Uint8Array(buf);
   let s = "";
@@ -331,16 +361,19 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
     errors.push(`receipt is unsigned but signer ${pinPubkey} was required`);
   }
 
-  // Reject out-of-domain numbers in envelope fields (e.g. a big tip-adjacent
-  // value) so JS agrees with the Rust verifier, which scans the whole receipt.
+  // Reject out-of-domain numbers in envelope fields, matching Rust's
+  // canon_domain_error: flag only out-of-range integers, NEVER finite floats
+  // (using canonicalize() here would throw on a fractional cost_usd/generated_at
+  // and wrongly reject a receipt that Rust/Python accept).
   let domainOk = true;
-  try {
-    for (const [k, val] of Object.entries(receipt && typeof receipt === "object" ? receipt : {})) {
-      if (k !== "events") canonicalize(val);
+  for (const [k, val] of Object.entries(receipt && typeof receipt === "object" ? receipt : {})) {
+    if (k === "events") continue;
+    const m = numberDomainError(val);
+    if (m) {
+      domainOk = false;
+      errors.push(`receipt envelope has an out-of-domain number: ${m}`);
+      break;
     }
-  } catch (err) {
-    domainOk = false;
-    errors.push(`receipt envelope has an out-of-domain number: ${err.message}`);
   }
 
   const valid = eventsOk && chainOk && dagOk && tipOk && domainOk && signatureOk !== false;
