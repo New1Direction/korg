@@ -2549,7 +2549,7 @@ impl LeaderOrchestrator {
             "work_packages": [
                 {"id": "pkg-captain", "personas": ["captain"], "description": format!("Plan: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
                 {"id": "pkg-harper",  "personas": ["harper"],  "description": format!("Research: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
-                {"id": "pkg-benjamin","personas": ["benjamin"],"description": format!("Implement (simulate-crash): {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
+                {"id": "pkg-benjamin","personas": ["benjamin"],"description": format!("Implement: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())},
                 {"id": "pkg-lucas",   "personas": ["lucas"],   "description": format!("Synthesize: {}{}", self.root_task, heavy_ctx.as_ref().map(|c| format!("\n\nContext:\n{}", c)).unwrap_or_default())}
             ]
         })
@@ -2571,10 +2571,24 @@ impl LeaderOrchestrator {
         let start_time = std::time::Instant::now();
 
         // Build the DAG + packages_map via workers module
-        let (mut dag, levels, packages_map) =
+        let (mut dag, levels, mut packages_map) =
             crate::workers::build_campaign_dag(&self.root_task, plan, self.tui_tx.as_ref()).await?;
 
         tracing::info!(levels = levels.len(), "campaign_dag_compiled");
+
+        // Reverse dependency map: node_id -> its direct dependencies. Read from
+        // the DAG nodes so downstream payloads can carry upstream output.
+        let node_dependencies: std::collections::HashMap<String, Vec<String>> = dag
+            .nodes
+            .iter()
+            .map(|(id, node)| (id.clone(), node.dependencies.clone()))
+            .collect();
+
+        // Accumulator of completed upstream outputs, keyed by routing/node id.
+        // Used to rewrite each downstream package's description after its
+        // dependencies finish. (persona_name, output_json) per node.
+        let mut completed_outputs: std::collections::HashMap<String, (String, serde_json::Value)> =
+            std::collections::HashMap::new();
 
         let mut results = vec![];
 
@@ -2626,6 +2640,30 @@ impl LeaderOrchestrator {
                     node.status = NodeStatus::Failed;
                 }
             }
+
+            // --- Real upstream→downstream data-flow ---
+            // Record this level's outputs, then rewrite every still-pending
+            // downstream node whose dependencies include a just-completed node
+            // so its payload carries the real upstream output (Captain+Harper →
+            // Benjamin; Benjamin → Lucas). Deterministic + size-capped via
+            // compose_downstream_payload.
+            for res in &level_result.completed {
+                completed_outputs.insert(
+                    res.routing_id.clone(),
+                    (res.persona.name().to_string(), res.output.clone()),
+                );
+            }
+            let just_completed: std::collections::HashSet<String> = level_result
+                .completed
+                .iter()
+                .map(|r| r.routing_id.clone())
+                .collect();
+            crate::workers::apply_upstream_to_pending(
+                &mut packages_map,
+                &node_dependencies,
+                &completed_outputs,
+                &just_completed,
+            );
 
             tracing::info!(
                 level = idx + 1,
@@ -3191,9 +3229,13 @@ impl LeaderOrchestrator {
         .to_string();
         let worktree_path = std::path::Path::new(&worktree_dir);
 
+        // Honest no-op: if no worktree exists there is nothing to heal. The
+        // worker child deletes its worktree on success (harness cleanup), so a
+        // clean run legitimately leaves nothing here — return the worker's
+        // result unchanged. We do NOT fabricate a heal or a count.
         if !worktree_path.exists() {
             println!(
-                "[Self-Healing] Worktree path {} does not exist. Skipping compilation check.",
+                "[Self-Healing] Worktree path {} does not exist — nothing to heal (clean run). Returning the worker's result unchanged.",
                 worktree_dir
             );
             return Ok(current_result);
@@ -3204,6 +3246,11 @@ impl LeaderOrchestrator {
             generator_result.persona.name()
         );
         println!("Checking compilation in worktree: {}", worktree_dir);
+
+        // Tracks whether a real heal mutated the worktree this loop. If so, we
+        // re-measure files_changed before returning so the leader's
+        // real_files_changed sum (leader.rs ~1484) reflects the heal honestly.
+        let mut healed_this_loop = false;
 
         for iteration in 1..=3 {
             println!(
@@ -3256,6 +3303,7 @@ impl LeaderOrchestrator {
 
                         if let Ok(true) = heal_res {
                             self.last_round_healed = true;
+                            healed_this_loop = true;
                             korg_llm::HEALS_RESOLVED
                                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             println!("\x1b[38;2;0;255;128m🔧 [Self-Healing] Thumper auto-healed the compilation failure in sub-seconds!\x1b[0m");
@@ -3322,6 +3370,9 @@ impl LeaderOrchestrator {
                                     )
                                     .await;
                                 }
+                                // A speculative repair really mutated the worktree;
+                                // the post-loop re-measure will count it truthfully.
+                                healed_this_loop = true;
                             }
                         }
 
@@ -3336,6 +3387,21 @@ impl LeaderOrchestrator {
                     break;
                 }
             }
+        }
+
+        // --- Re-plumb files_changed after a real heal (SP2 Slice 4) ---
+        // If a heal (or speculative repair) actually mutated the worktree, the
+        // worker's reported count no longer reflects reality. Re-run numstat on
+        // the heal target so the leader's real_files_changed sum is truthful.
+        // We only re-measure when a heal happened — a no-op pass leaves the
+        // worker's count untouched (no fabrication).
+        if healed_this_loop {
+            let n = crate::observation::numstat(worktree_path).await;
+            println!(
+                "[Self-Healing] Re-measured worktree after heal: {} file(s) changed (was {}). Plumbing truthful count into the ledger.",
+                n.files, current_result.files_changed
+            );
+            current_result.files_changed = n.files;
         }
 
         Ok(current_result)
@@ -3419,6 +3485,30 @@ mod tests {
         assert!(
             !leader.inject_stress,
             "the default campaign path must inject no synthetic signal"
+        );
+    }
+
+    #[tokio::test]
+    async fn default_decomposition_does_not_simulate_crash() {
+        // De-theater: the default Benjamin package must do real work, not bake
+        // the fake-crash directive. (The simulate-crash handler stays in the
+        // harness for explicit fault-injection tests.)
+        let leader = LeaderOrchestrator::new("Fix the add bug".to_string(), None);
+        let plan = leader.decompose_into_persona_packages();
+        let benjamin = plan["work_packages"]
+            .as_array()
+            .expect("work_packages array")
+            .iter()
+            .find(|p| p["id"] == "pkg-benjamin")
+            .expect("benjamin package present");
+        let desc = benjamin["description"].as_str().unwrap_or("");
+        assert!(
+            !desc.contains("simulate-crash"),
+            "benjamin's default package must not contain 'simulate-crash', got: {desc}"
+        );
+        assert!(
+            desc.starts_with("Implement:"),
+            "benjamin's default package should be a real implement task, got: {desc}"
         );
     }
 
@@ -3786,37 +3876,119 @@ mod tests {
         assert_eq!(arena_outcome["confidence"].as_f64().unwrap(), 0.88);
     }
 
+    /// Slice 4: the self-healing loop must exercise a REAL (non-no-op) heal and
+    /// re-measure files_changed so the leader's ledger sum is truthful after a
+    /// heal. The worktree is a git repo whose committed `src/main.rs` has a
+    /// missing-semicolon error that fails `cargo check`; the loop heals it
+    /// (inserts `;`), and the re-measured numstat count must flow into the
+    /// returned PersonaResult.
     #[tokio::test]
     async fn test_self_healing_loop_success() {
+        // Unique routing id so this test's worktree path can't collide with
+        // other runs/tests sharing the cache dir.
+        let routing_id = format!("pkg-benjamin-heal-{}", uuid::Uuid::now_v7());
         let mut leader = LeaderOrchestrator::new("Test self-healing success".to_string(), None);
         let mut benjamin_res =
-            crate::personas::PersonaResult::new(Persona::Benjamin, "pkg-benjamin".to_string());
-        benjamin_res.mutations = vec![json!({
-            "target": "src/main.rs",
-            "action": "modify",
-            "content": "// speculative self-healing repair dummy mutation"
-        })];
+            crate::personas::PersonaResult::new(Persona::Benjamin, routing_id.clone());
+        // The worker reported 0 files (or the count was lost); after a real heal
+        // the loop must re-measure a truthful, non-zero count.
+        benjamin_res.files_changed = 0;
 
-        // Create the worktree path manually so the test passes
-        let worktree_dir =
-            korg_core::paths::worktree_dir("benjamin", "pkg-benjamin", "pkg-benjamin")
-                .display()
-                .to_string();
-        let _ = std::fs::create_dir_all(&worktree_dir);
+        // The self-healing loop targets worktree_dir(persona, routing, routing).
+        let worktree_dir = korg_core::paths::worktree_dir("benjamin", &routing_id, &routing_id)
+            .display()
+            .to_string();
+        let _ = std::fs::remove_dir_all(&worktree_dir);
+        std::fs::create_dir_all(format!("{}/src", worktree_dir)).unwrap();
 
-        // Run cargo init to make it a valid compiling crate
-        let _ = std::process::Command::new("cargo")
-            .arg("init")
-            .arg("--bin")
-            .arg("--name")
-            .arg("dummy")
+        // A compiling-shaped crate, but with a deliberate missing semicolon so
+        // `cargo check` fails with an actionable error the healer can fix.
+        std::fs::write(
+            format!("{}/Cargo.toml", worktree_dir),
+            "[package]\nname = \"dummy\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        // Mirror a real repo: build artifacts are gitignored, so the re-measured
+        // count reflects only source changes (not target/ from cargo check).
+        std::fs::write(
+            format!("{}/.gitignore", worktree_dir),
+            "/target\nCargo.lock\n",
+        )
+        .unwrap();
+        std::fs::write(
+            format!("{}/src/main.rs", worktree_dir),
+            "fn main() {\n    let x = 42\n    println!(\"{}\", x);\n}\n",
+        )
+        .unwrap();
+
+        // Commit the broken baseline so numstat measures the heal's real diff.
+        for args in [vec!["init", "-q"], vec!["add", "-A"]] {
+            let _ = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(&worktree_dir)
+                .output();
+        }
+        let _ = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-q",
+                "-m",
+                "broken baseline",
+            ])
             .current_dir(&worktree_dir)
-            .status();
+            .output();
 
         let healed = leader.run_self_healing_loop(&benjamin_res).await.unwrap();
         assert_eq!(healed.persona, Persona::Benjamin);
 
+        // The heal actually fixed the file (inserted the missing semicolon).
+        let repaired = std::fs::read_to_string(format!("{}/src/main.rs", worktree_dir)).unwrap();
+        assert!(
+            repaired.contains("let x = 42;"),
+            "self-healing should have inserted the missing semicolon, got:\n{repaired}"
+        );
+
+        // The re-measured count flows into the result so the leader's
+        // real_files_changed sum is truthful: exactly one source file
+        // (src/main.rs) was healed — build artifacts are gitignored, not counted.
+        assert_eq!(
+            healed.files_changed, 1,
+            "after a real heal, files_changed must be re-measured to the heal's real source diff (1), got {}",
+            healed.files_changed
+        );
+
         let _ = std::fs::remove_dir_all(&worktree_dir);
+    }
+
+    /// Slice 4 honesty guard: when no worktree exists (the clean-run case — the
+    /// worker already cleaned up its worktree), the loop is a clean no-op and
+    /// must return the worker's result UNCHANGED. It must never fabricate a heal
+    /// or a re-measured count.
+    #[tokio::test]
+    async fn test_self_healing_loop_no_op_preserves_count_when_no_worktree() {
+        let routing_id = format!("pkg-benjamin-noop-{}", uuid::Uuid::now_v7());
+        let mut leader = LeaderOrchestrator::new("Test self-healing no-op".to_string(), None);
+        let mut benjamin_res =
+            crate::personas::PersonaResult::new(Persona::Benjamin, routing_id.clone());
+        // The worker honestly reported 5 changed files; with nothing to heal,
+        // the loop must leave that count intact (no fabrication, no clobber).
+        benjamin_res.files_changed = 5;
+
+        // Ensure the target worktree path does not exist.
+        let worktree_dir = korg_core::paths::worktree_dir("benjamin", &routing_id, &routing_id)
+            .display()
+            .to_string();
+        let _ = std::fs::remove_dir_all(&worktree_dir);
+
+        let result = leader.run_self_healing_loop(&benjamin_res).await.unwrap();
+        assert_eq!(
+            result.files_changed, 5,
+            "no-op heal must preserve the worker's reported count, not re-measure or zero it"
+        );
     }
 
     #[tokio::test]
