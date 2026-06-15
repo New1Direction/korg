@@ -1,0 +1,127 @@
+{
+  "schema": "goldseal@v1",
+  "spec": "korg-ledger@v1",
+  "claim": "Added a /healthz endpoint to src/app.py with a passing regression test",
+  "issued_at": 1760000000,
+  "issuer": {
+    "agent": "agent:korgex@0.14.1"
+  },
+  "event_count": 5,
+  "tip": "bd8389e3d91163a4d458376b94ca40a09746cbfb6e4183ab2a84fd75bdf6cb05",
+  "summary": {
+    "agents": [
+      "agent:korgex@0.14.1"
+    ],
+    "by_tool": {
+      "Bash": 1,
+      "Edit": 1,
+      "Read": 1,
+      "Write": 1,
+      "user_prompt": 1
+    },
+    "files": [
+      "src/app.py",
+      "tests/test_health.py"
+    ],
+    "seq_first": 1,
+    "seq_last": 5
+  },
+  "events": [
+    {
+      "schema_version": "1.0",
+      "seq_id": 1,
+      "source_agent": "agent:korgex@0.14.1",
+      "tool_name": "user_prompt",
+      "args": {
+        "prompt": "Add a /healthz endpoint and a regression test"
+      },
+      "result": {},
+      "payload_refs": [],
+      "success": true,
+      "duration_ms": 0,
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "entry_hash": "efc2d805caebf15afbdd6c560f93a08317217bbc0ac4ce5e17fa11705b8a49a7"
+    },
+    {
+      "schema_version": "1.0",
+      "seq_id": 2,
+      "source_agent": "agent:korgex@0.14.1",
+      "tool_name": "Read",
+      "args": {
+        "file_path": "src/app.py"
+      },
+      "result": {},
+      "payload_refs": [],
+      "success": true,
+      "duration_ms": 0,
+      "prev_hash": "efc2d805caebf15afbdd6c560f93a08317217bbc0ac4ce5e17fa11705b8a49a7",
+      "triggered_by": 1,
+      "entry_hash": "b2d82bd115d91fef19bb6e337a417ad92902a7038fb92df6d3e7018706ca7f83"
+    },
+    {
+      "schema_version": "1.0",
+      "seq_id": 3,
+      "source_agent": "agent:korgex@0.14.1",
+      "tool_name": "Edit",
+      "args": {
+        "file_path": "src/app.py"
+      },
+      "result": {},
+      "payload_refs": [],
+      "success": true,
+      "duration_ms": 0,
+      "prev_hash": "b2d82bd115d91fef19bb6e337a417ad92902a7038fb92df6d3e7018706ca7f83",
+      "triggered_by": 2,
+      "entry_hash": "38a3094657a870a242a15dea05a383f9091d4e96445da924bada1a392a21d5cf"
+    },
+    {
+      "schema_version": "1.0",
+      "seq_id": 4,
+      "source_agent": "agent:korgex@0.14.1",
+      "tool_name": "Write",
+      "args": {
+        "file_path": "tests/test_health.py"
+      },
+      "result": {},
+      "payload_refs": [],
+      "success": true,
+      "duration_ms": 0,
+      "prev_hash": "38a3094657a870a242a15dea05a383f9091d4e96445da924bada1a392a21d5cf",
+      "triggered_by": 3,
+      "entry_hash": "4b18ae8a47abeac65119ed11c6284166791c155f6bf14b70f7438248119baed7"
+    },
+    {
+      "schema_version": "1.0",
+      "seq_id": 5,
+      "source_agent": "agent:korgex@0.14.1",
+      "tool_name": "Bash",
+      "args": {
+        "command": "pytest -q tests/test_health.py"
+      },
+      "result": {},
+      "payload_refs": [],
+      "success": true,
+      "duration_ms": 0,
+      "prev_hash": "4b18ae8a47abeac65119ed11c6284166791c155f6bf14b70f7438248119baed7",
+      "triggered_by": 4,
+      "entry_hash": "bd8389e3d91163a4d458376b94ca40a09746cbfb6e4183ab2a84fd75bdf6cb05"
+    }
+  ],
+  "anchors": [
+    {
+      "seq_id": 5,
+      "entry_hash": "bd8389e3d91163a4d458376b94ca40a09746cbfb6e4183ab2a84fd75bdf6cb05",
+      "anchor_kind": "git-tip",
+      "anchor_proof": {
+        "repo": "https://github.com/New1Direction/korg",
+        "commit": "0000000000000000000000000000000000000000"
+      },
+      "anchored_at": "2026-06-14T00:00:00Z"
+    }
+  ],
+  "seal": {
+    "alg": "ed25519",
+    "pubkey": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+    "sig": "a30927527dd88461958288d42d775b06833c488f023f0a054bb7895415f75994b8ac4521c2e3923f86a2f760eda1c58a711e7f3052a3c28cca3a99ac7c9f4307"
+  }
+}

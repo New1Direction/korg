@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, "feat/**"]
   pull_request:
-    branches: [main]
+    # Run on every PR regardless of base, so stacked PRs (e.g. goldseal → phase2)
+    # get the full cargo + pytest + cross-language conformance gate too.
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,6 +22,16 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      # Python + Node so the differential fuzzer can run the three verifiers.
+      # setup-python gives a pip-installable interpreter (the system one on
+      # ubuntu-24.04 is externally-managed / PEP 668).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Cache cargo registry & build artifacts
         uses: actions/cache@v4
         with:
@@ -32,11 +43,23 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # --workspace so every member compiles AND the korg-verify binary is built
+      # (the root is also a package, so bare `cargo build` would skip members).
       - name: Build (default features)
-        run: cargo build --verbose
+        run: cargo build --workspace --verbose
 
-      - name: Run tests
-        run: cargo test --verbose -- --test-threads=4
+      # --workspace tests every member (root korg package + korg-verify/-ledger
+      # goldseal+fuzz suites + korg-registry journal/rewind, etc.). The root being
+      # both a [workspace] and a [package] means a bare `cargo test` would only run
+      # the root package — verified `cargo test --workspace` is green.
+      - name: Run tests (workspace)
+        run: cargo test --workspace --verbose -- --test-threads=4
+
+      - name: Differential fuzz — Rust vs Python vs JS verifiers agree
+        run: |
+          python3 -m pip install --quiet cryptography
+          PYTHONPATH=adapters/korg-ledger-py/src \
+            python3 spec/korg-ledger-v1/tools/diff_fuzz.py
 
       - name: Clippy lint
         run: cargo clippy -- -W clippy::correctness -D clippy::correctness
@@ -90,15 +113,19 @@ jobs:
       - name: JS spec oracle reproduces the frozen vectors
         run: node spec/korg-ledger-v1/js/conformance.mjs
 
-      - name: Install pytest
-        run: python3 -m pip install --quiet pytest
+      - name: Install test deps
+        # pytest + the optional-extra deps so the FULL suite runs in CI rather
+        # than skipping: hypothesis (property tests) and cryptography (Ed25519
+        # signing / goldseal mint+verify / korg-seal).
+        run: python3 -m pip install --quiet pytest hypothesis cryptography
 
       - name: Producer + capture + setup + reader test suites
         run: |
-          PYTHONPATH="adapters/korg-ledger-py/src:adapters/claude-code/src:adapters/korg-setup/src:adapters/recall-mcp/src" \
+          PYTHONPATH="adapters/korg-ledger-py/src:adapters/claude-code/src:adapters/korg-setup/src:adapters/recall-mcp/src:adapters/korg-seal/src" \
             python3 -m pytest -q \
               adapters/korg-ledger-py/tests \
               adapters/claude-code/tests \
               adapters/korg-setup/tests \
               adapters/recall-mcp/tests/test_index.py \
-              adapters/recall-mcp/tests/test_text.py
+              adapters/recall-mcp/tests/test_text.py \
+              adapters/korg-seal/tests

@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>korg Gold Seal — verify what an AI agent actually did, in your browser</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23131a1f'/%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%23f0c46a' stroke-width='1.5'/%3E%3Cpath d='M5.5 8l1.8 1.8L10.7 6' fill='none' stroke='%23f0c46a' stroke-width='1.6'/%3E%3C/svg%3E" />
+<meta name="description" content="A korg Gold Seal is a portable, cryptographically-signed certificate of an AI-agent session. Verify it — hash chain, re-derived summary, Ed25519 seal — entirely in your browser. Zero trust, no install, sends nothing." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:        oklch(15% 0.012 250);
+    --bg-2:      oklch(18% 0.014 250);
+    --surface:   oklch(21% 0.016 250);
+    --line:      oklch(30% 0.02 250);
+    --ink:       oklch(90% 0.012 250);
+    --muted:     oklch(64% 0.018 250);
+    --faint:     oklch(48% 0.018 250);
+    --signal:    oklch(86% 0.17 162);   /* phosphor mint — VERIFIED */
+    --signal-dim: oklch(52% 0.10 162);
+    --gold:      oklch(83% 0.13 85);     /* the seal */
+    --gold-dim:  oklch(60% 0.10 85);
+    --amber:     oklch(82% 0.14 78);
+    --alarm:     oklch(66% 0.22 26);     /* BROKEN */
+    --alarm-dim: oklch(40% 0.13 26);
+
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --serif: "Fraunces", Georgia, serif;
+    --text-data: clamp(0.78rem, 0.72rem + 0.3vw, 0.92rem);
+    --text-hero: clamp(2.4rem, 1.1rem + 5.2vw, 5.6rem);
+    --space: clamp(1.5rem, 1rem + 3vw, 4rem);
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--mono); font-size: var(--text-data); line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      repeating-linear-gradient(0deg, transparent 0 3px, oklch(0% 0 0 / 0.10) 3px 4px),
+      radial-gradient(120% 80% at 50% -10%, oklch(24% 0.03 200 / 0.5), transparent 60%);
+    background-attachment: fixed;
+  }
+  a { color: var(--signal); text-underline-offset: 3px; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 3rem); }
+
+  header {
+    border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5;
+    background: oklch(15% 0.012 250 / 0.86); backdrop-filter: blur(8px);
+  }
+  .bar { display: flex; align-items: baseline; gap: 1rem; padding: 0.9rem 0; flex-wrap: wrap; }
+  .mark { font-family: var(--serif); font-weight: 900; font-size: 1.5rem; letter-spacing: -0.02em; }
+  .mark b { color: var(--gold); font-style: italic; font-weight: 600; }
+  .sub { color: var(--faint); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .nav { margin-left: auto; display: flex; gap: 1rem; align-items: center; }
+  .nav a { color: var(--muted); font-size: 0.74rem; text-decoration: none; }
+  .nav a:hover { color: var(--ink); }
+  .privacy { color: var(--signal-dim); font-size: 0.72rem; display: inline-flex; gap: 0.5rem; align-items: center; }
+  .privacy::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 8px var(--signal); animation: pulse 2.4s var(--ease) infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .hero { padding: var(--space) 0 1.5rem; }
+  h1 { font-family: var(--serif); font-weight: 900; font-size: var(--text-hero); line-height: 0.92; letter-spacing: -0.03em; margin: 0 0 1rem; max-width: 18ch; }
+  h1 em { font-style: italic; font-weight: 400; color: var(--gold); }
+  .lede { color: var(--muted); max-width: 60ch; font-size: clamp(0.86rem, 0.8rem + 0.4vw, 1rem); }
+  .lede strong { color: var(--ink); font-weight: 500; }
+
+  .intake { margin-top: 2.2rem; display: grid; gap: 1rem; }
+  .drop { border: 1.5px dashed var(--line); border-radius: 4px; background: var(--bg-2); padding: 1.6rem; transition: border-color .2s var(--ease), background .2s var(--ease); display: grid; gap: 0.9rem; }
+  .drop.hot { border-color: var(--gold); background: oklch(22% 0.04 85 / 0.4); }
+  .drop-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .drop-head span { color: var(--muted); }
+  textarea { width: 100%; min-height: 120px; resize: vertical; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 0.8rem; font-family: var(--mono); font-size: 0.8rem; line-height: 1.5; }
+  textarea:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+  .opt-row { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center; }
+  label.field { display: grid; gap: 0.3rem; font-size: 0.72rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; flex: 1 1 280px; }
+  input[type=text] { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 0.55rem 0.7rem; font-family: var(--mono); font-size: 0.8rem; }
+  .actions { display: flex; gap: 0.7rem; flex-wrap: wrap; align-items: center; }
+  button { font-family: var(--mono); cursor: pointer; border-radius: 3px; font-size: 0.8rem; transition: transform .12s var(--ease), background .15s var(--ease), border-color .15s var(--ease); }
+  button:active { transform: translateY(1px); }
+  .btn-go { background: var(--gold); color: oklch(20% 0.05 85); border: none; font-weight: 700; padding: 0.7rem 1.4rem; letter-spacing: 0.03em; }
+  .btn-go:hover { background: oklch(88% 0.14 85); box-shadow: 0 0 24px oklch(83% 0.13 85 / 0.4); }
+  .examples { margin-left: auto; display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+  .examples span { color: var(--faint); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .chip { background: transparent; border: 1px solid var(--line); color: var(--muted); padding: 0.4rem 0.7rem; }
+  .chip:hover { border-color: var(--ink); color: var(--ink); }
+  .err-note { color: var(--alarm); font-size: 0.78rem; margin-top: 0.2rem; }
+
+  /* ── result: the seal + the attestation ───────────────────────────── */
+  .results { padding: 1.5rem 0 var(--space); display: none; }
+  .results.show { display: block; }
+  .cert {
+    display: grid; grid-template-columns: minmax(200px, 280px) 1fr; gap: clamp(1.2rem, 3vw, 2.4rem);
+    border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+    padding: clamp(1.4rem, 3vw, 2.4rem); align-items: start;
+    box-shadow: 0 1px 0 oklch(100% 0 0 / 0.03) inset, 0 20px 60px -30px oklch(0% 0 0 / 0.8);
+    animation: settle .5s var(--ease) both;
+  }
+  @keyframes settle { from { opacity: 0; transform: translateY(8px); } }
+  @media (max-width: 720px) { .cert { grid-template-columns: 1fr; justify-items: center; text-align: center; } .attest { text-align: left; } }
+
+  /* the medallion */
+  .medallion { position: relative; width: 100%; max-width: 240px; aspect-ratio: 1; display: grid; place-items: center; }
+  .medallion svg { width: 100%; height: 100%; overflow: visible; }
+  .ring { fill: none; stroke-width: 3; }
+  .ring-outer { stroke: var(--gold-dim); }
+  .ring-inner { stroke: var(--gold); stroke-dasharray: 1; stroke-dashoffset: 1; }
+  .seal-tick { fill: none; stroke: var(--gold); stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  .seal-crack { fill: none; stroke: var(--alarm); stroke-width: 5; stroke-linecap: round; opacity: 0; }
+  .medallion .label { position: absolute; bottom: -0.2rem; left: 50%; transform: translateX(-50%); font-family: var(--serif); font-weight: 900; font-size: 1.1rem; letter-spacing: 0.02em; white-space: nowrap; }
+
+  .cert.valid .ring-outer { stroke: var(--gold-dim); }
+  .cert.valid .label { color: var(--gold); }
+  .cert.valid .medallion::after { content: ""; position: absolute; inset: 8%; border-radius: 50%; box-shadow: 0 0 50px oklch(83% 0.13 85 / 0.45); animation: glow 1.2s var(--ease) 0.5s both; }
+  @keyframes glow { from { opacity: 0; } }
+
+  .cert.broken { border-color: var(--alarm-dim); }
+  .cert.broken .ring-outer, .cert.broken .ring-inner { stroke: var(--alarm-dim); }
+  .cert.broken .seal-tick { stroke: var(--alarm-dim); }
+  .cert.broken .seal-crack { opacity: 1; }
+  .cert.broken .label { color: var(--alarm); }
+  .cert.broken .medallion { animation: shake .4s var(--ease) both; }
+  @keyframes shake { 10%,90% { transform: translateX(-1px); } 30%,70% { transform: translateX(3px); } 50% { transform: translateX(-3px); } }
+
+  .stamp-anim .ring-inner { animation: draw .7s var(--ease) .15s forwards; }
+  .stamp-anim .seal-tick { animation: draw .5s var(--ease) .7s forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  /* attestation */
+  .attest { display: grid; gap: 0.9rem; }
+  .attest .kicker { color: var(--faint); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.14em; }
+  .attest .claim { font-family: var(--serif); font-weight: 600; font-size: clamp(1.15rem, 0.9rem + 1.2vw, 1.7rem); line-height: 1.2; color: var(--ink); }
+  .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 1rem; font-size: 0.82rem; align-items: baseline; }
+  .meta-grid dt { color: var(--faint); text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.08em; padding-top: 0.15rem; }
+  .meta-grid dd { margin: 0; color: var(--ink); word-break: break-word; }
+  .tools { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .toolpill { display: inline-flex; align-items: baseline; gap: 0.35rem; border: 1px solid var(--line); border-radius: 999px; padding: 0.18rem 0.6rem; font-size: 0.74rem; color: var(--muted); }
+  .toolpill b { color: var(--ink); }
+  .toolpill i { color: var(--gold); font-style: normal; font-weight: 700; }
+  .files { display: grid; gap: 0.2rem; }
+  .files code { color: var(--signal); }
+
+  /* the "summary cannot lie" proof line */
+  .rederive { margin-top: 0.4rem; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.7rem; border-radius: 4px; border: 1px solid var(--line); background: var(--bg-2); }
+  .rederive.match { color: var(--signal); border-color: var(--signal-dim); }
+  .rederive.mismatch { color: var(--alarm); border-color: var(--alarm-dim); }
+
+  /* check row */
+  .checks { display: flex; flex-wrap: wrap; gap: 0.5rem 1.3rem; margin-top: 0.4rem; }
+  .check { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.8rem; color: var(--muted); }
+  .check b { color: var(--ink); font-weight: 500; }
+  .glyph { width: 1.05em; height: 1.05em; flex: none; }
+  .g-ok { color: var(--signal); } .g-bad { color: var(--alarm); } .g-na { color: var(--faint); }
+
+  /* issuer / errors / badge */
+  .row2 { margin-top: 1.6rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; }
+  @media (max-width: 720px) { .row2 { grid-template-columns: 1fr; } }
+  .panel { border: 1px solid var(--line); border-radius: 4px; padding: 1.1rem 1.3rem; background: var(--bg-2); }
+  .panel h3 { font-family: var(--serif); font-weight: 600; font-size: 1.02rem; margin: 0 0 0.6rem; }
+  .panel.yes h3 { color: var(--signal); } .panel.no h3 { color: var(--amber); }
+  .panel ul { margin: 0; padding-left: 1.1rem; color: var(--muted); display: grid; gap: 0.35rem; }
+  .panel li { font-size: 0.8rem; } .panel li b { color: var(--ink); font-weight: 500; }
+  .errlist { color: var(--alarm); font-size: 0.8rem; display: grid; gap: 0.3rem; margin-top: 0.4rem; }
+
+  .badge-wrap { margin-top: 1.6rem; border: 1px solid var(--line); border-radius: 4px; background: var(--bg-2); padding: 1.1rem 1.3rem; }
+  .badge-wrap h3 { font-family: var(--serif); font-weight: 600; font-size: 1.02rem; margin: 0 0 0.7rem; }
+  .badge-live { display: inline-flex; align-items: center; gap: 0; border-radius: 4px; overflow: hidden; font-size: 0.74rem; border: 1px solid var(--gold-dim); }
+  .badge-live .bl { background: oklch(24% 0.01 250); color: var(--muted); padding: 0.3rem 0.6rem; }
+  .badge-live .br { background: var(--gold); color: oklch(20% 0.05 85); font-weight: 700; padding: 0.3rem 0.6rem; }
+  .snippet { position: relative; margin-top: 0.8rem; }
+  .snippet textarea { min-height: 64px; font-size: 0.72rem; color: var(--muted); }
+  .copy { position: absolute; top: 0.5rem; right: 0.5rem; background: var(--surface); border: 1px solid var(--line); color: var(--muted); padding: 0.3rem 0.6rem; font-size: 0.7rem; }
+  .copy:hover { color: var(--ink); border-color: var(--ink); }
+
+  footer { border-top: 1px solid var(--line); margin-top: var(--space); padding: 1.4rem 0 3rem; color: var(--faint); font-size: 0.74rem; display: flex; gap: 1.2rem; flex-wrap: wrap; justify-content: space-between; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after { animation: none !important; transition: none !important; }
+    .ring-inner, .seal-tick { stroke-dashoffset: 0 !important; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <span class="mark">korg <b>Gold&nbsp;Seal</b></span>
+    <span class="sub">goldseal@v1</span>
+    <span class="nav">
+      <a href="./index.html">ledger verifier →</a>
+      <span class="privacy">runs in your browser · sends nothing</span>
+    </span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>Proof of what an agent <em>actually</em> did.</h1>
+    <p class="lede">A <strong>Gold Seal</strong> is a portable, signed certificate of an AI-agent
+      session. Drop one below and this page re-checks the hash&#8209;chain, <strong>re-derives the
+      summary from the events</strong> so it can't lie, and verifies the issuer's Ed25519 seal —
+      entirely on your machine. <strong>Zero trust in whoever produced it.</strong></p>
+
+    <div class="intake">
+      <div class="drop" id="drop">
+        <div class="drop-head">
+          <strong>Drop a <code>goldseal.json</code></strong>
+          <span>or paste the certificate below (a single JSON object)</span>
+        </div>
+        <textarea id="input" spellcheck="false" aria-label="Gold Seal certificate" placeholder='{"schema":"goldseal@v1","spec":"korg-ledger@v1","claim":"…","tip":"…","summary":{…},"events":[…],"seal":{"alg":"ed25519","pubkey":"…","sig":"…"}}'></textarea>
+        <div class="opt-row">
+          <label class="field">pin the issuer public key (hex) — optional; reject any other signer
+            <input type="text" id="pubkey" spellcheck="false" placeholder="e.g. 197f6b23e16c8532…" />
+          </label>
+        </div>
+        <div class="actions">
+          <button class="btn-go" id="verify">◆ Verify the seal</button>
+          <div class="examples">
+            <span>try:</span>
+            <button class="chip" data-ex="valid">a real seal ✓</button>
+            <button class="chip" data-ex="summary">forged summary ✗</button>
+            <button class="chip" data-ex="claim">moved claim ✗</button>
+            <button class="chip" data-ex="anchor">stripped anchor ✗</button>
+          </div>
+        </div>
+        <p class="err-note" id="err" hidden></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="results" id="results" aria-live="polite">
+    <div class="cert" id="cert">
+      <div class="medallion" id="medallion">
+        <svg viewBox="0 0 100 100" aria-hidden="true">
+          <circle class="ring ring-outer" cx="50" cy="50" r="44" />
+          <circle class="ring ring-inner" cx="50" cy="50" r="36" pathLength="1" />
+          <path class="seal-tick" d="M34 51 L46 63 L68 38" pathLength="1" />
+          <path class="seal-crack" d="M50 8 L44 40 L58 54 L48 92" />
+        </svg>
+        <span class="label" id="seal-label">SEALED</span>
+      </div>
+
+      <div class="attest">
+        <span class="kicker" id="kicker">Gold Seal · goldseal@v1</span>
+        <div class="claim" id="claim">—</div>
+        <div class="rederive" id="rederive"></div>
+        <dl class="meta-grid" id="metagrid"></dl>
+        <div class="checks" id="checks"></div>
+        <div class="errlist" id="errlist"></div>
+      </div>
+    </div>
+
+    <div class="badge-wrap" id="badgewrap">
+      <h3>Stamp it on the work</h3>
+      <span class="badge-live"><span class="bl">korg Gold Seal</span><span class="br" id="badgeword">✓ verified</span></span>
+      <div class="snippet">
+        <button class="copy" id="copybadge">copy</button>
+        <textarea id="badgecode" spellcheck="false" readonly aria-label="badge snippet"></textarea>
+      </div>
+    </div>
+
+    <div class="row2">
+      <div class="panel yes">
+        <h3>What this seal proves</h3>
+        <ul>
+          <li>The <b>events are hash-chained intact</b> — nothing inserted, deleted, reordered, or edited.</li>
+          <li>The <b>summary was re-derived from those events</b> — the file count, tools, and paths cannot lie.</li>
+          <li>The <b>issuer signed the whole thing</b> (claim + summary + tip + any anchors) with one Ed25519 key.</li>
+          <li>If anchored: the <b>anchor set is sealed</b> — it can't be stripped or forged, and points at a real chain event.</li>
+        </ul>
+      </div>
+      <div class="panel no">
+        <h3>What it does <em>not</em> prove</h3>
+        <ul>
+          <li><b>When</b> it happened — the anchor is sealed, but resolving it against public git history (the trusted-time step) is done over the network.</li>
+          <li>That the key is a <b>real-world identity</b> — pin a key you already trust.</li>
+          <li>That the prose <b>claim</b> is true — only that no one but the issuer could have written it.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <span>goldseal@v1 · <a href="../GOLDSEAL.md">spec</a> · independent verifier · Web Crypto Ed25519 + SHA-256</span>
+  <span>engine: ../js/verify.mjs (conformance-pinned)</span>
+</footer>
+
+<script type="module">
+import { verifyGoldSeal, deriveSummary, canonicalize } from "../js/verify.mjs";
+
+const $ = (id) => document.getElementById(id);
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const dec = new TextDecoder();
+const ICONS = {
+  ok:  '<svg class="glyph g-ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8.5l3.2 3.2L13 4.5"/></svg>',
+  bad: '<svg class="glyph g-bad" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+  na:  '<svg class="glyph g-na" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10"/></svg>',
+};
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function parseSeal(text) {
+  text = text.trim();
+  if (!text) throw new Error("paste a Gold Seal or load an example");
+  let v;
+  try { v = JSON.parse(text); } catch { throw new Error("not valid JSON"); }
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("a Gold Seal is a single JSON object");
+  if (typeof v.schema !== "string" || !v.schema.startsWith("goldseal")) {
+    throw new Error("this is not a goldseal@v1 certificate (wrong/absent schema)");
+  }
+  return v;
+}
+
+async function run() {
+  $("err").hidden = true;
+  let env;
+  try { env = parseSeal($("input").value); }
+  catch (e) { $("err").textContent = "✗ " + e.message; $("err").hidden = false; return; }
+
+  const pin = $("pubkey").value.trim().toLowerCase() || null;
+  const v = await verifyGoldSeal(env, { pinPubkey: pin });
+  render(env, v);
+}
+
+function render(env, v) {
+  $("results").classList.add("show");
+  const cert = $("cert");
+  cert.className = "cert " + (v.valid ? "valid" : "broken");
+  $("seal-label").textContent = v.valid ? "SEALED" : "BROKEN";
+  // retrigger the stamp animation
+  const med = $("medallion");
+  med.classList.remove("stamp-anim"); void med.offsetWidth;
+  if (!reduce && v.valid) med.parentElement.parentElement.classList.add("stamp-anim");
+
+  $("kicker").textContent = v.valid
+    ? `Gold Seal · verified · ${v.event_count} events`
+    : `Gold Seal · INVALID · ${v.errors.length} problem(s)`;
+  $("claim").textContent = typeof env.claim === "string" ? env.claim : "(no claim)";
+
+  // the headline: re-derive the summary in-browser and prove it matches (or not)
+  const rd = $("rederive");
+  if (v.summary_ok) {
+    rd.className = "rederive match";
+    rd.innerHTML = `${ICONS.ok} summary re-derived from the ${v.event_count} events — <b>identical</b>. It cannot lie.`;
+  } else {
+    rd.className = "rederive mismatch";
+    rd.innerHTML = `${ICONS.bad} the summary does <b>not</b> match the events — it was tampered.`;
+  }
+
+  // attestation grid (rendered from the re-derived summary)
+  const s = env.summary || {};
+  const grid = $("metagrid");
+  grid.innerHTML = "";
+  const add = (dt, ddHtml) => { grid.insertAdjacentHTML("beforeend", `<dt>${dt}</dt><dd>${ddHtml}</dd>`); };
+  const agents = Array.isArray(s.agents) ? s.agents : [];
+  if (agents.length) add("agent", agents.map(esc).join(", "));
+  const byTool = (s.by_tool && typeof s.by_tool === "object") ? s.by_tool : {};
+  const pills = Object.keys(byTool).sort().map((k) => `<span class="toolpill"><b>${esc(k)}</b><i>×${byTool[k]}</i></span>`).join("");
+  if (pills) add("tools", `<div class="tools">${pills}</div>`);
+  const files = Array.isArray(s.files) ? s.files : [];
+  if (files.length) add("files", `<div class="files">${files.map((f) => `<code>${esc(f)}</code>`).join("")}</div>`);
+  if (Number.isInteger(s.seq_first)) add("steps", `seq ${s.seq_first}–${s.seq_last}`);
+  const anchors = Array.isArray(env.anchors) ? env.anchors : [];
+  if (anchors.length) {
+    const a = anchors[0];
+    const commit = a.anchor_proof && a.anchor_proof.commit ? ` <code>${esc(String(a.anchor_proof.commit).slice(0, 10))}…</code>` : "";
+    add("anchored", `${esc(a.anchor_kind || "anchor")}${commit} <span style="color:var(--faint)">(sealed)</span>`);
+  }
+  if (Number.isInteger(env.issued_at)) add("issued", new Date(env.issued_at * 1000).toISOString().replace("T", " ").replace(".000Z", " UTC"));
+  const signer = v.signer || (env.seal && env.seal.pubkey) || "";
+  if (signer) add("issuer key", `<code>${esc(signer.slice(0, 24))}…</code>`);
+
+  // check row
+  const check = (icon, label, val) => `<span class="check">${ICONS[icon]} <b>${label}</b> ${val}</span>`;
+  const parts = [
+    check(v.chain_ok ? "ok" : "bad", "hash chain", v.chain_ok ? "intact" : "broken"),
+    check(v.dag_ok ? "ok" : "bad", "causal DAG", v.dag_ok ? "well-formed" : "invalid"),
+    check(v.tip_ok ? "ok" : "bad", "tip", v.tip_ok ? "matches head" : "mismatch"),
+    check(v.summary_ok ? "ok" : "bad", "summary", v.summary_ok ? "re-derived" : "tampered"),
+    check(v.seal_ok ? "ok" : "bad", "seal", v.seal_ok ? "signed by issuer" : "invalid/absent"),
+  ];
+  if (v.anchors_ok !== null && v.anchors_ok !== undefined) {
+    parts.push(check(v.anchors_ok ? "ok" : "bad", "anchors", v.anchors_ok ? "match chain" : "mismatch"));
+  } else {
+    parts.push(check("na", "anchors", "none"));
+  }
+  $("checks").innerHTML = parts.join("");
+
+  // errors
+  $("errlist").innerHTML = v.valid ? "" : v.errors.slice(0, 6).map((e) => `✗ ${esc(e)}`).join("<br>");
+
+  // badge
+  const wrap = $("badgewrap");
+  wrap.style.display = v.valid ? "" : "none";
+  if (v.valid) {
+    $("badgeword").textContent = "✓ verified";
+    const id = (env.tip || "").slice(0, 16);
+    const verifier = "https://new1direction.github.io/korg/web/seal.html";
+    const md =
+`<!-- korg Gold Seal · seal ${id} · ${v.event_count} events · re-verify by dropping this goldseal.json at ${verifier} (or run \`korg-verify goldseal.json\`) -->
+[![korg Gold Seal: verified](https://img.shields.io/badge/korg%20Gold%20Seal-verified-2ea043?logo=ed25519)](${verifier}) · seal \`${id}…\` · ${v.event_count} events · issuer \`${(signer || "").slice(0, 12)}…\``;
+    $("badgecode").value = md;
+  }
+
+  $("results").scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+}
+
+// intake wiring
+$("verify").addEventListener("click", run);
+const drop = $("drop");
+["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("hot"); }));
+["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("hot"); }));
+drop.addEventListener("drop", async (e) => {
+  const f = e.dataTransfer.files[0]; if (!f) return;
+  $("input").value = await f.text(); run();
+});
+$("copybadge").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("badgecode").value); $("copybadge").textContent = "copied ✓"; setTimeout(() => ($("copybadge").textContent = "copy"), 1400); }
+  catch { $("badgecode").select(); }
+});
+
+async function loadExample(which) {
+  const env = await (await fetch("samples/goldseal.json")).text();
+  let obj = JSON.parse(env);
+  if (which === "summary") obj.summary.files = [];          // forge the human summary
+  else if (which === "claim") obj.claim = "Fixed an unrelated critical security bug"; // move the claim
+  else if (which === "anchor") delete obj.anchors;          // strip the (sealed) anchor
+  $("input").value = JSON.stringify(obj, null, 2);
+  $("pubkey").value = "";
+  run();
+}
+document.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => loadExample(c.dataset.ex)));
+</script>
+</body>
+</html>

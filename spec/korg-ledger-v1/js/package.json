@@ -1,7 +1,7 @@
 {
   "name": "@korgg/ledger-verify",
-  "version": "0.1.0",
-  "description": "Independent, dependency-free verifier for korg-ledger@v1 receipts and journals (hash chain + causal DAG + Ed25519 tip signature). Runs in Node and the browser via Web Crypto.",
+  "version": "0.2.0",
+  "description": "Independent, dependency-free verifier for korg goldseal@v1 certificates and korg-ledger@v1 sessions (hash chain + causal DAG + re-derived summary + Ed25519 seal). Runs in Node (npx) and the browser via Web Crypto. Zero trust, no network.",
   "type": "module",
   "main": "verify.mjs",
   "exports": {
@@ -24,6 +24,9 @@
   "keywords": [
     "korg",
     "korg-ledger",
+    "goldseal",
+    "gold-seal",
+    "ai-agent",
     "tamper-evident",
     "hash-chain",
     "verification",

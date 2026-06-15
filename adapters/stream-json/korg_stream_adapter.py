@@ -377,7 +377,10 @@ def enqueue_korg_event(mapped_event, ptuid=None):
     else:
         # Main spine
         if tool_name == "user_prompt":
-            mapped_event["local_triggered_by"] = None
+            # Session root → None. A multi-turn follow-up (a prompt after at least
+            # one llm_inference) chains to the prior llm_inference, matching the
+            # claude-code user_followup causality — not a disconnected root.
+            mapped_event["local_triggered_by"] = last_local_llm_seq
         elif tool_name == "llm_inference":
             # Per spec §2a: round-N's llm_inference chains to round-(N-1)'s
             # llm_inference, not the most recent user/tool_result. For round 1

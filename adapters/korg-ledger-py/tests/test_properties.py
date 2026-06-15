@@ -11,9 +11,14 @@ from korg_ledger import (
     verify_chain,
 )
 
-# small JSON-object payloads for args
+# small JSON-object payloads for args (canon-safe integer range — values beyond
+# ±(2^53-1) are out of korg-ledger@v1 scope and rejected by canonicalize)
 _payloads = st.lists(
-    st.dictionaries(st.text(min_size=1, max_size=5), st.integers(), max_size=4),
+    st.dictionaries(
+        st.text(min_size=1, max_size=5),
+        st.integers(min_value=-(2**53 - 1), max_value=2**53 - 1),
+        max_size=4,
+    ),
     max_size=10,
 )
 

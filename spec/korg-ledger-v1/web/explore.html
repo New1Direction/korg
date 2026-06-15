@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>korg time-travel — replay a verified AI-agent session, step by step</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23131a1f'/%3E%3Ccircle cx='8' cy='8' r='5.5' fill='none' stroke='%237ef0c0' stroke-width='1.4'/%3E%3Cpath d='M8 5v3l2 1.4' fill='none' stroke='%237ef0c0' stroke-width='1.4'/%3E%3C/svg%3E" />
+<meta name="description" content="Replay any korg-ledger@v1 AI-agent session or Gold Seal, step by step, in your browser. Scrub the timeline and watch the cumulative state evolve while the hash-chain verifies under it. Zero trust, no install, sends nothing." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:        oklch(15% 0.012 250);
+    --bg-2:      oklch(18% 0.014 250);
+    --surface:   oklch(21% 0.016 250);
+    --line:      oklch(30% 0.02 250);
+    --ink:       oklch(90% 0.012 250);
+    --muted:     oklch(64% 0.018 250);
+    --faint:     oklch(48% 0.018 250);
+    --signal:    oklch(86% 0.17 162);
+    --signal-dim: oklch(52% 0.10 162);
+    --gold:      oklch(83% 0.13 85);
+    --amber:     oklch(82% 0.14 78);
+    --alarm:     oklch(66% 0.22 26);
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --serif: "Fraunces", Georgia, serif;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink); font-family: var(--mono);
+    font-size: clamp(0.78rem, 0.74rem + 0.2vw, 0.9rem); line-height: 1.6; -webkit-font-smoothing: antialiased;
+    background-image:
+      repeating-linear-gradient(0deg, transparent 0 3px, oklch(0% 0 0 / 0.10) 3px 4px),
+      radial-gradient(120% 70% at 50% -10%, oklch(24% 0.03 200 / 0.5), transparent 60%);
+    background-attachment: fixed;
+  }
+  a { color: var(--signal); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 3rem); }
+
+  header { border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; background: oklch(15% 0.012 250 / 0.86); backdrop-filter: blur(8px); }
+  .bar { display: flex; align-items: baseline; gap: 1rem; padding: 0.9rem 0; flex-wrap: wrap; }
+  .mark { font-family: var(--serif); font-weight: 900; font-size: 1.45rem; letter-spacing: -0.02em; }
+  .mark b { color: var(--signal); font-style: italic; font-weight: 600; }
+  .sub { color: var(--faint); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .nav { margin-left: auto; display: flex; gap: 1rem; align-items: center; }
+  .nav a { color: var(--muted); font-size: 0.74rem; text-decoration: none; }
+  .nav a:hover { color: var(--ink); }
+  .privacy { color: var(--signal-dim); font-size: 0.72rem; display: inline-flex; gap: 0.5rem; align-items: center; }
+  .privacy::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 8px var(--signal); animation: pulse 2.4s var(--ease) infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .hero { padding: clamp(1.6rem, 1rem + 3vw, 3.5rem) 0 1.2rem; }
+  h1 { font-family: var(--serif); font-weight: 900; font-size: clamp(2.2rem, 1rem + 5vw, 4.6rem); line-height: 0.92; letter-spacing: -0.03em; margin: 0 0 1rem; max-width: 16ch; }
+  h1 em { font-style: italic; font-weight: 400; color: var(--signal); }
+  .lede { color: var(--muted); max-width: 60ch; font-size: clamp(0.85rem, 0.8rem + 0.3vw, 1rem); }
+  .lede strong { color: var(--ink); font-weight: 500; }
+
+  .intake { margin-top: 1.8rem; display: grid; gap: 0.8rem; }
+  .drop { border: 1.5px dashed var(--line); border-radius: 4px; background: var(--bg-2); padding: 1.2rem; transition: border-color .2s var(--ease), background .2s var(--ease); display: grid; gap: 0.7rem; }
+  .drop.hot { border-color: var(--signal); background: oklch(20% 0.03 162 / 0.4); }
+  .drop-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; color: var(--muted); }
+  textarea { width: 100%; min-height: 84px; resize: vertical; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 0.7rem; font-family: var(--mono); font-size: 0.78rem; }
+  textarea:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+  .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+  button { font-family: var(--mono); cursor: pointer; border-radius: 3px; font-size: 0.78rem; transition: transform .12s var(--ease), background .15s var(--ease), border-color .15s; }
+  button:active { transform: translateY(1px); }
+  .btn-go { background: var(--signal); color: oklch(18% 0.04 162); border: none; font-weight: 700; padding: 0.6rem 1.2rem; }
+  .btn-go:hover { background: oklch(90% 0.17 162); }
+  .examples { margin-left: auto; display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+  .examples span { color: var(--faint); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .chip { background: transparent; border: 1px solid var(--line); color: var(--muted); padding: 0.35rem 0.65rem; }
+  .chip:hover { border-color: var(--ink); color: var(--ink); }
+  .err-note { color: var(--alarm); font-size: 0.78rem; }
+
+  /* ── workbench ──────────────────────────────────────────────────── */
+  .work { display: none; padding-bottom: 3rem; }
+  .work.show { display: block; }
+
+  .verdict { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 4px; background: var(--surface); padding: 0.9rem 1.2rem; margin: 1.4rem 0 1rem; }
+  .verdict.ok { border-left-color: var(--signal); }
+  .verdict.bad { border-left-color: var(--alarm); }
+  .verdict .v-stamp { font-family: var(--serif); font-weight: 900; font-size: 1.3rem; }
+  .verdict.ok .v-stamp { color: var(--signal); }
+  .verdict.bad .v-stamp { color: var(--alarm); }
+  .verdict .v-claim { color: var(--ink); font-weight: 500; }
+  .verdict .v-meta { color: var(--faint); font-size: 0.74rem; margin-left: auto; }
+
+  /* transport / scrubber */
+  .transport { display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center; border: 1px solid var(--line); border-radius: 4px; background: var(--bg-2); padding: 0.8rem 1rem; margin-bottom: 1rem; }
+  .play { background: var(--signal); color: oklch(18% 0.04 162); border: none; width: 2.4rem; height: 2.4rem; border-radius: 50%; font-size: 1rem; display: grid; place-items: center; }
+  .scrub-wrap { display: grid; gap: 0.3rem; }
+  input[type=range] { width: 100%; accent-color: var(--signal); }
+  .scrub-labels { display: flex; justify-content: space-between; color: var(--faint); font-size: 0.7rem; }
+  .step-of { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+  .step-of b { color: var(--ink); }
+
+  .panes { display: grid; grid-template-columns: 1.5fr 1fr; gap: 1.2rem; }
+  @media (max-width: 800px) { .panes { grid-template-columns: 1fr; } .transport { grid-template-columns: auto 1fr; } .step-of { grid-column: 1 / -1; text-align: center; } }
+
+  /* timeline */
+  .timeline { display: grid; gap: 0; max-height: 70vh; overflow: auto; padding-right: 0.3rem; }
+  .ev { position: relative; display: grid; grid-template-columns: 3.2rem 1fr auto; gap: 0.8rem; align-items: center; padding: 0.6rem 0.7rem; border: 1px solid var(--line); border-bottom: none; background: var(--bg-2); cursor: pointer; transition: background .15s, opacity .2s; }
+  .ev:first-child { border-radius: 4px 4px 0 0; }
+  .ev:last-child { border-bottom: 1px solid var(--line); border-radius: 0 0 4px 4px; }
+  .ev:hover { background: var(--surface); }
+  .ev.future { opacity: 0.32; }
+  .ev.current { background: oklch(22% 0.04 162 / 0.5); box-shadow: inset 3px 0 0 var(--signal); }
+  .ev.sel { box-shadow: inset 3px 0 0 var(--gold); }
+  .ev[data-ok="false"] { background: oklch(22% 0.05 26 / 0.5); box-shadow: inset 3px 0 0 var(--alarm); }
+  .ev .seq { font-size: 0.7rem; color: var(--faint); } .ev .seq b { color: var(--ink); }
+  .ev .tool { overflow: hidden; }
+  .ev .tool .t { color: var(--ink); font-weight: 500; }
+  .ev .tool .d { color: var(--muted); font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ev .st { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--signal-dim); display: flex; gap: 0.3rem; align-items: center; }
+  .ev[data-ok="false"] .st { color: var(--alarm); }
+  .ev .st .sig { color: var(--gold); }
+
+  /* state panel */
+  .state { border: 1px solid var(--line); border-radius: 4px; background: var(--bg-2); padding: 1.1rem 1.2rem; align-self: start; position: sticky; top: 5rem; display: grid; gap: 1rem; }
+  .state h3 { font-family: var(--serif); font-weight: 600; margin: 0; font-size: 1rem; }
+  .state h3 small { color: var(--faint); font-weight: 400; font-family: var(--mono); font-size: 0.7rem; }
+  .kv { display: grid; gap: 0.5rem; }
+  .kv .row { display: grid; grid-template-columns: 5.2rem 1fr; gap: 0.6rem; font-size: 0.78rem; align-items: baseline; }
+  .kv dt { color: var(--faint); text-transform: uppercase; font-size: 0.64rem; letter-spacing: 0.06em; }
+  .kv dd { margin: 0; color: var(--ink); word-break: break-word; }
+  .tools { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 0.1rem 0.5rem; font-size: 0.7rem; color: var(--muted); }
+  .pill b { color: var(--ink); } .pill i { color: var(--signal); font-style: normal; font-weight: 700; }
+  .files code { color: var(--signal); display: block; }
+  .detail { border-top: 1px solid var(--line); padding-top: 0.8rem; display: grid; gap: 0.5rem; }
+  .detail .lbl { color: var(--faint); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .detail pre { margin: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 0.6rem; font-size: 0.72rem; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+
+  footer { border-top: 1px solid var(--line); margin-top: 2rem; padding: 1.2rem 0 3rem; color: var(--faint); font-size: 0.74rem; display: flex; gap: 1.2rem; flex-wrap: wrap; justify-content: space-between; }
+  @media (prefers-reduced-motion: reduce) { *, ::before { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <span class="mark">korg <b>time-travel</b></span>
+    <span class="sub">korg-ledger@v1</span>
+    <span class="nav">
+      <a href="./seal.html">Gold Seal →</a>
+      <a href="./index.html">ledger verifier →</a>
+      <span class="privacy">runs in your browser · sends nothing</span>
+    </span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero" id="hero">
+    <h1>Replay what the agent <em>actually</em> did.</h1>
+    <p class="lede">Drop a captured session or a <strong>Gold Seal</strong>. Scrub the timeline and
+      watch the state evolve — files touched, tools used, step by step — while the
+      <strong>hash-chain verifies under every frame</strong>. A break lights up red at the exact
+      step it happened. Entirely on your machine.</p>
+
+    <div class="intake">
+      <div class="drop" id="drop">
+        <div class="drop-head">
+          <strong>Drop a <code>ledger.jsonl</code> or <code>goldseal.json</code></strong>
+          <span>or paste below</span>
+        </div>
+        <textarea id="input" spellcheck="false" aria-label="session ledger or Gold Seal" placeholder='a korg-ledger@v1 session (one JSON event per line / a JSON array) or a goldseal@v1 certificate'></textarea>
+        <div class="actions">
+          <button class="btn-go" id="load">▸ Load session</button>
+          <div class="examples">
+            <span>try:</span>
+            <button class="chip" data-ex="session">real session</button>
+            <button class="chip" data-ex="seal">a Gold Seal</button>
+            <button class="chip" data-ex="tampered">tampered ✗</button>
+          </div>
+        </div>
+        <p class="err-note" id="err" hidden></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="work" id="work" aria-live="polite">
+    <div class="verdict" id="verdict">
+      <span class="v-stamp" id="vstamp">—</span>
+      <span class="v-claim" id="vclaim"></span>
+      <span class="v-meta" id="vmeta"></span>
+    </div>
+
+    <div class="transport">
+      <button class="play" id="play" aria-label="play/pause">▶</button>
+      <div class="scrub-wrap">
+        <input type="range" id="scrub" min="1" max="1" value="1" step="1" aria-label="timeline" />
+        <div class="scrub-labels"><span>start</span><span id="curtool"></span><span>end</span></div>
+      </div>
+      <div class="step-of">step <b id="curstep">1</b> / <span id="total">1</span></div>
+    </div>
+
+    <div class="panes">
+      <div class="timeline" id="timeline"></div>
+      <aside class="state">
+        <h3>State at step <span id="ststep">1</span> <small id="sttime"></small></h3>
+        <div class="kv" id="ststats"></div>
+        <div class="detail">
+          <span class="lbl">selected event</span>
+          <div id="seldetail"></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <span>korg-ledger@v1 · time-travel explorer · Web Crypto SHA-256 + Ed25519</span>
+  <span><a href="../GOLDSEAL.md">spec</a> · engine ../js/verify.mjs</span>
+</footer>
+
+<script type="module">
+import { verifyDag, verifyEventSig, chainHash, deriveSummary, canonicalize } from "../js/verify.mjs";
+
+const $ = (id) => document.getElementById(id);
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+let EVENTS = [];     // raw events
+let ROWS = [];       // {e, ok, sig} per-event verification
+let CURRENT = 1;     // playhead (1..N)
+let SELECTED = 1;    // selected event for detail
+let timer = null;
+
+function view(e) {
+  const inner = (e && e.event && typeof e.event === "object" && !Array.isArray(e.event)) ? e.event : e;
+  const tool = inner.tool_name || inner.event_type || "event";
+  const a = inner.args || {};
+  let d = a.prompt || a.file_path || a.path || a.command || a.file || a.query || "";
+  if (typeof d !== "string") d = JSON.stringify(d);
+  return { agent: inner.source_agent, tool, detail: d, args: a, result: inner.result };
+}
+
+function parseInput(text) {
+  text = text.trim();
+  if (!text) throw new Error("paste a session or load an example");
+  if (text.startsWith("{")) {
+    let v;
+    try { v = JSON.parse(text); } catch { v = null; }
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      if (typeof v.schema === "string" && v.schema.startsWith("goldseal")) {
+        return { events: Array.isArray(v.events) ? v.events : [], seal: v };
+      }
+      if (Array.isArray(v.events)) return { events: v.events, seal: null };
+      return { events: [v], seal: null };
+    }
+  }
+  if (text.startsWith("[")) return { events: JSON.parse(text), seal: null };
+  const out = [];
+  text.split("\n").forEach((l, i) => { const t = l.trim(); if (!t) return; try { out.push(JSON.parse(t)); } catch { throw new Error(`line ${i + 1} is not valid JSON`); } });
+  return { events: out, seal: null };
+}
+
+const GENESIS = "0".repeat(64);
+async function verifyPerEvent(events) {
+  let prev = GENESIS;
+  const rows = [];
+  for (const e of events) {
+    const hashOk = (await chainHash(e, null)) === e.entry_hash;
+    const linkOk = e.prev_hash === prev;
+    let sig = "none";
+    if (e.event_sig) sig = "present";
+    rows.push({ e, ok: hashOk && linkOk, sig });
+    prev = typeof e.entry_hash === "string" ? e.entry_hash : null;
+  }
+  return rows;
+}
+
+async function load(text) {
+  $("err").hidden = true;
+  let parsed;
+  try {
+    parsed = parseInput(text);
+    if (!parsed.events.length) throw new Error("no events found");
+  } catch (e) { $("err").textContent = "✗ " + e.message; $("err").hidden = false; return; }
+
+  EVENTS = parsed.events;
+  ROWS = await verifyPerEvent(EVENTS);
+  const dagOk = verifyDag(EVENTS).length === 0;
+  const chainOk = ROWS.every((r) => r.ok);
+  const firstBad = ROWS.findIndex((r) => !r.ok);
+
+  // verdict banner
+  const v = $("verdict"), ok = chainOk && dagOk;
+  v.className = "verdict " + (ok ? "ok" : "bad");
+  $("vstamp").textContent = ok ? "INTACT" : "TAMPERED";
+  $("vclaim").textContent = parsed.seal ? (parsed.seal.claim || "") : "";
+  const signer = parsed.seal?.seal?.pubkey;
+  $("vmeta").textContent = (parsed.seal ? `goldseal · ${signer ? "signed " + signer.slice(0, 12) + "…" : "unsigned"} · ` : "") + `${EVENTS.length} events`;
+
+  $("work").classList.add("show");
+  $("hero").scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
+
+  $("scrub").max = String(EVENTS.length);
+  $("total").textContent = String(EVENTS.length);
+  // jump the playhead to the first break if any, else start
+  CURRENT = firstBad >= 0 ? firstBad + 1 : 1;
+  SELECTED = CURRENT;
+  renderTimeline();
+  setStep(CURRENT);
+}
+
+function renderTimeline() {
+  const tl = $("timeline"); tl.innerHTML = "";
+  ROWS.forEach((r, i) => {
+    const n = i + 1;
+    const { tool, detail } = view(r.e);
+    const el = document.createElement("div");
+    el.className = "ev";
+    el.dataset.ok = String(r.ok);
+    el.dataset.n = String(n);
+    const sigTxt = r.sig === "present" ? '<span class="sig">⚿</span>' : "";
+    el.innerHTML = `
+      <span class="seq">seq <b>${r.e.seq_id ?? n}</b></span>
+      <span class="tool"><span class="t">${esc(tool)}</span>${detail ? `<span class="d">${esc(detail)}</span>` : ""}</span>
+      <span class="st">${r.ok ? "✓" : "✗ break"} ${sigTxt}</span>`;
+    el.addEventListener("click", () => { setStep(n); select(n); });
+    tl.appendChild(el);
+  });
+}
+
+function setStep(n) {
+  CURRENT = Math.max(1, Math.min(EVENTS.length, n));
+  $("scrub").value = String(CURRENT);
+  $("curstep").textContent = String(CURRENT);
+  $("ststep").textContent = String(CURRENT);
+  const { tool } = view(EVENTS[CURRENT - 1]);
+  $("curtool").textContent = tool;
+  // dim future, mark current
+  [...$("timeline").children].forEach((el) => {
+    const n2 = Number(el.dataset.n);
+    el.classList.toggle("future", n2 > CURRENT);
+    el.classList.toggle("current", n2 === CURRENT);
+  });
+  renderState();
+  select(SELECTED <= CURRENT ? SELECTED : CURRENT);
+}
+
+function renderState() {
+  // cumulative state at the playhead — re-derive over the slice (same rule as a Gold Seal)
+  const slice = EVENTS.slice(0, CURRENT);
+  const s = deriveSummary(slice);
+  const last = view(EVENTS[CURRENT - 1]);
+  $("sttime").textContent = `· ${last.tool}`;
+  const rows = [];
+  if (s.agents.length) rows.push(["agents", esc(s.agents.join(", "))]);
+  const tools = Object.keys(s.by_tool).sort().map((k) => `<span class="pill"><b>${esc(k)}</b><i>×${s.by_tool[k]}</i></span>`).join("");
+  rows.push(["tools", `<div class="tools">${tools}</div>`]);
+  rows.push(["files", s.files.length ? `<div class="files">${s.files.map((f) => `<code>${esc(f)}</code>`).join("")}</div>` : "<span style='color:var(--faint)'>none yet</span>"]);
+  rows.push(["progress", `seq ${s.seq_first}–${s.seq_last} · ${CURRENT}/${EVENTS.length} steps`]);
+  $("ststats").innerHTML = rows.map(([k, v]) => `<div class="row"><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+}
+
+function select(n) {
+  SELECTED = n;
+  [...$("timeline").children].forEach((el) => el.classList.toggle("sel", Number(el.dataset.n) === n));
+  const v = view(EVENTS[n - 1]);
+  const block = (label, obj) => {
+    if (obj == null || (typeof obj === "object" && !Object.keys(obj).length)) return "";
+    const txt = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+    return `<span class="lbl">${label}</span><pre>${esc(txt.slice(0, 4000))}</pre>`;
+  };
+  $("seldetail").innerHTML =
+    `<div style="color:var(--ink);font-weight:500;margin-bottom:.3rem">seq ${EVENTS[n - 1].seq_id ?? n} · ${esc(v.tool)}</div>` +
+    block("args", v.args) + block("result", v.result);
+}
+
+// transport
+function togglePlay() {
+  if (timer) { clearInterval(timer); timer = null; $("play").textContent = "▶"; return; }
+  if (CURRENT >= EVENTS.length) setStep(1);
+  $("play").textContent = "❚❚";
+  timer = setInterval(() => {
+    if (CURRENT >= EVENTS.length) { togglePlay(); return; }
+    setStep(CURRENT + 1);
+  }, reduce ? 1 : 650);
+}
+$("play").addEventListener("click", togglePlay);
+$("scrub").addEventListener("input", (e) => { if (timer) togglePlay(); setStep(Number(e.target.value)); });
+$("load").addEventListener("click", () => load($("input").value));
+
+const drop = $("drop");
+["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("hot"); }));
+["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("hot"); }));
+drop.addEventListener("drop", async (e) => { const f = e.dataTransfer.files[0]; if (!f) return; $("input").value = await f.text(); load($("input").value); });
+
+async function example(which) {
+  const map = { session: "samples/session.jsonl", tampered: "samples/tampered.jsonl", seal: "samples/goldseal.json" };
+  const txt = await (await fetch(map[which])).text();
+  $("input").value = txt.trim();
+  load(txt);
+}
+document.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => example(c.dataset.ex)));
+</script>
+</body>
+</html>

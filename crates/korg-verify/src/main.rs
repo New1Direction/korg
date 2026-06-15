@@ -10,11 +10,11 @@ USAGE:
     korg-verify <file> [--key <str>] [--pubkey <hex>] [--pin-event-pubkey <hex>] [--anchors <file>] [--json]
 
 ARGS:
-    <file>          a korg receipt (.json) or journal (.jsonl / JSON array)
+    <file>          a Gold Seal (goldseal@v1), a korg receipt (.json), or a journal (.jsonl / JSON array)
 
 OPTIONS:
     --key <str>                HMAC key (raw bytes) for keyed chains
-    --pubkey <hex>             pin the expected receipt-tip signer; reject any other key
+    --pubkey <hex>             pin the expected signer — the receipt-tip signer or the Gold Seal issuer
     --pin-event-pubkey <hex>   require every event's per-event Ed25519 event_sig to verify under this key
     --anchors <file>           verify an anchors.jsonl sidecar (structural: entry_hash ↔ chain)
     --json                     machine-readable verdict
@@ -135,11 +135,17 @@ fn main() -> ExitCode {
             "signer": verdict.signer,
             "event_sigs_ok": verdict.event_sigs_ok,
             "anchors_ok": verdict.anchors_ok,
+            "summary_ok": verdict.summary_ok,
             "errors": verdict.errors,
         });
         println!("{out}");
     } else {
-        print_human(&verdict, &file);
+        // For a Gold Seal, surface the human-legible (and re-derived) summary —
+        // that is the artifact's whole purpose.
+        let seal_view = (verdict.kind == "goldseal")
+            .then(|| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .flatten();
+        print_human(&verdict, &file, seal_view.as_ref());
     }
 
     if verdict.valid {
@@ -149,7 +155,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn print_human(v: &korg_verify::Verdict, file: &str) {
+fn print_human(v: &korg_verify::Verdict, file: &str, seal: Option<&serde_json::Value>) {
     if v.valid {
         let signed = match &v.signer {
             Some(pk) if v.signature_ok == Some(true) => {
@@ -161,11 +167,17 @@ fn print_human(v: &korg_verify::Verdict, file: &str) {
             "  \u{2713} {} VALID \u{2014} {} events, hash-chain + DAG intact{}",
             v.kind, v.event_count, signed
         );
+        if v.summary_ok == Some(true) {
+            println!("    \u{2713} summary verified (re-derived from the events — it cannot lie)");
+        }
         if v.event_sigs_ok == Some(true) {
             println!("    \u{2713} every event_sig verifies under the pinned key");
         }
         if v.anchors_ok == Some(true) {
             println!("    \u{2713} anchors match the chain (structural)");
+        }
+        if let Some(env) = seal {
+            print_seal_summary(env);
         }
         println!("    {file}");
     } else {
@@ -177,5 +189,44 @@ fn print_human(v: &korg_verify::Verdict, file: &str) {
         for e in v.errors.iter().take(8) {
             println!("      - {e}");
         }
+    }
+}
+
+/// Render a verified Gold Seal's human-legible attestation. Every line here was
+/// re-derived from the signed event chain, so it is exactly what happened.
+fn print_seal_summary(env: &serde_json::Value) {
+    if let Some(claim) = env.get("claim").and_then(|c| c.as_str()) {
+        println!("    claim:  {claim}");
+    }
+    let Some(s) = env.get("summary").and_then(|s| s.as_object()) else {
+        return;
+    };
+    if let Some(agents) = s.get("agents").and_then(|a| a.as_array()) {
+        let list: Vec<&str> = agents.iter().filter_map(|x| x.as_str()).collect();
+        if !list.is_empty() {
+            println!("    agents: {}", list.join(", "));
+        }
+    }
+    if let Some(by_tool) = s.get("by_tool").and_then(|b| b.as_object()) {
+        let mut tools: Vec<String> = by_tool
+            .iter()
+            .map(|(k, val)| format!("{k}\u{00d7}{}", val.as_i64().unwrap_or(0)))
+            .collect();
+        tools.sort();
+        if !tools.is_empty() {
+            println!("    tools:  {}", tools.join("  "));
+        }
+    }
+    if let Some(files) = s.get("files").and_then(|f| f.as_array()) {
+        let list: Vec<&str> = files.iter().filter_map(|x| x.as_str()).collect();
+        if !list.is_empty() {
+            println!("    files:  {}", list.join(", "));
+        }
+    }
+    if let (Some(a), Some(b)) = (
+        s.get("seq_first").and_then(|v| v.as_i64()),
+        s.get("seq_last").and_then(|v| v.as_i64()),
+    ) {
+        println!("    seq:    {a}\u{2013}{b}");
     }
 }
