@@ -100,6 +100,12 @@ struct Cli {
     #[arg(long)]
     inject_stress: bool,
 
+    /// Pre-warm a shared cargo target dir (warm boot) and point every worker's
+    /// `cargo check` at it so compiled deps are reused across workers (default
+    /// OFF). Hermetic: degrades to the cold path if cargo is absent or times out.
+    #[arg(long)]
+    speculative: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -496,6 +502,7 @@ async fn main() -> Result<()> {
             let mut leader = LeaderOrchestrator::new(prompt.to_string(), None);
             leader.goal_mode = true;
             leader.set_inject_stress(cli.inject_stress);
+            leader.set_speculative(cli.speculative);
             leader.set_cognition_mode("autonomous").await;
             println!(
                 "{slate}├──{reset} Session: {bold}{cyan}{}{reset}",
@@ -622,6 +629,7 @@ async fn main() -> Result<()> {
                 sid,
             );
             leader.set_inject_stress(cli.inject_stress);
+            leader.set_speculative(cli.speculative);
             if goal || cli.goal {
                 leader.goal_mode = true;
                 leader.set_cognition_mode("autonomous").await;
@@ -699,6 +707,7 @@ async fn main() -> Result<()> {
                     sid,
                 );
                 leader.set_inject_stress(inject_stress);
+                leader.set_speculative(cli.speculative);
                 if goal || cli.goal {
                     leader.goal_mode = true;
                     leader.set_cognition_mode("autonomous").await;
