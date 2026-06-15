@@ -7,7 +7,14 @@ JournalEvent JSONL that the Rust `korg-verify` validates.
 from __future__ import annotations
 
 from ._events import NIL_UUID, agent_tool_call_event
-from ._hash import GENESIS, HASH_FIELDS, canonicalize, chain_hash, verify_chain
+from ._hash import (
+    GENESIS,
+    HASH_FIELDS,
+    canonicalize,
+    chain_hash,
+    verify_anchors,
+    verify_chain,
+)
 from ._hlc import Hlc
 from .writer import CausalityError, LedgerWriter
 
@@ -21,5 +28,6 @@ __all__ = [
     "canonicalize",
     "chain_hash",
     "verify_chain",
+    "verify_anchors",
     "agent_tool_call_event",
 ]

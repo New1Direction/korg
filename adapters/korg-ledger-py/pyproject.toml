@@ -12,7 +12,8 @@ license = { text = "MIT OR Apache-2.0" }
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "hypothesis>=6"]
+signing = ["cryptography>=41"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/korg_ledger"]

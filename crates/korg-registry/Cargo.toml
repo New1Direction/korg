@@ -19,3 +19,4 @@ hmac       = "0.12"
 
 [dev-dependencies]
 sha2       = "0.10"
+proptest   = "1"

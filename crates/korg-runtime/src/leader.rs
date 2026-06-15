@@ -340,7 +340,7 @@ impl LeaderOrchestrator {
 
     fn execute_rewind(&self, seq_id: u64) {
         let mut journal = korg_registry::log::CapabilityJournal::default_journal();
-        match journal.rewind(seq_id) {
+        match journal.rewind_with_seal(seq_id, "korg:operator", "operator-confirmed TUI rewind") {
             Ok(()) => {
                 println!(
                     "[Leader] Rewound journal to seq {} — clean state restored",

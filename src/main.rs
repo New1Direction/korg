@@ -744,7 +744,7 @@ async fn main() -> Result<()> {
         Commands::Rewind { seq } => {
             let mut journal = korg_registry::CapabilityJournal::default_journal();
             let prev_count = journal.events.len();
-            match journal.rewind(seq) {
+            match journal.rewind_with_seal(seq, "korg:cli", "operator rewind") {
                 Ok(()) => {
                     let green = "\x1b[38;2;0;255;128m";
                     let cyan = "\x1b[38;2;0;240;255m";
@@ -1962,6 +1962,9 @@ pub async fn run_demo_internal(
 
     println!("\n{bold}{yellow}⏳ PHASE 2: INITIATING REVERSIBLE REWIND TO SEQ 391{reset}");
     println!("  {slate}[korg]{reset} Truncating journal ledger to sequence ID 391...");
+    // TODO(rewind-seal): the demo manually reassigns seq_ids after this rewind
+    // (the divergent speculative path), which would clobber a sealed LedgerRewind
+    // tip. Migrate to rewind_with_seal once the demo uses the normal append path.
     journal.rewind(391).map_err(|e| anyhow::anyhow!(e))?;
 
     println!("  {slate}[korg]{reset} Restoring workspace snapshot via git read-tree (O(1))...");
