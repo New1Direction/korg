@@ -78,6 +78,15 @@ class ClaudeCodeAdapter:
         events = parse_session(lines, state=self._parser_state)
         return self.ingest_events(events)
 
+    def parse_all(self, lines: Iterable[Any]) -> list[NormalizedEvent]:
+        """Full single-shot parse of an entire transcript (fresh parser state).
+
+        Used by the short-lived korg-hook driver: re-parsing the whole file
+        each firing captures tool results (which the buffered parser fills in
+        by mutation) without persisting parser internals across processes.
+        """
+        return parse_session(lines, state=SessionState())
+
     def ingest_events(self, events: list[NormalizedEvent]) -> IngestStats:
         stats = IngestStats()
 

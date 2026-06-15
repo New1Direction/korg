@@ -135,6 +135,17 @@ pub enum CapabilityEvent {
         estimated_cost_usd: f64,
         timestamp: DateTime<Utc>,
     },
+    /// Reserved (Phase 2): a non-destructive record that the ledger was rewound.
+    /// Appended rather than truncating history, so the rewind is itself tamper-
+    /// evident. Phase 2 wires `rewind()` to append this and builds replay
+    /// semantics on it.
+    LedgerRewind {
+        target_seq_id: u64,
+        invalidated_through: u64,
+        rewound_by: String,
+        reason: String,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -161,9 +172,9 @@ impl CapabilityEvent {
             CapabilityEvent::LeaseAcquired { owner_id, .. } => *owner_id,
             CapabilityEvent::LeaseReleased { owner_id, .. } => *owner_id,
             // External agent events have no plan_id — use nil UUID as a stable sentinel
-            CapabilityEvent::AgentToolCall { .. } | CapabilityEvent::ProxyAuditTrail { .. } => {
-                Uuid::nil()
-            }
+            CapabilityEvent::AgentToolCall { .. }
+            | CapabilityEvent::ProxyAuditTrail { .. }
+            | CapabilityEvent::LedgerRewind { .. } => Uuid::nil(),
         }
     }
 
@@ -177,7 +188,8 @@ impl CapabilityEvent {
             | CapabilityEvent::TransitionRolledBack { .. }
             | CapabilityEvent::LeaseAcquired { .. }
             | CapabilityEvent::LeaseReleased { .. }
-            | CapabilityEvent::ProxyAuditTrail { .. } => EventTier::Governance,
+            | CapabilityEvent::ProxyAuditTrail { .. }
+            | CapabilityEvent::LedgerRewind { .. } => EventTier::Governance,
 
             CapabilityEvent::EffectStarted { .. }
             | CapabilityEvent::EffectCompleted { .. }
@@ -327,6 +339,13 @@ pub struct JournalEvent {
     /// `entry_hash` removed). SHA-256, or HMAC-SHA256 when a key is configured.
     #[serde(default)]
     pub entry_hash: String,
+
+    /// korg-ledger@v1 Phase-2 reservation: per-event Ed25519 signature over the
+    /// same preimage as `entry_hash`. Excluded from the hash preimage
+    /// (`HASH_FIELDS`). `None`/omitted for unsigned events (unchanged on the
+    /// wire), so existing journals and conformance vectors are unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_sig: Option<String>,
 }
 
 impl JournalEvent {
@@ -509,6 +528,7 @@ impl CapabilityJournal {
             event,
             prev_hash,
             entry_hash: String::new(),
+            event_sig: None,
         };
         journal_event.entry_hash = journal_event.compute_entry_hash(ledger_hmac_key().as_deref());
         if let Some(tb) = journal_event.metadata.triggered_by {
@@ -571,6 +591,7 @@ impl CapabilityJournal {
             event,
             prev_hash,
             entry_hash: String::new(),
+            event_sig: None,
         };
         journal_event.entry_hash = journal_event.compute_entry_hash(ledger_hmac_key().as_deref());
         self.events.push(journal_event);
@@ -858,5 +879,19 @@ mod chain_tests {
         let errors = j.verify_chain();
         assert!(!errors.is_empty(), "a content edit must be detected");
         assert!(errors.iter().any(|e| e.contains("seq 1")), "{errors:?}");
+    }
+
+    #[test]
+    fn ledger_rewind_variant_serializes_with_its_tag() {
+        let ev = CapabilityEvent::LedgerRewind {
+            target_seq_id: 5,
+            invalidated_through: 9,
+            rewound_by: "korg:test".into(),
+            reason: "demo".into(),
+            timestamp: chrono::Utc::now(),
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["event_type"], "LedgerRewind");
+        assert_eq!(v["target_seq_id"], 5);
     }
 }

@@ -26,7 +26,8 @@ def canonicalize(value) -> bytes:
 
 
 def chain_hash(event: dict, key: bytes | None = None) -> str:
-    preimage = {k: v for k, v in event.items() if k != "entry_hash"}
+    # entry_hash and the reserved Phase-2 event_sig are excluded from the preimage.
+    preimage = {k: v for k, v in event.items() if k not in ("entry_hash", "event_sig")}
     data = canonicalize(preimage)
     if key is not None:
         return hmac.new(key, data, hashlib.sha256).hexdigest()
