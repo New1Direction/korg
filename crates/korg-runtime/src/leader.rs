@@ -3036,6 +3036,7 @@ impl LeaderOrchestrator {
             top_p: None,
             presence_penalty: None,
             frequency_penalty: None,
+            response_format: None,
         };
 
         let merged_mutations = match provider.complete(req).await {
