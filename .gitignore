@@ -76,3 +76,10 @@ node_modules/
 **/node_modules/
 **/dist/
 package-lock.json
+
+# Local tooling artifacts
+.coverage
+.understand-anything/
+**/proptest-regressions/
+
+.playwright-mcp/

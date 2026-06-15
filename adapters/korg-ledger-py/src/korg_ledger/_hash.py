@@ -32,6 +32,26 @@ def chain_hash(event: dict, key: bytes | None = None) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def verify_anchors(chain: list, anchors: list) -> list:
+    """Structural check (stdlib only, no network): each anchor's entry_hash must
+    match the chain event at its seq_id. The external git-tip proof — the actual
+    owner-rewrite defense — is verified by the Rust verifier (see the spec)."""
+    errors: list[str] = []
+    by_seq = {e.get("seq_id"): e for e in chain}
+    for a in anchors:
+        seq = a.get("seq_id")
+        want = a.get("entry_hash")
+        if seq is None or want is None:
+            errors.append("anchor record missing seq_id or entry_hash")
+            continue
+        e = by_seq.get(seq)
+        if e is None:
+            errors.append(f"anchor seq {seq}: no event with that seq_id in the chain")
+        elif e.get("entry_hash") != want:
+            errors.append(f"anchor seq {seq}: entry_hash does not match the chain")
+    return errors
+
+
 def verify_chain(events: list, key: bytes | None = None) -> list:
     """Recompute the chain; empty list iff intact. Each error names a seq_id."""
     errors: list[str] = []

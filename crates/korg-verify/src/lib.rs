@@ -18,6 +18,14 @@
 use korg_ledger::{verify_chain, verify_dag};
 use serde_json::Value;
 
+/// Verify a single event's `event_sig` (lowercase hex) against a hex Ed25519
+/// public key, over the event's canonical preimage. Delegates to the
+/// conformance-tested `korg_ledger::verify_event_sig` so Rust, Python, and JS
+/// all check the identical message bytes. False on any error.
+pub fn verify_event_sig(pubkey_hex: &str, event: &Value, sig_hex: &str) -> bool {
+    korg_ledger::verify_event_sig(pubkey_hex, event, sig_hex)
+}
+
 /// The outcome of verifying a receipt or journal. `valid` is the conjunction of every
 /// applicable check; `signature_ok` is `None` when the artifact is unsigned (not
 /// applicable — not a failure).
@@ -31,6 +39,12 @@ pub struct Verdict {
     pub tip_ok: bool,
     pub signature_ok: Option<bool>,
     pub signer: Option<String>,
+    /// `None` when no `--pin-event-pubkey` was supplied; `Some(true/false)` when
+    /// per-event `event_sig`s were checked against the pinned key.
+    pub event_sigs_ok: Option<bool>,
+    /// `None` when no `--anchors` sidecar was supplied; `Some(true/false)` for the
+    /// structural anchor check (each anchor's entry_hash matches the chain).
+    pub anchors_ok: Option<bool>,
     pub errors: Vec<String>,
 }
 
@@ -91,8 +105,62 @@ pub fn verify_journal(events: &[Value], key: Option<&[u8]>) -> Verdict {
         tip_ok: true, // a bare journal makes no separate tip claim
         signature_ok: None,
         signer: None,
+        event_sigs_ok: None,
+        anchors_ok: None,
         errors,
     }
+}
+
+/// Journal verification plus the optional Phase-2 checks. When
+/// `pin_event_pubkey` is supplied, every event's `event_sig` must verify under
+/// that key (a missing or invalid signature fails the verdict). When `anchors`
+/// is supplied, each anchor's `entry_hash` must match the chain at its `seq_id`
+/// (the structural half; the external git-tip proof is a separate network step).
+pub fn verify_journal_extended(
+    events: &[Value],
+    key: Option<&[u8]>,
+    pin_event_pubkey: Option<&str>,
+    anchors: Option<&[Value]>,
+) -> Verdict {
+    let mut v = verify_journal(events, key);
+    if let Some(pk) = pin_event_pubkey {
+        let mut all_ok = true;
+        for e in events {
+            let seq = e
+                .get("seq_id")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "?".into());
+            match e.get("event_sig").and_then(|s| s.as_str()) {
+                Some(sig) if verify_event_sig(pk, e, sig) => {}
+                Some(_) => {
+                    all_ok = false;
+                    v.errors.push(format!(
+                        "seq {seq}: event_sig does not verify for the pinned key"
+                    ));
+                }
+                None => {
+                    all_ok = false;
+                    v.errors.push(format!(
+                        "seq {seq}: missing event_sig but a signer was required"
+                    ));
+                }
+            }
+        }
+        v.event_sigs_ok = Some(all_ok);
+        if !all_ok {
+            v.valid = false;
+        }
+    }
+    if let Some(anchors) = anchors {
+        let errs = korg_ledger::verify_anchors(events, anchors);
+        let ok = errs.is_empty();
+        v.anchors_ok = Some(ok);
+        v.errors.extend(errs);
+        if !ok {
+            v.valid = false;
+        }
+    }
+    v
 }
 
 /// Verify a receipt object: embedded events (chain + DAG), the recorded tip matches
@@ -162,6 +230,8 @@ pub fn verify_receipt(receipt: &Value, key: Option<&[u8]>, pin_pubkey: Option<&s
         tip_ok,
         signature_ok,
         signer,
+        event_sigs_ok: None,
+        anchors_ok: None,
         errors,
     }
 }

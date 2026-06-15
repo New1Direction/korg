@@ -115,3 +115,53 @@ Run a conformance harness (exit 0 = conformant): `python3 spec/korg-ledger-v1/co
   over the final `entry_hash` is a v1.1 candidate), or transport.
 - Floats are out of scope for v1 canonicalization (korg events don't emit them);
   add them under JCS number rules in a future version if needed.
+
+## 8. Phase-2 extensions: per-event signatures & external anchors
+
+These are **additive** and backward-compatible: both fields are excluded from
+the hash preimage (`HASH_FIELDS = ["entry_hash", "event_sig"]` in all impls), so
+an unsigned, un-anchored journal is byte-identical to v1 and every frozen vector
+still reproduces.
+
+### 8.1 Per-event signature (`event_sig`)
+
+- Optional field on an event. Value: lowercase hex of an Ed25519 signature
+  (64 bytes → 128 hex chars) over the **canonical preimage** — exactly the bytes
+  `chain_hash` hashes (`event` minus `HASH_FIELDS`, canonicalized per §2). The
+  signature is over the **raw preimage bytes**, not their SHA-256 (RFC 8032 pure
+  Ed25519).
+- Verify: `verify_event_sig(pubkey_hex, event, sig_hex)`. Implemented and
+  cross-checked in Rust (`korg-ledger`/`korg-verify`, `signing` feature), Python
+  (`korg_ledger.signing`, `cryptography` extra), and JS (`verify.mjs`, Web Crypto).
+  The frozen fixture `crates/korg-verify/tests/fixtures/signed-events.jsonl`
+  (signed by Python, seed `[42; 32]`) is verified by all three — the cross-impl
+  signature oracle.
+- What it adds: per-event attributability — the holder of the named key attests
+  to that exact event, independent of the chain. What it does **not** add: a
+  binding of the key to a real-world identity (the relying party pins the pubkey).
+
+### 8.2 External anchors (`anchors.jsonl`)
+
+A sidecar file (never in the preimage). One record per line:
+
+```json
+{"seq_id": 3, "entry_hash": "<hex>", "anchor_kind": "git-tip",
+ "anchor_proof": {"repo": "<url>", "commit": "<sha>"}, "anchored_at": "<ISO-8601>"}
+```
+
+- **Structural verification** (`verify_anchors(chain, anchors)`, implemented in
+  all three impls, always hermetic): every anchor's `entry_hash` must match the
+  chain event at its `seq_id`. Empty result = structurally sound.
+- **External verification** (`git-tip` kind, Rust verifier, network, off by
+  default): the named public commit must witness the `entry_hash`. A public git
+  commit is immutable once pushed and mirrored; an owner who rewrites the chain
+  must also rewrite/force-push the public commit, which any third party who has
+  fetched the repo will detect. **This** is what closes the
+  owner-rewrites-history-undetectably gap.
+- **Honest limits:** the structural check alone is necessary but not sufficient
+  (an owner controlling both the chain and `anchors.jsonl` can produce a
+  consistent local forgery — the external witness is the defense). `anchored_at`
+  is local wall-clock, **not** a trusted time source: a git-tip anchor proves the
+  chain was published *before any third party fetched it*, not before a specific
+  clock time. Anchors for seq_ids later removed by a rewind are stale and should
+  be dropped.

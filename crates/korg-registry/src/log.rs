@@ -667,6 +667,51 @@ impl CapabilityJournal {
         Ok(())
     }
 
+    /// Like `rewind`, but records the rewind as a tamper-evident `LedgerRewind`
+    /// event appended as the new chain tip — so a verifier can always see that a
+    /// rewind happened and which seq range it invalidated. The invalidated
+    /// future is still dropped (so it can't be replayed), but the *fact* of the
+    /// rewind is now part of the chain rather than silently erased.
+    pub fn rewind_with_seal(
+        &mut self,
+        target_seq_id: u64,
+        rewound_by: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<(), String> {
+        if target_seq_id > self.last_seq_id {
+            return Err(format!(
+                "Cannot rewind to sequence ID {} which is greater than the current last sequence ID {}",
+                target_seq_id, self.last_seq_id
+            ));
+        }
+        if target_seq_id != 0 && !self.events.iter().any(|e| e.seq_id == target_seq_id) {
+            return Err(format!(
+                "Cannot rewind to sequence ID {} — no event with that seq_id exists",
+                target_seq_id
+            ));
+        }
+        let invalidated_through = self.last_seq_id;
+        self.events.retain(|e| e.seq_id <= target_seq_id);
+        self.last_seq_id = target_seq_id;
+        self.clock = self
+            .events
+            .iter()
+            .map(|e| e.metadata.emitted_at)
+            .max()
+            .unwrap_or_default();
+        self.rebuild_triggered_by_index();
+        // Append the tamper-evident rewind record as the new tip (this chains
+        // onto the retained tip and flushes).
+        self.append(CapabilityEvent::LedgerRewind {
+            target_seq_id,
+            invalidated_through,
+            rewound_by: rewound_by.into(),
+            reason: reason.into(),
+            timestamp: Utc::now(),
+        });
+        Ok(())
+    }
+
     /// Flush history to disk atomically with exclusive advisory locking.
     ///
     /// **Important:** when `is_speculative` is true (preview/dry-run mode),
@@ -882,6 +927,38 @@ mod chain_tests {
     }
 
     #[test]
+    fn rewind_with_seal_records_a_tamper_evident_rewind_event() {
+        let mut j = temp_journal("seal");
+        j.append(sample_event("Read")); // seq 1
+        j.append(sample_event("Edit")); // seq 2
+        j.append(sample_event("Bash")); // seq 3
+        j.rewind_with_seal(1, "korg:test", "wrong path").unwrap();
+        // events after seq 1 are dropped, and a LedgerRewind is appended as the new tip
+        assert_eq!(j.events.len(), 2);
+        assert_eq!(j.events[0].seq_id, 1);
+        match &j.events[1].event {
+            CapabilityEvent::LedgerRewind {
+                target_seq_id,
+                invalidated_through,
+                ..
+            } => {
+                assert_eq!(*target_seq_id, 1);
+                assert_eq!(*invalidated_through, 3);
+            }
+            other => panic!("expected LedgerRewind tip, got {other:?}"),
+        }
+        // the chain, including the rewind record, still verifies
+        assert!(j.verify_chain().is_empty());
+    }
+
+    #[test]
+    fn rewind_with_seal_rejects_a_seq_that_never_existed() {
+        let mut j = temp_journal("seal-bad");
+        j.append(sample_event("Read"));
+        assert!(j.rewind_with_seal(99, "x", "y").is_err());
+    }
+
+    #[test]
     fn ledger_rewind_variant_serializes_with_its_tag() {
         let ev = CapabilityEvent::LedgerRewind {
             target_seq_id: 5,
@@ -893,5 +970,43 @@ mod chain_tests {
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["event_type"], "LedgerRewind");
         assert_eq!(v["target_seq_id"], 5);
+    }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        // For any chain of N events, sealing-rewind to k produces a chain that
+        // still verifies, with exactly k events + a LedgerRewind tip.
+        #[test]
+        fn rewind_with_seal_chain_always_verifies(n in 1usize..8, k in 1u64..8) {
+            let mut j = temp_journal("seal-prop");
+            for i in 0..n {
+                j.append(sample_event(&format!("t{i}")));
+            }
+            let target = k.min(n as u64);
+            j.rewind_with_seal(target, "korg:test", "proptest").unwrap();
+            prop_assert!(j.verify_chain().is_empty());
+            prop_assert_eq!(j.events.len(), target as usize + 1);
+            match &j.events.last().unwrap().event {
+                CapabilityEvent::LedgerRewind { target_seq_id, invalidated_through, .. } => {
+                    prop_assert_eq!(*target_seq_id, target);
+                    prop_assert_eq!(*invalidated_through, n as u64);
+                }
+                _ => prop_assert!(false, "tip must be LedgerRewind"),
+            }
+        }
+
+        // Appending after a sealed rewind keeps the chain continuous + valid.
+        #[test]
+        fn rewind_then_append_extends_the_chain(n in 1usize..6, k in 1u64..6) {
+            let mut j = temp_journal("seal-append");
+            for i in 0..n {
+                j.append(sample_event(&format!("t{i}")));
+            }
+            let target = k.min(n as u64);
+            j.rewind_with_seal(target, "korg:test", "proptest").unwrap();
+            j.append(sample_event("after"));
+            prop_assert!(j.verify_chain().is_empty());
+        }
     }
 }

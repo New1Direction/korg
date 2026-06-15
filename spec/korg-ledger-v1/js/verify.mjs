@@ -164,6 +164,50 @@ export async function verifyTipSig(pubkeyHex, tipHex, sigHex) {
   }
 }
 
+/**
+ * Verify an Ed25519 `event_sig` over an event's canonical preimage (the event
+ * minus HASH_FIELDS, canonicalized) — the per-event analogue of verifyTipSig.
+ * Byte-identical message to the Rust `verify_event_sig` and Python signing.
+ * Any malformed input or unsupported algorithm returns false rather than throwing.
+ */
+export async function verifyEventSig(pubkeyHex, event, sigHex) {
+  try {
+    const pk = hexToBytes(pubkeyHex);
+    const sig = hexToBytes(sigHex);
+    if (!pk || !sig || pk.length !== 32 || sig.length !== 64) return false;
+    const obj = { ...event };
+    for (const f of HASH_FIELDS) delete obj[f];
+    const msg = canonicalize(obj);
+    const key = await subtle.importKey("raw", pk, { name: "Ed25519" }, false, ["verify"]);
+    return await subtle.verify({ name: "Ed25519" }, key, sig, msg);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Structural verification of an anchors.jsonl sidecar against a verified chain:
+ * each anchor's `entry_hash` must match the chain event at its `seq_id`. Always
+ * hermetic (no network). Returns [] iff every anchor matches. The external
+ * git-tip proof (the actual owner-rewrite defense) is checked by the Rust verifier.
+ */
+export function verifyAnchors(chain, anchors) {
+  const errors = [];
+  const bySeq = new Map(chain.map((e) => [e.seq_id, e]));
+  for (const a of anchors) {
+    const seq = a.seq_id;
+    const want = a.entry_hash;
+    if (seq == null || want == null) {
+      errors.push("anchor record missing seq_id or entry_hash");
+      continue;
+    }
+    const e = bySeq.get(seq);
+    if (!e) errors.push(`anchor seq ${seq}: no event with that seq_id in the chain`);
+    else if (e.entry_hash !== want) errors.push(`anchor seq ${seq}: entry_hash does not match the chain`);
+  }
+  return errors;
+}
+
 /** Verify a list of events as a journal: hash chain + causal DAG. */
 export async function verifyJournal(events, keyBytes = null) {
   const errors = await verifyChain(events, keyBytes);

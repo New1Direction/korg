@@ -24,6 +24,12 @@ pub const GENESIS_HASH: &str = "000000000000000000000000000000000000000000000000
 /// tips. Kept OUTSIDE the chain preimage so it never affects `entry_hash`.
 pub const ANCHORS_FILE: &str = "anchors.jsonl";
 
+/// Anchor kind: the chain tip's `entry_hash` is committed to a public git repo,
+/// whose immutable commit serves as the external witness that closes the
+/// owner-rewrite-undetectably gap. `anchor_proof` carries
+/// `{"repo": "<url>", "commit": "<sha>"}`.
+pub const ANCHOR_KIND_GIT_TIP: &str = "git-tip";
+
 /// Fields that ARE the hash/signature and so are excluded from the preimage.
 /// `event_sig` is the reserved Phase-2 per-event signature slot: excluding it
 /// in lockstep across all implementations means a signed event hashes the same
@@ -142,6 +148,46 @@ pub fn chain_hash(event: &Value, key: Option<&[u8]>) -> String {
     }
 }
 
+/// Canonical preimage bytes for an event — exactly the bytes `chain_hash`
+/// hashes (the event with `HASH_FIELDS` removed, canonicalized). Exposed so
+/// signers/verifiers/anchors reuse the same bytes without duplicating logic.
+pub fn event_preimage(event: &Value) -> Vec<u8> {
+    let mut obj = event.as_object().cloned().unwrap_or_default();
+    for f in HASH_FIELDS {
+        obj.remove(*f);
+    }
+    canonicalize(&Value::Object(obj))
+}
+
+/// Ed25519-sign an event's canonical preimage (RFC 8032, pure — the raw
+/// preimage bytes are the message, NOT their hash). Returns lowercase hex.
+#[cfg(feature = "signing")]
+pub fn sign_event(key: &ed25519_dalek::SigningKey, event: &Value) -> String {
+    use ed25519_dalek::Signer;
+    hex::encode(key.sign(&event_preimage(event)).to_bytes())
+}
+
+/// Verify an event's `event_sig` (lowercase hex) against a hex Ed25519 public
+/// key. Returns false on any decode/length/verification error.
+#[cfg(feature = "signing")]
+pub fn verify_event_sig(pubkey_hex: &str, event: &Value, sig_hex: &str) -> bool {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    let pk: [u8; 32] = match hex::decode(pubkey_hex).ok().and_then(|b| b.try_into().ok()) {
+        Some(p) => p,
+        None => return false,
+    };
+    let vk = match VerifyingKey::from_bytes(&pk) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let sig: [u8; 64] = match hex::decode(sig_hex).ok().and_then(|b| b.try_into().ok()) {
+        Some(s) => s,
+        None => return false,
+    };
+    vk.verify(&event_preimage(event), &Signature::from_bytes(&sig))
+        .is_ok()
+}
+
 /// Recompute the hash-chain and report tampering (korg-ledger@v1 §5).
 /// Returns an empty vec iff the chain is intact; each error names a `seq_id`.
 pub fn verify_chain(events: &[Value], key: Option<&[u8]>) -> Vec<String> {
@@ -212,10 +258,90 @@ pub fn verify_dag(events: &[Value]) -> Vec<String> {
     errors
 }
 
+/// Structural verification of an `anchors.jsonl` sidecar against an
+/// already-verified chain (korg-ledger@v1 §8). For each anchor record, the
+/// event at `seq_id` must exist in the chain and its `entry_hash` must equal the
+/// anchor's. Returns an empty vec iff every anchor matches.
+///
+/// This is the LOCAL half of anchoring and is always hermetic. The EXTERNAL
+/// half — checking that the anchor's `anchor_proof` (e.g. a public git commit)
+/// actually witnesses that `entry_hash` — is what closes the owner-rewrite gap;
+/// it is verified separately (network) and documented in the spec.
+pub fn verify_anchors(chain: &[Value], anchors: &[Value]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for a in anchors {
+        let seq = a.get("seq_id").and_then(|v| v.as_u64());
+        let want = a.get("entry_hash").and_then(|v| v.as_str());
+        match (seq, want) {
+            (Some(seq), Some(want)) => {
+                match chain
+                    .iter()
+                    .find(|e| e.get("seq_id").and_then(|v| v.as_u64()) == Some(seq))
+                {
+                    None => errors.push(format!(
+                        "anchor seq {seq}: no event with that seq_id in the chain"
+                    )),
+                    Some(e) if e.get("entry_hash").and_then(|v| v.as_str()) != Some(want) => errors
+                        .push(format!(
+                            "anchor seq {seq}: entry_hash does not match the chain"
+                        )),
+                    Some(_) => {}
+                }
+            }
+            _ => errors.push("anchor record missing seq_id or entry_hash".into()),
+        }
+    }
+    errors
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn verify_anchors_accepts_correct_and_flags_wrong_or_missing() {
+        use std::collections::BTreeMap;
+        let payloads: Vec<BTreeMap<String, i64>> = (0..3)
+            .map(|i| {
+                let mut m = BTreeMap::new();
+                m.insert("i".to_string(), i as i64);
+                m
+            })
+            .collect();
+        let chain = chain_for_anchors(&payloads);
+        let tip = chain[2]["entry_hash"].as_str().unwrap().to_string();
+
+        let good = json!([{"seq_id": 3, "entry_hash": tip, "anchor_kind": ANCHOR_KIND_GIT_TIP}]);
+        assert!(verify_anchors(&chain, good.as_array().unwrap()).is_empty());
+
+        let wrong = json!([{"seq_id": 3, "entry_hash": "deadbeef"}]);
+        let errs = verify_anchors(&chain, wrong.as_array().unwrap());
+        assert!(errs.iter().any(|e| e.contains("seq 3")), "{errs:?}");
+
+        let missing = json!([{"seq_id": 99, "entry_hash": tip}]);
+        assert!(!verify_anchors(&chain, missing.as_array().unwrap()).is_empty());
+    }
+
+    // local helper so the anchor test doesn't depend on the proptest build_chain
+    fn chain_for_anchors(payloads: &[std::collections::BTreeMap<String, i64>]) -> Vec<Value> {
+        let mut out = Vec::new();
+        let mut prev = GENESIS_HASH.to_string();
+        for (i, p) in payloads.iter().enumerate() {
+            let mut obj = serde_json::Map::new();
+            obj.insert("seq_id".into(), json!(i as u64 + 1));
+            obj.insert("prev_hash".into(), json!(prev));
+            obj.insert("payload".into(), serde_json::to_value(p).unwrap());
+            let mut val = Value::Object(obj);
+            let h = chain_hash(&val, None);
+            val.as_object_mut()
+                .unwrap()
+                .insert("entry_hash".into(), json!(h));
+            prev = h;
+            out.push(val);
+        }
+        out
+    }
 
     #[test]
     fn event_sig_is_excluded_from_the_preimage() {
@@ -225,6 +351,90 @@ mod tests {
         let mut signed = base.clone();
         signed["event_sig"] = json!("ZmFrZS1zaWc=");
         assert_eq!(chain_hash(&base, None), chain_hash(&signed, None));
+    }
+
+    use proptest::prelude::*;
+    use std::collections::BTreeMap;
+
+    /// Build a valid hash-chain from arbitrary small payloads.
+    fn build_chain(payloads: &[BTreeMap<String, i64>], key: Option<&[u8]>) -> Vec<Value> {
+        let mut out = Vec::new();
+        let mut prev = GENESIS_HASH.to_string();
+        for (i, p) in payloads.iter().enumerate() {
+            let mut obj = serde_json::Map::new();
+            obj.insert("seq_id".into(), json!(i as u64 + 1));
+            obj.insert("prev_hash".into(), json!(prev));
+            obj.insert("payload".into(), serde_json::to_value(p).unwrap());
+            let mut val = Value::Object(obj);
+            let h = chain_hash(&val, key);
+            val.as_object_mut()
+                .unwrap()
+                .insert("entry_hash".into(), json!(h));
+            prev = h;
+            out.push(val);
+        }
+        out
+    }
+
+    proptest! {
+        // Any well-formed chain verifies clean (no false positives), keyed or not.
+        #[test]
+        fn any_built_chain_verifies_clean(
+            payloads in prop::collection::vec(
+                prop::collection::btree_map("[a-z]{1,5}", any::<i64>(), 0..4), 0..12),
+            use_key in any::<bool>(),
+        ) {
+            let key: Option<&[u8]> = if use_key { Some(b"k") } else { None };
+            prop_assert!(verify_chain(&build_chain(&payloads, key), key).is_empty());
+        }
+
+        // Mutating ANY event's content is detected (no false negatives).
+        #[test]
+        fn tampering_any_event_is_detected(
+            payloads in prop::collection::vec(
+                prop::collection::btree_map("[a-z]{1,5}", any::<i64>(), 1..4), 1..8),
+            idx in any::<usize>(),
+        ) {
+            let mut chain = build_chain(&payloads, None);
+            let i = idx % chain.len();
+            chain[i].as_object_mut().unwrap().insert("TAMPER".into(), json!(1));
+            prop_assert!(!verify_chain(&chain, None).is_empty());
+        }
+
+        // Reordering two distinct events breaks the chain.
+        #[test]
+        fn reordering_breaks_the_chain(
+            payloads in prop::collection::vec(
+                prop::collection::btree_map("[a-z]{1,5}", any::<i64>(), 1..4), 2..8),
+        ) {
+            let mut chain = build_chain(&payloads, None);
+            let last = chain.len() - 1;
+            chain.swap(0, last);
+            prop_assert!(!verify_chain(&chain, None).is_empty());
+        }
+
+        // canonicalize is stable across a JSON round-trip for arbitrary unicode.
+        #[test]
+        fn canonicalize_round_trips_unicode(s in ".*") {
+            let v = json!({ "k": s });
+            let once = canonicalize(&v);
+            let reparsed: Value = serde_json::from_slice(&once).unwrap();
+            prop_assert_eq!(once, canonicalize(&reparsed));
+        }
+
+        // canonicalize is insertion-order independent (keys are sorted).
+        // Use a btree_map input so keys are unique — duplicate keys would make
+        // forward vs reverse insertion legitimately differ (last-write-wins).
+        #[test]
+        fn canonicalize_is_key_order_independent(
+            m in prop::collection::btree_map("[a-z]{1,6}", any::<i64>(), 0..8),
+        ) {
+            let mut a = serde_json::Map::new();
+            for (k, v) in m.iter() { a.insert(k.clone(), json!(v)); }
+            let mut b = serde_json::Map::new();
+            for (k, v) in m.iter().rev() { b.insert(k.clone(), json!(v)); }
+            prop_assert_eq!(canonicalize(&Value::Object(a)), canonicalize(&Value::Object(b)));
+        }
     }
 
     #[test]
@@ -255,5 +465,39 @@ mod tests {
         let mut other = ev.clone();
         other["prev_hash"] = json!("ff");
         assert_ne!(chain_hash(&other, None), h);
+    }
+}
+
+#[cfg(all(test, feature = "signing"))]
+mod signing_tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+    use serde_json::json;
+
+    #[test]
+    fn sign_then_verify_roundtrips_and_detects_tampering() {
+        let key = SigningKey::from_bytes(&[42u8; 32]);
+        let pk_hex = hex::encode(key.verifying_key().to_bytes());
+        let ev = json!({"seq_id": 1, "prev_hash": GENESIS_HASH, "payload": {"a": 1}, "entry_hash": "deadbeef"});
+        let sig = sign_event(&key, &ev);
+        assert_eq!(sig.len(), 128); // 64-byte signature as lowercase hex
+        assert!(verify_event_sig(&pk_hex, &ev, &sig));
+        // tampering event content breaks verification
+        let mut tampered = ev.clone();
+        tampered["payload"] = json!({"a": 2});
+        assert!(!verify_event_sig(&pk_hex, &tampered, &sig));
+        // a wrong pubkey / malformed sig returns false (never panics)
+        assert!(!verify_event_sig("not-hex", &ev, &sig));
+        assert!(!verify_event_sig(&pk_hex, &ev, "00"));
+    }
+
+    #[test]
+    fn signature_excludes_entry_hash_and_event_sig_from_the_preimage() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let a = json!({"seq_id": 1, "prev_hash": GENESIS_HASH, "x": "y"});
+        let mut b = a.clone();
+        b["entry_hash"] = json!("anything");
+        b["event_sig"] = json!("anything");
+        assert_eq!(sign_event(&key, &a), sign_event(&key, &b));
     }
 }

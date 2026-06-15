@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>korg ledger verifier — verify an AI-agent session in your browser</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23131a1f'/%3E%3Cpath d='M3 8.5l3.2 3.2L13 4.5' fill='none' stroke='%237ef0c0' stroke-width='2'/%3E%3C/svg%3E" />
+<meta name="description" content="Independently verify a korg-ledger@v1 AI-agent session — hash chain, causal DAG, Ed25519 signatures, anchors — entirely in your browser. Zero trust, no install, sends nothing." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* Forensic-instrument palette (oklch) */
+    --bg:        oklch(15% 0.012 250);
+    --bg-2:      oklch(18% 0.014 250);
+    --surface:   oklch(21% 0.016 250);
+    --line:      oklch(30% 0.02 250);
+    --ink:       oklch(90% 0.012 250);
+    --muted:     oklch(64% 0.018 250);
+    --faint:     oklch(48% 0.018 250);
+    --signal:    oklch(86% 0.17 162);   /* phosphor mint — VERIFIED */
+    --signal-dim: oklch(52% 0.10 162);
+    --amber:     oklch(82% 0.14 78);    /* unsigned / not-checked */
+    --alarm:     oklch(66% 0.22 26);    /* TAMPERED */
+    --alarm-dim: oklch(40% 0.13 26);
+
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --serif: "Fraunces", Georgia, serif;
+
+    --text-data: clamp(0.78rem, 0.72rem + 0.3vw, 0.92rem);
+    --text-hero: clamp(2.6rem, 1.2rem + 5.6vw, 6.2rem);
+    --space: clamp(1.5rem, 1rem + 3vw, 4rem);
+
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: var(--text-data);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    /* faint scanline + grain atmosphere */
+    background-image:
+      repeating-linear-gradient(0deg, transparent 0 3px, oklch(0% 0 0 / 0.10) 3px 4px),
+      radial-gradient(120% 80% at 50% -10%, oklch(24% 0.03 200 / 0.5), transparent 60%);
+    background-attachment: fixed;
+  }
+  a { color: var(--signal); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 3rem); }
+
+  /* ── instrument header ─────────────────────────────────────────── */
+  header {
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 5;
+    background: oklch(15% 0.012 250 / 0.86);
+    backdrop-filter: blur(8px);
+  }
+  .bar { display: flex; align-items: baseline; gap: 1rem; padding: 0.9rem 0; flex-wrap: wrap; }
+  .mark { font-family: var(--serif); font-weight: 900; font-size: 1.5rem; letter-spacing: -0.02em; color: var(--ink); }
+  .mark b { color: var(--signal); font-style: italic; font-weight: 600; }
+  .sub { color: var(--faint); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .privacy { margin-left: auto; color: var(--signal-dim); font-size: 0.72rem; display: inline-flex; gap: 0.5rem; align-items: center; }
+  .privacy::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 8px var(--signal); animation: pulse 2.4s var(--ease) infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  /* ── hero / intake ─────────────────────────────────────────────── */
+  .hero { padding: var(--space) 0 1.5rem; }
+  h1 {
+    font-family: var(--serif); font-weight: 900; font-size: var(--text-hero);
+    line-height: 0.92; letter-spacing: -0.03em; margin: 0 0 1rem; max-width: 16ch;
+  }
+  h1 em { font-style: italic; font-weight: 400; color: var(--signal); }
+  .lede { color: var(--muted); max-width: 58ch; font-size: clamp(0.86rem, 0.8rem + 0.4vw, 1rem); }
+  .lede strong { color: var(--ink); font-weight: 500; }
+
+  /* drop / paste */
+  .intake { margin-top: 2.2rem; display: grid; gap: 1rem; }
+  .drop {
+    border: 1.5px dashed var(--line); border-radius: 4px; background: var(--bg-2);
+    padding: 1.6rem; transition: border-color .2s var(--ease), background .2s var(--ease);
+    display: grid; gap: 0.9rem;
+  }
+  .drop.hot { border-color: var(--signal); background: oklch(20% 0.03 162 / 0.4); }
+  .drop-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .drop-head span { color: var(--muted); }
+  textarea {
+    width: 100%; min-height: 130px; resize: vertical; background: var(--bg);
+    color: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 0.8rem;
+    font-family: var(--mono); font-size: 0.82rem; line-height: 1.5;
+  }
+  textarea:focus-visible, input:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+  .opt-row { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center; }
+  label.field { display: grid; gap: 0.3rem; font-size: 0.72rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; flex: 1 1 240px; }
+  input[type=text] { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 0.55rem 0.7rem; font-family: var(--mono); font-size: 0.8rem; }
+
+  .actions { display: flex; gap: 0.7rem; flex-wrap: wrap; align-items: center; }
+  button { font-family: var(--mono); cursor: pointer; border-radius: 3px; font-size: 0.8rem; transition: transform .12s var(--ease), background .15s var(--ease), border-color .15s var(--ease); }
+  button:active { transform: translateY(1px); }
+  .btn-go { background: var(--signal); color: oklch(18% 0.04 162); border: none; font-weight: 700; padding: 0.7rem 1.4rem; letter-spacing: 0.03em; }
+  .btn-go:hover { background: oklch(90% 0.17 162); box-shadow: 0 0 24px oklch(86% 0.17 162 / 0.4); }
+  .examples { margin-left: auto; display: flex; gap: 0.4rem; align-items: center; }
+  .examples span { color: var(--faint); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .chip { background: transparent; border: 1px solid var(--line); color: var(--muted); padding: 0.4rem 0.7rem; }
+  .chip:hover { border-color: var(--ink); color: var(--ink); }
+
+  /* ── verdict ──────────────────────────────────────────────────── */
+  .results { padding: 1rem 0 var(--space); display: none; }
+  .results.show { display: block; }
+  .verdict {
+    border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 4px;
+    background: var(--surface); padding: 1.4rem 1.6rem; margin-bottom: 1.6rem;
+    display: grid; grid-template-columns: auto 1fr; gap: 1.4rem; align-items: center;
+    animation: settle .5s var(--ease) both;
+  }
+  @keyframes settle { from { opacity: 0; transform: scale(.985) translateY(6px); } }
+  .verdict.ok    { border-left-color: var(--signal); }
+  .verdict.warn  { border-left-color: var(--amber); }
+  .verdict.bad   { border-left-color: var(--alarm); }
+  .stamp {
+    font-family: var(--serif); font-weight: 900; font-size: clamp(1.6rem, 1rem + 2.4vw, 2.6rem);
+    letter-spacing: -0.02em; line-height: 1; padding: 0.5rem 0; white-space: nowrap;
+  }
+  .verdict.ok .stamp { color: var(--signal); }
+  .verdict.warn .stamp { color: var(--amber); }
+  .verdict.bad .stamp { color: var(--alarm); }
+  .stamp small { display: block; font-family: var(--mono); font-weight: 500; font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin-top: 0.5rem; }
+  .checks { display: flex; flex-wrap: wrap; gap: 0.5rem 1.4rem; }
+  .check { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.82rem; color: var(--muted); }
+  .check b { color: var(--ink); font-weight: 500; }
+  .glyph { width: 1.05em; height: 1.05em; flex: none; }
+  .g-ok   { color: var(--signal); }
+  .g-bad  { color: var(--alarm); }
+  .g-na   { color: var(--faint); }
+  .g-warn { color: var(--amber); }
+
+  /* ── chain visualization ──────────────────────────────────────── */
+  .chain-title { color: var(--faint); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 0.8rem; }
+  .chain { display: grid; gap: 0; counter-reset: ev; }
+  .ev {
+    position: relative; display: grid;
+    grid-template-columns: 4.5rem 1fr auto; gap: 1rem; align-items: center;
+    padding: 0.7rem 0.9rem; border: 1px solid var(--line); border-bottom: none;
+    background: var(--bg-2);
+    opacity: 0; transform: translateX(-10px);
+    animation: reveal .4s var(--ease) forwards;
+  }
+  .ev:first-child { border-radius: 4px 4px 0 0; }
+  .ev:last-child  { border-bottom: 1px solid var(--line); border-radius: 0 0 4px 4px; }
+  @keyframes reveal { to { opacity: 1; transform: none; } }
+  /* the chain link — a vertical bar that "charges" from dim to signal */
+  .ev::before {
+    content: ""; position: absolute; left: 1.5rem; top: -1px; width: 2px; height: 1px;
+    background: var(--line);
+  }
+  .ev:not(:first-child)::before { height: calc(0.7rem + 1px); top: calc(-0.35rem); }
+  .ev .seq { font-size: 0.72rem; color: var(--faint); }
+  .ev .seq b { color: var(--ink); font-weight: 700; }
+  .ev .tool { color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ev .tool small { color: var(--muted); font-weight: 400; margin-left: 0.5rem; }
+  .ev .status { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; }
+  .ev[data-ok="true"]  { border-left: 3px solid var(--signal-dim); }
+  .ev[data-ok="true"]  .status { color: var(--signal); }
+  .ev[data-ok="false"] { border-left: 3px solid var(--alarm); background: oklch(22% 0.05 26 / 0.5); }
+  .ev[data-ok="false"] .status { color: var(--alarm); }
+  .ev[data-ok="false"]::before { background: var(--alarm); box-shadow: 0 0 8px var(--alarm); }
+  .ev[data-ok="true"]::before  { background: var(--signal); }
+  .ev .sig { font-size: 0.68rem; color: var(--faint); }
+  .ev .sig.signed { color: var(--signal); }
+  .ev .sig.badsig { color: var(--alarm); }
+
+  /* ── proves / disclaimer ──────────────────────────────────────── */
+  .ledger-meta { color: var(--faint); font-size: 0.72rem; margin: 0.8rem 0 0; }
+  .proves { margin-top: 2.4rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; }
+  @media (max-width: 620px) { .proves { grid-template-columns: 1fr; } .verdict { grid-template-columns: 1fr; } }
+  .panel { border: 1px solid var(--line); border-radius: 4px; padding: 1.1rem 1.3rem; background: var(--bg-2); }
+  .panel h3 { font-family: var(--serif); font-weight: 600; font-size: 1.05rem; margin: 0 0 0.6rem; }
+  .panel.yes h3 { color: var(--signal); }
+  .panel.no h3 { color: var(--amber); }
+  .panel ul { margin: 0; padding-left: 1.1rem; color: var(--muted); display: grid; gap: 0.4rem; }
+  .panel li { font-size: 0.8rem; }
+
+  footer { border-top: 1px solid var(--line); margin-top: var(--space); padding: 1.4rem 0 3rem; color: var(--faint); font-size: 0.74rem; display: flex; gap: 1.2rem; flex-wrap: wrap; justify-content: space-between; }
+
+  .err-note { color: var(--alarm); font-size: 0.78rem; margin-top: 0.6rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before { animation: none !important; transition: none !important; }
+    .ev { opacity: 1; transform: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <span class="mark">korg <b>verifier</b></span>
+    <span class="sub">korg-ledger@v1</span>
+    <span class="privacy" id="privacy">runs in your browser · sends nothing</span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>Was this agent session <em>actually</em> what it claims?</h1>
+    <p class="lede">Drop a captured AI-agent ledger below. This page recomputes the
+      hash&#8209;chain, the causal DAG, every per-event <strong>Ed25519 signature</strong>, and any
+      <strong>external anchors</strong> — entirely on your machine, using the same
+      conformance-tested verifier shipped in Rust, Python, and this JavaScript.
+      <strong>Zero trust in the tool that produced it.</strong></p>
+
+    <div class="intake">
+      <div class="drop" id="drop">
+        <div class="drop-head">
+          <strong>Drop a <code>ledger.jsonl</code></strong>
+          <span>or paste the events below — one JSON object per line, or a JSON array</span>
+        </div>
+        <textarea id="input" spellcheck="false" aria-label="ledger events" placeholder='{"schema_version":"1.0","seq_id":1,"metadata":{...},"event":{...},"prev_hash":"0000...","entry_hash":"..."}'></textarea>
+        <div class="opt-row">
+          <label class="field">signer public key (hex) — optional, to check per-event signatures
+            <input type="text" id="pubkey" spellcheck="false" placeholder="e.g. 197f6b23e16c8532…" />
+          </label>
+          <label class="field">anchors.jsonl — optional, paste anchor records
+            <input type="text" id="anchors" spellcheck="false" placeholder='{"seq_id":N,"entry_hash":"…","anchor_kind":"git-tip"}' />
+          </label>
+        </div>
+        <div class="actions">
+          <button class="btn-go" id="verify">▸ Verify</button>
+          <div class="examples">
+            <span>try:</span>
+            <button class="chip" data-ex="session">real session ✓</button>
+            <button class="chip" data-ex="tampered">tampered ✗</button>
+            <button class="chip" data-ex="signed">signed ✓</button>
+          </div>
+        </div>
+        <p class="err-note" id="err" hidden></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="results" id="results" aria-live="polite">
+    <div class="verdict" id="verdict">
+      <div class="stamp" id="stamp">—</div>
+      <div class="checks" id="checks"></div>
+    </div>
+
+    <p class="chain-title">hash-chain · <span id="evcount">0</span> events</p>
+    <div class="chain" id="chain"></div>
+    <p class="ledger-meta" id="meta"></p>
+
+    <div class="proves">
+      <div class="panel yes">
+        <h3>What a green verdict proves</h3>
+        <ul>
+          <li>The events are <b>hash-chained intact</b> — no edit, deletion, insertion, or reorder.</li>
+          <li>They form a <b>well-formed causal DAG</b> (every <code>triggered_by</code> is strictly earlier).</li>
+          <li>If a signer key is pinned: the holder of that key <b>attests to each event</b>.</li>
+          <li>If anchors are present: the tip <b>matches an externally-witnessed record</b>.</li>
+        </ul>
+      </div>
+      <div class="panel no">
+        <h3>What it does <em>not</em> prove</h3>
+        <ul>
+          <li><b>When</b> it happened — local timestamps aren't a trusted time source (use a git-tip anchor).</li>
+          <li>That the key maps to a <b>real-world identity</b> — you pin the public key out of band.</li>
+          <li>That the agent's <b>tool outputs were truthful</b> — only that the record is unaltered.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <span>korg-ledger@v1 · independent verifier · Web Crypto Ed25519 + SHA-256</span>
+  <span id="engine">engine: ../js/verify.mjs (conformance-pinned)</span>
+</footer>
+
+<script type="module">
+import { verifyDag, verifyAnchors, verifyEventSig, chainHash } from "../js/verify.mjs";
+
+const $ = (id) => document.getElementById(id);
+const GENESIS = "0".repeat(64);
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const ICONS = {
+  ok:  '<svg class="glyph g-ok" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8.5l3.2 3.2L13 4.5"/></svg>',
+  bad: '<svg class="glyph g-bad" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+  na:  '<svg class="glyph g-na" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h10"/></svg>',
+  warn:'<svg class="glyph g-warn" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v6M8 12v.5"/></svg>',
+};
+
+function parseLedger(text) {
+  text = text.trim();
+  if (!text) throw new Error("paste a ledger or load an example");
+  if (text.startsWith("[")) return JSON.parse(text);
+  return text.split("\n").filter((l) => l.trim()).map((l, i) => {
+    try { return JSON.parse(l); }
+    catch { throw new Error(`line ${i + 1} is not valid JSON`); }
+  });
+}
+
+function parseAnchors(text) {
+  text = (text || "").trim();
+  if (!text) return null;
+  if (text.startsWith("[")) return JSON.parse(text);
+  return text.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+}
+
+// Recompute per-event status exactly like verify_chain: each entry_hash must
+// match its recomputed preimage hash, and prev_hash must equal the prior
+// stored entry_hash (so a break localizes to one seq).
+async function perEvent(events, pubkey) {
+  let expectedPrev = GENESIS;
+  const rows = [];
+  for (const e of events) {
+    const hashOk = (await chainHash(e, null)) === e.entry_hash;
+    const linkOk = e.prev_hash === expectedPrev;
+    let sig = "none";
+    if (e.event_sig && pubkey) sig = (await verifyEventSig(pubkey, e, e.event_sig)) ? "signed" : "badsig";
+    else if (e.event_sig) sig = "unverified";
+    rows.push({ e, ok: hashOk && linkOk, hashOk, linkOk, sig });
+    expectedPrev = typeof e.entry_hash === "string" ? e.entry_hash : null;
+  }
+  return rows;
+}
+
+function toolOf(e) {
+  const ev = e.event || {};
+  const name = ev.tool_name || ev.event_type || "event";
+  let detail = "";
+  const a = ev.args || {};
+  detail = a.prompt || a.file_path || a.command || a.file || "";
+  if (typeof detail !== "string") detail = "";
+  return { name, detail: detail.slice(0, 64) };
+}
+
+async function run() {
+  $("err").hidden = true;
+  let events, anchors;
+  try {
+    events = parseLedger($("input").value);
+    anchors = parseAnchors($("anchors").value);
+    if (!Array.isArray(events) || !events.length) throw new Error("no events found");
+  } catch (e) {
+    $("err").textContent = "✗ " + e.message; $("err").hidden = false; return;
+  }
+  const pubkey = $("pubkey").value.trim().toLowerCase() || null;
+
+  const rows = await perEvent(events, pubkey);
+  const dagErrors = verifyDag(events);
+  const chainOk = rows.every((r) => r.ok);
+  const dagOk = dagErrors.length === 0;
+  const signed = rows.filter((r) => r.e.event_sig).length;
+  const sigsOk = pubkey ? rows.filter((r) => r.e.event_sig).every((r) => r.sig === "signed") : null;
+  let anchorsOk = null;
+  if (anchors) anchorsOk = verifyAnchors(events, anchors).length === 0;
+
+  render(rows, { chainOk, dagOk, signed, total: events.length, pubkey, sigsOk, anchors, anchorsOk });
+}
+
+function render(rows, s) {
+  const results = $("results"); results.classList.add("show");
+  const verdict = $("verdict"), stamp = $("stamp"), checks = $("checks");
+
+  const hard = s.chainOk && s.dagOk && s.sigsOk !== false && s.anchorsOk !== false;
+  let cls, word, note;
+  if (!hard) { cls = "bad"; word = "TAMPERED"; note = "the recorded history was altered"; }
+  else if (s.pubkey && s.sigsOk) { cls = "ok"; word = "VERIFIED"; note = "intact · signatures valid"; }
+  else if (s.signed && !s.pubkey) { cls = "warn"; word = "INTACT"; note = "chain valid · pin a key to check signatures"; }
+  else { cls = "ok"; word = "VERIFIED"; note = "hash-chain + causal DAG intact"; }
+  verdict.className = "verdict " + cls;
+  stamp.innerHTML = `${word}<small>${note}</small>`;
+
+  const check = (icon, label, val) => `<span class="check">${ICONS[icon]} <b>${label}</b> ${val}</span>`;
+  const parts = [
+    check(s.chainOk ? "ok" : "bad", "hash chain", s.chainOk ? "intact" : "broken"),
+    check(s.dagOk ? "ok" : "bad", "causal DAG", s.dagOk ? "well-formed" : "invalid"),
+  ];
+  if (s.pubkey) parts.push(check(s.sigsOk ? "ok" : "bad", "signatures", `${s.signed}/${s.total} under pinned key`));
+  else if (s.signed) parts.push(check("warn", "signatures", `${s.signed} present — no key pinned`));
+  else parts.push(check("na", "signatures", "none"));
+  if (s.anchors) parts.push(check(s.anchorsOk ? "ok" : "bad", "anchors", s.anchorsOk ? "match chain" : "mismatch"));
+  checks.innerHTML = parts.join("");
+
+  $("evcount").textContent = s.total;
+  const chain = $("chain"); chain.innerHTML = "";
+  rows.forEach((r, i) => {
+    const { name, detail } = toolOf(r.e);
+    const el = document.createElement("div");
+    el.className = "ev";
+    el.dataset.ok = String(r.ok);
+    el.style.animationDelay = reduce ? "0ms" : `${i * 70}ms`;
+    const sigTxt = r.sig === "signed" ? '<span class="sig signed">✓ signed</span>'
+      : r.sig === "badsig" ? '<span class="sig badsig">✗ bad sig</span>'
+      : r.sig === "unverified" ? '<span class="sig">⚿ signed (no key)</span>' : '<span class="sig"></span>';
+    const statusTxt = r.ok ? "verified" : (!r.hashOk ? "content tampered" : "chain broken");
+    el.innerHTML = `
+      <span class="seq">seq <b>${r.e.seq_id ?? "?"}</b></span>
+      <span class="tool">${escapeHtml(name)}${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</span>
+      <span class="status">${r.ok ? ICONS.ok : ICONS.bad} ${statusTxt} ${sigTxt}</span>`;
+    chain.appendChild(el);
+  });
+
+  const root = rows[0]?.e?.metadata?.root_event_id;
+  $("meta").textContent = `tip ${(rows.at(-1)?.e?.entry_hash || "").slice(0, 16)}… · ${s.signed} signed · ${root ? "session " + String(root).slice(0, 8) : "unrooted"}`;
+  results.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+// ── intake wiring ──────────────────────────────────────────────────
+$("verify").addEventListener("click", run);
+const drop = $("drop");
+["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("hot"); }));
+["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("hot"); }));
+drop.addEventListener("drop", async (e) => {
+  const f = e.dataTransfer.files[0]; if (!f) return;
+  $("input").value = await f.text(); run();
+});
+
+async function loadExample(which) {
+  const map = { session: "session.jsonl", tampered: "tampered.jsonl", signed: "signed.jsonl" };
+  const txt = await (await fetch("samples/" + map[which])).text();
+  $("input").value = txt.trim();
+  $("anchors").value = "";
+  $("pubkey").value = which === "signed" ? (await (await fetch("samples/signed.pubkey")).text()).trim() : "";
+  run();
+}
+document.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => loadExample(c.dataset.ex)));
+</script>
+</body>
+</html>
