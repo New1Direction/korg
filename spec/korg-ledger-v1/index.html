@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>korg — verifiable proof of what an AI agent actually did</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23131a1f'/%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%23f0c46a' stroke-width='1.5'/%3E%3Cpath d='M5.5 8l1.8 1.8L10.7 6' fill='none' stroke='%23f0c46a' stroke-width='1.6'/%3E%3C/svg%3E" />
+<meta name="description" content="korg-ledger@v1 — an open standard for tamper-evident AI-agent ledgers. Verify a Gold Seal or a raw session entirely in your browser: hash chain, causal DAG, re-derived summary, Ed25519 seal. Zero trust, no install, sends nothing." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:        oklch(15% 0.012 250);
+    --bg-2:      oklch(18% 0.014 250);
+    --surface:   oklch(21% 0.016 250);
+    --line:      oklch(30% 0.02 250);
+    --ink:       oklch(90% 0.012 250);
+    --muted:     oklch(64% 0.018 250);
+    --faint:     oklch(48% 0.018 250);
+    --signal:    oklch(86% 0.17 162);
+    --signal-dim: oklch(52% 0.10 162);
+    --gold:      oklch(83% 0.13 85);
+    --gold-dim:  oklch(60% 0.10 85);
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --serif: "Fraunces", Georgia, serif;
+    --text-hero: clamp(2.6rem, 1rem + 6.5vw, 6.8rem);
+    --space: clamp(2rem, 1rem + 4vw, 5rem);
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--mono); font-size: clamp(0.82rem, 0.76rem + 0.3vw, 0.95rem); line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      repeating-linear-gradient(0deg, transparent 0 3px, oklch(0% 0 0 / 0.10) 3px 4px),
+      radial-gradient(120% 70% at 50% -10%, oklch(24% 0.03 200 / 0.5), transparent 60%);
+    background-attachment: fixed;
+  }
+  a { color: var(--signal); text-underline-offset: 3px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 3rem); }
+
+  header { border-bottom: 1px solid var(--line); }
+  .bar { display: flex; align-items: baseline; gap: 1rem; padding: 1rem 0; flex-wrap: wrap; }
+  .mark { font-family: var(--serif); font-weight: 900; font-size: 1.5rem; letter-spacing: -0.02em; }
+  .mark b { color: var(--gold); font-style: italic; font-weight: 600; }
+  .sub { color: var(--faint); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .privacy { margin-left: auto; color: var(--signal-dim); font-size: 0.72rem; display: inline-flex; gap: 0.5rem; align-items: center; }
+  .privacy::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 8px var(--signal); animation: pulse 2.4s var(--ease) infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .hero { padding: var(--space) 0 1rem; }
+  h1 { font-family: var(--serif); font-weight: 900; font-size: var(--text-hero); line-height: 0.9; letter-spacing: -0.035em; margin: 0 0 1.2rem; max-width: 15ch; }
+  h1 em { font-style: italic; font-weight: 400; color: var(--gold); }
+  .lede { color: var(--muted); max-width: 60ch; font-size: clamp(0.92rem, 0.85rem + 0.4vw, 1.12rem); }
+  .lede strong { color: var(--ink); font-weight: 500; }
+
+  /* the flow line */
+  .flow { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 2.2rem 0 0; color: var(--faint); font-size: 0.78rem; }
+  .flow b { color: var(--ink); font-weight: 500; }
+  .flow .ar { color: var(--gold-dim); }
+
+  /* verifier cards */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2rem; margin: var(--space) 0; }
+  @media (max-width: 860px) { .cards { grid-template-columns: 1fr; } }
+  .card.replay h2 { color: var(--ink); }
+  .card.replay:hover { border-color: var(--muted); }
+  .card.replay .go { color: var(--ink); }
+  .card {
+    display: grid; gap: 0.7rem; padding: 1.6rem; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--surface); position: relative; text-decoration: none; color: inherit;
+    transition: border-color .2s var(--ease), transform .2s var(--ease), box-shadow .2s var(--ease);
+  }
+  .card:hover { transform: translateY(-3px); box-shadow: 0 24px 60px -36px oklch(0% 0 0 / 0.9); }
+  .card.gold:hover { border-color: var(--gold-dim); }
+  .card.mint:hover { border-color: var(--signal-dim); }
+  .card .badge { font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
+  .card h2 { font-family: var(--serif); font-weight: 600; font-size: clamp(1.3rem, 1rem + 1.4vw, 1.9rem); margin: 0; line-height: 1.05; }
+  .card.gold h2 { color: var(--gold); }
+  .card.mint h2 { color: var(--signal); }
+  .card p { margin: 0; color: var(--muted); font-size: 0.86rem; }
+  .card .go { margin-top: 0.4rem; font-weight: 700; font-size: 0.82rem; display: inline-flex; gap: 0.4rem; align-items: center; }
+  .card.gold .go { color: var(--gold); }
+  .card.mint .go { color: var(--signal); }
+
+  /* proof strip */
+  .proof { border: 1px solid var(--line); border-radius: 6px; background: var(--bg-2); padding: 1.4rem 1.6rem; margin-bottom: var(--space); }
+  .proof h3 { font-family: var(--serif); font-weight: 600; font-size: 1.1rem; margin: 0 0 0.8rem; }
+  .proof ul { margin: 0; padding-left: 1.1rem; color: var(--muted); display: grid; gap: 0.5rem; }
+  .proof li { font-size: 0.86rem; } .proof li b { color: var(--ink); font-weight: 500; }
+  .impls { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+  .impl { border: 1px solid var(--line); border-radius: 999px; padding: 0.25rem 0.75rem; font-size: 0.72rem; color: var(--muted); }
+  .impl b { color: var(--signal); }
+
+  .links { display: flex; flex-wrap: wrap; gap: 1.2rem; margin-bottom: var(--space); font-size: 0.82rem; }
+  .links a { color: var(--muted); }
+  .links a:hover { color: var(--ink); }
+
+  footer { border-top: 1px solid var(--line); padding: 1.4rem 0 3rem; color: var(--faint); font-size: 0.74rem; display: flex; gap: 1.2rem; flex-wrap: wrap; justify-content: space-between; }
+  @media (prefers-reduced-motion: reduce) { *, ::before { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <span class="mark">korg <b>ledger</b></span>
+    <span class="sub">korg-ledger@v1 · goldseal@v1</span>
+    <span class="privacy">runs in your browser · sends nothing</span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>Proof of what an AI agent <em>actually</em> did.</h1>
+    <p class="lede">AI agents write code, move money, and touch production — and nobody can
+      independently verify what one actually did. korg is the open standard that fixes it: a
+      <strong>tamper-evident ledger</strong> of agent actions, and a <strong>Gold Seal</strong>
+      certificate anyone can re-verify offline, with <strong>zero trust in the tool that produced it.</strong></p>
+
+    <div class="flow">
+      <b>capture</b> <span class="ar">→</span> tamper-evident ledger <span class="ar">→</span>
+      <b>Gold Seal</b> <span class="ar">→</span> anyone re-verifies, anywhere
+    </div>
+  </section>
+
+  <section class="cards">
+    <a class="card gold" href="web/seal.html">
+      <span class="badge">goldseal@v1 · certificate</span>
+      <h2>Verify a Gold Seal</h2>
+      <p>Drop a signed certificate of an agent session. The page re-derives the human summary from
+        the events (so it can't lie) and checks the issuer's Ed25519 seal. The medallion stamps gold
+        when valid — and cracks red at the exact tampered field.</p>
+      <span class="go">Open the Gold Seal verifier →</span>
+    </a>
+    <a class="card mint" href="web/index.html">
+      <span class="badge">korg-ledger@v1 · raw session</span>
+      <h2>Verify a ledger</h2>
+      <p>Drop a captured <code>ledger.jsonl</code>. The page recomputes the hash-chain, the causal
+        DAG, every per-event signature, and any anchors — entirely on your machine, using the same
+        verifier shipped in Rust, Python, and this JavaScript.</p>
+      <span class="go">Open the ledger verifier →</span>
+    </a>
+    <a class="card replay" href="web/explore.html">
+      <span class="badge">time-travel · replay</span>
+      <h2>Replay a session</h2>
+      <p>Drop a session or a Gold Seal and scrub the timeline. Watch the cumulative state — files
+        touched, tools used — evolve step by step while the hash-chain verifies under every frame.
+        A break lights up red at the exact step it happened.</p>
+      <span class="go">Open the time-travel explorer →</span>
+    </a>
+  </section>
+
+  <section class="proof">
+    <h3>Why you can trust a green check</h3>
+    <ul>
+      <li><b>You don't trust us.</b> Verification recomputes everything from the bytes you hold — no server, no network, nothing phones home.</li>
+      <li><b>Three independent implementations</b> reproduce one frozen oracle, so a check in one is corroborated by two others written from the same spec.</li>
+      <li><b>The summary can't lie:</b> a Gold Seal's human-readable summary is re-derived from the events and rejected on any mismatch.</li>
+    </ul>
+    <div class="impls">
+      <span class="impl"><b>Rust</b> korg-verify</span>
+      <span class="impl"><b>Python</b> korg-ledger</span>
+      <span class="impl"><b>JavaScript</b> verify.mjs (this page)</span>
+    </div>
+  </section>
+
+  <nav class="links">
+    <a href="GOLDSEAL.md">goldseal@v1 spec</a>
+    <a href="SPEC.md">korg-ledger@v1 spec</a>
+    <a href="README.md">conformance &amp; how to implement</a>
+    <a href="https://github.com/New1Direction/korg">source on GitHub</a>
+  </nav>
+</main>
+
+<footer class="wrap">
+  <span>korg-ledger@v1 · independent verifier · Web Crypto Ed25519 + SHA-256</span>
+  <span>open standard · zero-trust verification</span>
+</footer>
+</body>
+</html>

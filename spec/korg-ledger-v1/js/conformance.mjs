@@ -9,7 +9,16 @@
 //     node conformance.mjs        # exit 0 = this JS impl reproduces the vectors
 
 import { readFileSync } from "node:fs";
-import { canonicalize, chainHash, verifyChain, verifyEventSig, verifyAnchors } from "./verify.mjs";
+import {
+  canonicalize,
+  chainHash,
+  verifyChain,
+  verifyEventSig,
+  verifyAnchors,
+  verifyGoldSeal,
+  verifyReceipt,
+  deriveSummary,
+} from "./verify.mjs";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -105,6 +114,118 @@ async function run() {
     const badAnchor = [{ seq_id: tip.seq_id, entry_hash: "deadbeef" }];
     const ok = verifyAnchors(basic, okAnchor).length === 0 && verifyAnchors(basic, badAnchor).length > 0;
     console.log(`  [${ok ? "PASS" : "FAIL"}] anchors structural        verify_anchors (entry_hash ↔ chain)`);
+    if (!ok) failures++;
+  }
+
+  // Cross-language parity regression: seq_id is a SIGNED integer, so a chain with
+  // a negative or zero seq_id is valid and in-domain. JS matches anchors by raw
+  // value (bySeq.get) and accepts these; Rust must agree (it previously used
+  // as_u64, silently rejecting negatives — a same-bytes verdict split). Build
+  // single-event chains at seq -5 and 0 and confirm match + mismatch behavior.
+  {
+    let ok = true;
+    for (const sid of [-5, 0]) {
+      const ev = { seq_id: sid, prev_hash: "0".repeat(64), x: 1 };
+      ev.entry_hash = await chainHash(ev);
+      const chain = [ev];
+      const good = [{ seq_id: sid, entry_hash: ev.entry_hash, anchor_kind: "git-tip" }];
+      const bad = [{ seq_id: sid, entry_hash: "deadbeef" }];
+      ok = ok && verifyAnchors(chain, good).length === 0 && verifyAnchors(chain, bad).length > 0;
+    }
+    console.log(`  [${ok ? "PASS" : "FAIL"}] anchors signed seq        negative + zero seq_id parity (Rust/Py/JS agree)`);
+    if (!ok) failures++;
+  }
+
+  // Cross-impl goldseal@v1: the frozen goldseal-v1.json was MINTED BY PYTHON.
+  // JS must (a) verify it valid, (b) re-derive the identical summary, and (c)
+  // reject a lying summary + a stripped seal — proving Python-mint / JS-verify.
+  {
+    const env = JSON.parse(
+      readFileSync(here("../../../crates/korg-verify/tests/fixtures/goldseal-v1.json"), "utf8")
+    );
+    const v = await verifyGoldSeal(env);
+    const derived = dec.decode(canonicalize(deriveSummary(env.events)));
+    const embedded = dec.decode(canonicalize(env.summary));
+    const lying = JSON.parse(JSON.stringify(env));
+    lying.summary.files = [];
+    const stripped = JSON.parse(JSON.stringify(env));
+    delete stripped.seal;
+    // anchors are bound into the seal: stripping the (signed) anchor must break it
+    const unanchored = JSON.parse(JSON.stringify(env));
+    delete unanchored.anchors;
+    const ok =
+      v.valid &&
+      v.kind === "goldseal" &&
+      v.summary_ok === true &&
+      v.anchors_ok === true &&
+      derived === embedded &&
+      !(await verifyGoldSeal(lying)).valid &&
+      !(await verifyGoldSeal(stripped)).valid &&
+      !(await verifyGoldSeal(unanchored)).valid;
+    console.log(`  [${ok ? "PASS" : "FAIL"}] goldseal-v1.json          cross-impl seal + summary + bound anchors (Python→JS)`);
+    if (!ok) failures++;
+  }
+
+  // Adversarial robustness: verifyGoldSeal must never throw on hostile input and
+  // never return valid for junk or any single-char hash/sig flip (mirrors the
+  // Python Hypothesis + Rust proptest fuzz suites). Seeded LCG → reproducible.
+  {
+    let seed = 0x9e3779b9;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+    const randJson = (d) => {
+      const r = rnd();
+      if (d <= 0 || r < 0.4) return [null, true, Math.floor(rnd() * 1e6) - 5e5, "x".repeat(Math.floor(rnd() * 8)), rnd() * 1e3][Math.floor(rnd() * 5)];
+      if (r < 0.7) { const a = []; const n = Math.floor(rnd() * 5); for (let i = 0; i < n; i++) a.push(randJson(d - 1)); return a; }
+      const o = {}; const n = Math.floor(rnd() * 5); for (let i = 0; i < n; i++) o["k" + Math.floor(rnd() * 9)] = randJson(d - 1); return o;
+    };
+    let ok = true;
+    const safe = async (v) => { try { return (await verifyGoldSeal(v)).valid === false; } catch { return false; } };
+    const crafted = [null, true, 42, "x", [], {}, [1, 2, 3], { events: "nope" }, { events: [1, 2] }, { schema: "goldseal@v1" }, { schema: "goldseal@v1", events: [{}] }, { schema: "goldseal@v1", events: [null] }];
+    for (const c of crafted) ok = ok && (await safe(c));
+    for (let i = 0; i < 400; i++) ok = ok && (await safe(randJson(4)));
+
+    const fix = JSON.parse(readFileSync(here("../../../crates/korg-verify/tests/fixtures/goldseal-v1.json"), "utf8"));
+    for (let i = 0; i < 64; i++) {
+      const m = JSON.parse(JSON.stringify(fix));
+      const t = m.tip.split(""); t[i] = t[i] === "0" ? "f" : "0"; m.tip = t.join("");
+      ok = ok && (await safe(m));
+    }
+    for (let i = 0; i < 128; i++) {
+      const m = JSON.parse(JSON.stringify(fix));
+      const s = m.seal.sig.split(""); s[i] = s[i] === "0" ? "f" : "0"; m.seal.sig = s.join("");
+      ok = ok && (await safe(m));
+    }
+    console.log(`  [${ok ? "PASS" : "FAIL"}] goldseal fuzz             no-throw + junk/mutations rejected`);
+    if (!ok) failures++;
+  }
+
+  // CRITICAL forge regression: a tipless receipt + a signature over the empty
+  // message must NOT verify, and an empty receipt must not pass.
+  {
+    const r = JSON.parse(
+      readFileSync(here("../../../crates/korg-verify/tests/fixtures/signed-receipt.json"), "utf8")
+    );
+    delete r.tip;
+    const tipless = await verifyReceipt(r);
+    const empty = await verifyReceipt({ schema: "korgex-receipt@v1", events: [] });
+    const ok = tipless.valid === false && tipless.signature_ok === false && empty.valid === false;
+    console.log(`  [${ok ? "PASS" : "FAIL"}] receipt forge            tipless-signed + empty rejected`);
+    if (!ok) failures++;
+  }
+
+  // Number domain parity: finite floats in envelope fields must stay VALID (Rust
+  // and Python accept them), while an out-of-range integer must be rejected.
+  {
+    const base = readFileSync(here("../../../crates/korg-verify/tests/fixtures/signed-receipt.json"), "utf8");
+    const rf = JSON.parse(base);
+    rf.generated_at = 1718323200.5;
+    rf.summary = { ...(rf.summary || {}), cost_usd: 0.0237 };
+    const rb = JSON.parse(base);
+    rb.nonce = 2 ** 60; // out-of-safe-range integer
+    const floatOk = (await verifyReceipt(rf)).valid === true;
+    const bigRejected = (await verifyReceipt(rb)).valid === false;
+    const ok = floatOk && bigRejected;
+    console.log(`  [${ok ? "PASS" : "FAIL"}] receipt number domain     finite floats ok · big-int rejected`);
     if (!ok) failures++;
   }
 

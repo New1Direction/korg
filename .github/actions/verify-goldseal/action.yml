@@ -1,0 +1,56 @@
+name: "Verify korg Gold Seal"
+description: >-
+  Independently verify goldseal@v1 certificates or korg-ledger@v1 sessions in CI —
+  hash chain, causal DAG, re-derived summary, and the Ed25519 issuer seal. Zero
+  trust in whoever produced the artifact; no network. Renders a rich report into
+  the job summary and (on pull_request) posts a sticky Gold Seal comment. Fails
+  the job on any tampered or unverifiable file.
+author: "Korg ecosystem maintainers"
+branding:
+  icon: "shield"
+  color: "green"
+
+inputs:
+  path:
+    description: "Path(s)/glob(s) to the seal(s) or ledger(s) to verify (space- or newline-separated)."
+    required: true
+  pin-pubkey:
+    description: "Require this issuer/signer public key (hex). Optional but recommended for trust."
+    required: false
+    default: ""
+  comment:
+    description: "Post/update a sticky Gold Seal comment on the PR (pull_request events). 'true'/'false'."
+    required: false
+    default: "true"
+  github-token:
+    description: "Token used to post the PR comment (needs pull-requests: write)."
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Verify korg artifacts & report
+      shell: bash
+      env:
+        KORG_PATH: ${{ inputs.path }}
+        KORG_PIN: ${{ inputs.pin-pubkey }}
+        KORG_COMMENT: ${{ inputs.comment }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -uo pipefail
+        shopt -s nullglob
+        shopt -s globstar 2>/dev/null || true  # recursive ** (bash >=4); harmless if absent
+        files=()
+        for pattern in $KORG_PATH; do
+          for f in $pattern; do
+            [ -f "$f" ] && files+=("$f")
+          done
+        done
+        if [ "${#files[@]}" -eq 0 ]; then
+          echo "::error::no files matched '$KORG_PATH'"
+          exit 2
+        fi
+        # report.mjs verifies each file, writes the job summary, upserts the PR
+        # comment, and exits non-zero iff any artifact failed verification.
+        node "$GITHUB_ACTION_PATH/report.mjs" "${files[@]}"

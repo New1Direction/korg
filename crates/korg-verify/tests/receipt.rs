@@ -68,3 +68,46 @@ fn the_same_events_verify_as_a_bare_journal() {
     assert_eq!(v.kind, "journal");
     assert!(v.valid, "errors: {:?}", v.errors);
 }
+
+/// CRITICAL forge regression: a receipt with NO tip but a signature over the empty
+/// message (which any attacker can mint with their own key) must NOT verify. Before
+/// the fix, `verify_tip_sig(pk, "", sig)` verified a 0-byte message → valid+signed.
+#[test]
+fn tipless_signed_receipt_forge_is_rejected() {
+    let mut r: Value = serde_json::from_str(&fixture("signed-receipt.json")).unwrap();
+    let obj = r.as_object_mut().unwrap();
+    obj.remove("tip");
+    // (the original signature is over the real tip; with no tip it must fail closed)
+    let v = verify_receipt(&r, None, None);
+    assert!(!v.valid, "a tipless signed receipt must never be valid");
+    assert_eq!(v.signature_ok, Some(false));
+    assert!(
+        v.errors.iter().any(|e| e.contains("no tip to attest to")),
+        "{:?}",
+        v.errors
+    );
+}
+
+/// A receipt with no events attests to nothing and must not pass.
+#[test]
+fn empty_receipt_is_rejected() {
+    let r = serde_json::json!({ "schema": "korgex-receipt@v1", "events": [] });
+    let v = verify_receipt(&r, None, None);
+    assert!(!v.valid);
+    assert!(
+        v.errors.iter().any(|e| e.contains("no events")),
+        "{:?}",
+        v.errors
+    );
+}
+
+/// `verify_tip_sig` must reject a non-32-byte message regardless of the signature.
+#[test]
+fn verify_tip_sig_rejects_empty_message() {
+    // a syntactically valid (but empty-message) signature must not verify
+    assert!(!korg_verify::verify_tip_sig(
+        &"ab".repeat(32),
+        "",
+        &"00".repeat(64)
+    ));
+}

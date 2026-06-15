@@ -42,6 +42,19 @@ function canonicalJsonString(s) {
   return out + '"';
 }
 
+// Compare strings by Unicode code point (not UTF-16 code unit), matching Python's
+// default string ordering and Rust's byte-wise sort over the UTF-8 korg emits.
+function compareCodePoints(a, b) {
+  const ca = Array.from(a);
+  const cb = Array.from(b);
+  const n = Math.min(ca.length, cb.length);
+  for (let i = 0; i < n; i++) {
+    const d = ca[i].codePointAt(0) - cb[i].codePointAt(0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return ca.length - cb.length;
+}
+
 function canonicalString(value) {
   if (value === null) return "null";
   if (value === true) return "true";
@@ -51,14 +64,20 @@ function canonicalString(value) {
     if (!Number.isInteger(value)) {
       throw new Error(`floats are out of korg-ledger@v1 canonicalization scope: ${value}`);
     }
+    // Integers beyond ±(2^53-1) cannot round-trip through JS Number — reject them
+    // so JS never silently disagrees with Python/Rust (which keep i64 exact).
+    if (!Number.isSafeInteger(value)) {
+      throw new Error(`integer out of safe range (|n| > 2^53-1): ${value}`);
+    }
     return String(value);
   }
   if (t === "string") return canonicalJsonString(value);
   if (Array.isArray(value)) return "[" + value.map(canonicalString).join(",") + "]";
   if (t === "object") {
-    // Default sort is by UTF-16 code unit, which equals code-point order for the
-    // BMP identifier keys korg emits (matches Python sort_keys / Rust keys.sort()).
-    const keys = Object.keys(value).sort();
+    // Sort keys by Unicode CODE POINT (matches Python sort_keys + Rust keys.sort()
+    // byte order). Default Array.sort() compares UTF-16 code units, which diverges
+    // for astral-plane (non-BMP) keys — a real cross-impl hash bug.
+    const keys = Object.keys(value).sort(compareCodePoints);
     return "{" + keys.map((k) => canonicalJsonString(k) + ":" + canonicalString(value[k])).join(",") + "}";
   }
   throw new Error(`unsupported JSON value of type ${t}`);
@@ -67,6 +86,36 @@ function canonicalString(value) {
 /** Canonical byte encoding of a JSON value (pure ASCII). */
 export function canonicalize(value) {
   return enc.encode(canonicalString(value));
+}
+
+/**
+ * First out-of-domain number in a value, or null — the exact parallel of Rust
+ * `canon_domain_error` / Python `_reject_out_of_domain`: flags ONLY integers
+ * beyond ±(2^53-1). Finite floats are out of scope but NOT flagged (Rust/Python
+ * accept them); this is for envelope-field scanning where canonicalize() (which
+ * THROWS on any float) would wrongly reject a valid receipt.
+ */
+export function numberDomainError(value) {
+  if (typeof value === "number") {
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      return `integer out of safe range (|n| > 2^53-1): ${value}`;
+    }
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const x of value) {
+      const m = numberDomainError(x);
+      if (m) return m;
+    }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    for (const x of Object.values(value)) {
+      const m = numberDomainError(x);
+      if (m) return m;
+    }
+  }
+  return null;
 }
 
 function toHex(buf) {
@@ -85,6 +134,12 @@ function hexToBytes(hex) {
     out[i] = v;
   }
   return out;
+}
+
+function bytesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 // ── §3 entry_hash ────────────────────────────────────────────────────────────
@@ -108,8 +163,14 @@ export async function chainHash(event, keyBytes = null) {
 /** Recompute the hash-chain. Returns [] iff intact; each error names a seq_id. */
 export async function verifyChain(events, keyBytes = null) {
   const errors = [];
+  if (!Array.isArray(events)) return ["events is not a list"];
   let expectedPrev = GENESIS;
   for (const e of events) {
+    if (e === null || typeof e !== "object" || Array.isArray(e)) {
+      errors.push("event is not a JSON object");
+      expectedPrev = null;
+      continue;
+    }
     const sid = e.seq_id;
     const stored = e.entry_hash;
     if (stored == null) {
@@ -120,7 +181,17 @@ export async function verifyChain(events, keyBytes = null) {
     if (e.prev_hash !== expectedPrev) {
       errors.push(`seq ${sid}: prev_hash breaks the chain (an event was inserted, deleted, or reordered)`);
     }
-    if ((await chainHash(e, keyBytes)) !== stored) {
+    // chainHash → canonicalize can throw on out-of-scope numbers (floats,
+    // |int| > 2^53-1). Treat that as a verification failure, never a crash.
+    let computed;
+    try {
+      computed = await chainHash(e, keyBytes);
+    } catch (err) {
+      errors.push(`seq ${sid}: not canonicalizable (${err.message})`);
+      expectedPrev = stored;
+      continue;
+    }
+    if (computed !== stored) {
       errors.push(`seq ${sid}: entry_hash mismatch (content was tampered)`);
     }
     expectedPrev = stored;
@@ -131,10 +202,12 @@ export async function verifyChain(events, keyBytes = null) {
 /** Check the causal DAG: unique seq_ids and strictly-earlier triggered_by links. */
 export function verifyDag(events) {
   const errors = [];
-  const seqs = events.map((e) => e.seq_id).filter((s) => typeof s === "number");
+  if (!Array.isArray(events)) return ["events is not a list"];
+  const dicts = events.filter((e) => e !== null && typeof e === "object" && !Array.isArray(e));
+  const seqs = dicts.map((e) => e.seq_id).filter((s) => typeof s === "number");
   const seqset = new Set(seqs);
   if (seqset.size !== seqs.length) errors.push("duplicate seq_id present");
-  for (const e of events) {
+  for (const e of dicts) {
     const tb = e.triggered_by;
     if (typeof tb !== "number") continue;
     const sid = e.seq_id;
@@ -156,7 +229,9 @@ export async function verifyTipSig(pubkeyHex, tipHex, sigHex) {
     const pk = hexToBytes(pubkeyHex);
     const msg = hexToBytes(tipHex);
     const sig = hexToBytes(sigHex);
-    if (!pk || !msg || !sig || pk.length !== 32 || sig.length !== 64) return false;
+    // msg.length must be 32 — an empty/short tip yields a 0-byte message an
+    // attacker can sign with their own key, forging a "validly signed" receipt.
+    if (!pk || !msg || !sig || pk.length !== 32 || msg.length !== 32 || sig.length !== 64) return false;
     const key = await subtle.importKey("raw", pk, { name: "Ed25519" }, false, ["verify"]);
     return await subtle.verify({ name: "Ed25519" }, key, sig, msg);
   } catch {
@@ -193,8 +268,15 @@ export async function verifyEventSig(pubkeyHex, event, sigHex) {
  */
 export function verifyAnchors(chain, anchors) {
   const errors = [];
-  const bySeq = new Map(chain.map((e) => [e.seq_id, e]));
+  if (!Array.isArray(chain) || !Array.isArray(anchors)) return ["chain or anchors is not a list"];
+  const bySeq = new Map(
+    chain.filter((e) => e !== null && typeof e === "object" && !Array.isArray(e)).map((e) => [e.seq_id, e])
+  );
   for (const a of anchors) {
+    if (a === null || typeof a !== "object" || Array.isArray(a)) {
+      errors.push("anchor record is not a JSON object");
+      continue;
+    }
     const seq = a.seq_id;
     const want = a.entry_hash;
     if (seq == null || want == null) {
@@ -240,8 +322,13 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
   const dagOk = dag.length === 0;
   for (const e of dag) errors.push(e);
 
+  // A receipt with no events makes no attestation.
+  const eventsOk = events.length > 0;
+  if (!eventsOk) errors.push("receipt contains no events");
+
   const claimedTip = typeof receipt.tip === "string" ? receipt.tip : null;
-  const head = events.length ? events[events.length - 1].entry_hash : null;
+  const last = events.length ? events[events.length - 1] : null;
+  const head = last && typeof last === "object" ? last.entry_hash : null;
   let tipOk;
   if (claimedTip == null) tipOk = true;
   else if (head == null) tipOk = false;
@@ -253,9 +340,17 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
   if (receipt.signature) {
     const pubkey = receipt.signature.pubkey || "";
     const sigHex = receipt.signature.sig || "";
-    let ok = await verifyTipSig(pubkey, claimedTip || "", sigHex);
     signer = pubkey;
-    if (!ok) errors.push("signature does not verify for the recorded tip");
+    // Fail closed if a signature is present but there's no tip to attest to,
+    // rather than verifying over an empty message.
+    let ok;
+    if (claimedTip == null) {
+      ok = false;
+      errors.push("receipt carries a signature but no tip to attest to");
+    } else {
+      ok = await verifyTipSig(pubkey, claimedTip, sigHex);
+      if (!ok) errors.push("signature does not verify for the recorded tip");
+    }
     if (pinPubkey != null && pinPubkey !== pubkey) {
       ok = false;
       errors.push(`signer ${pubkey} does not match the pinned key ${pinPubkey}`);
@@ -266,7 +361,22 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
     errors.push(`receipt is unsigned but signer ${pinPubkey} was required`);
   }
 
-  const valid = chainOk && dagOk && tipOk && signatureOk !== false;
+  // Reject out-of-domain numbers in envelope fields, matching Rust's
+  // canon_domain_error: flag only out-of-range integers, NEVER finite floats
+  // (using canonicalize() here would throw on a fractional cost_usd/generated_at
+  // and wrongly reject a receipt that Rust/Python accept).
+  let domainOk = true;
+  for (const [k, val] of Object.entries(receipt && typeof receipt === "object" ? receipt : {})) {
+    if (k === "events") continue;
+    const m = numberDomainError(val);
+    if (m) {
+      domainOk = false;
+      errors.push(`receipt envelope has an out-of-domain number: ${m}`);
+      break;
+    }
+  }
+
+  const valid = eventsOk && chainOk && dagOk && tipOk && domainOk && signatureOk !== false;
   return {
     valid,
     kind: "receipt",
@@ -276,6 +386,167 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
     tip_ok: tipOk,
     signature_ok: signatureOk,
     signer,
+    errors,
+  };
+}
+
+// ── goldseal@v1 ──────────────────────────────────────────────────────────────
+// A Gold Seal is a public, independently-verifiable certificate: a receipt
+// superset that additionally binds a human-legible summary (re-derived from the
+// events, so it cannot lie) and an issuer Ed25519 seal over the canonical header.
+// Byte-identical derivation + header to the Python (korg_ledger.goldseal) and
+// Rust (korg-verify) implementations.
+
+// `events` is excluded (bound via tip); `seal` is the signature. `anchors` ARE
+// signed — the seal commits to the anchor set (still structurally chain-bound too).
+const GOLDSEAL_NON_HEADER = ["events", "seal"];
+
+function eventView(e) {
+  if (e === null || typeof e !== "object" || Array.isArray(e)) return [undefined, undefined, undefined];
+  const inner = e.event;
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+    return [inner.source_agent, inner.tool_name, inner.args];
+  }
+  return [e.source_agent, e.tool_name, e.args];
+}
+
+/** Deterministically derive the bound summary from the event chain. */
+export function deriveSummary(events) {
+  const byTool = {};
+  const files = new Set();
+  const agents = new Set();
+  const safe = Array.isArray(events) ? events : [];
+  for (const e of safe) {
+    const [agent, tool, args] = eventView(e);
+    if (typeof tool === "string") byTool[tool] = (byTool[tool] || 0) + 1;
+    if (typeof agent === "string") agents.add(agent);
+    if (args && typeof args === "object" && !Array.isArray(args)) {
+      for (const k of ["file_path", "path"]) {
+        if (typeof args[k] === "string") files.add(args[k]);
+      }
+    }
+  }
+  const seqs = safe
+    .filter((e) => e !== null && typeof e === "object" && !Array.isArray(e))
+    .map((e) => e.seq_id)
+    .filter((s) => typeof s === "number" && Number.isInteger(s));
+  // Sort by code point to match Python sorted() / Rust BTreeSet ordering, so the
+  // re-derived summary canonicalizes byte-identically across impls.
+  const byToolSorted = {};
+  for (const k of Object.keys(byTool).sort(compareCodePoints)) byToolSorted[k] = byTool[k];
+  return {
+    agents: [...agents].sort(compareCodePoints),
+    by_tool: byToolSorted,
+    files: [...files].sort(compareCodePoints),
+    seq_first: seqs.length ? Math.min(...seqs) : 0,
+    seq_last: seqs.length ? Math.max(...seqs) : 0,
+  };
+}
+
+/** The signed portion of a Gold Seal: the envelope minus events and seal (so it
+ *  includes anchors when present — the seal commits to the anchor set). */
+export function sealHeader(envelope) {
+  const h = { ...envelope };
+  for (const k of GOLDSEAL_NON_HEADER) delete h[k];
+  return h;
+}
+
+/**
+ * Verify an Ed25519 seal signature over a header's canonical bytes — the
+ * seal-level analogue of verifyEventSig. False on any error.
+ */
+export async function verifySealSig(pubkeyHex, header, sigHex) {
+  try {
+    const pk = hexToBytes(pubkeyHex);
+    const sig = hexToBytes(sigHex);
+    if (!pk || !sig || pk.length !== 32 || sig.length !== 64) return false;
+    const msg = canonicalize(header);
+    const key = await subtle.importKey("raw", pk, { name: "Ed25519" }, false, ["verify"]);
+    return await subtle.verify({ name: "Ed25519" }, key, sig, msg);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify a goldseal@v1 envelope: chain + DAG, tip matches head, event_count,
+ * the re-derived summary matches byte-for-byte, and the Ed25519 seal signature.
+ * `pinPubkey` requires the issuer to equal a key the relying party trusts.
+ */
+export async function verifyGoldSeal(envelope, { pinPubkey = null } = {}) {
+  // Hostile/non-object input → empty envelope → invalid, never throws.
+  if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) envelope = {};
+  const events = Array.isArray(envelope.events) ? envelope.events : [];
+  const errors = await verifyChain(events);
+  const dag = verifyDag(events);
+  const chainOk = errors.length === 0;
+  const dagOk = dag.length === 0;
+  for (const e of dag) errors.push(e);
+
+  const claimedTip = typeof envelope.tip === "string" ? envelope.tip : null;
+  const last = events.length ? events[events.length - 1] : null;
+  const head = last && typeof last === "object" ? last.entry_hash : null;
+  const tipOk = claimedTip == null ? false : head != null && claimedTip === head;
+  if (!tipOk) errors.push("recorded tip does not match the chain head");
+
+  const countOk = Number.isInteger(envelope.event_count) && envelope.event_count === events.length;
+  if (!countOk) {
+    errors.push(`event_count ${envelope.event_count} does not match the ${events.length} embedded events`);
+  }
+
+  let summaryOk = false;
+  try {
+    summaryOk = bytesEqual(canonicalize(envelope.summary ?? null), canonicalize(deriveSummary(events)));
+  } catch {
+    summaryOk = false;
+  }
+  if (!summaryOk) errors.push("summary does not match the events (re-derivation mismatch)");
+
+  let anchorsOk = null;
+  if (Array.isArray(envelope.anchors) && envelope.anchors.length) {
+    const ae = verifyAnchors(events, envelope.anchors);
+    anchorsOk = ae.length === 0;
+    for (const e of ae) errors.push(e);
+  }
+
+  let sealOk = null;
+  let signer = null;
+  const seal = envelope.seal;
+  if (seal && typeof seal === "object") {
+    signer = typeof seal.pubkey === "string" ? seal.pubkey : "";
+    let ok = await verifySealSig(signer, sealHeader(envelope), seal.sig || "");
+    if (!ok) errors.push("seal signature does not verify for the header");
+    if (pinPubkey != null && pinPubkey !== signer) {
+      ok = false;
+      errors.push(`issuer ${signer} does not match the pinned key ${pinPubkey}`);
+    }
+    sealOk = ok;
+  } else {
+    // A goldseal@v1 envelope MUST carry a seal — a stripped seal is a downgrade,
+    // not a valid (merely unsigned) artifact. Fails the verdict in all impls.
+    sealOk = false;
+    errors.push(
+      pinPubkey != null
+        ? `seal is absent but signer ${pinPubkey} was required`
+        : "seal is absent (unsigned Gold Seal)"
+    );
+  }
+
+  const valid = chainOk && dagOk && tipOk && countOk && summaryOk && sealOk !== false && anchorsOk !== false;
+  return {
+    valid,
+    kind: "goldseal",
+    event_count: events.length,
+    chain_ok: chainOk,
+    dag_ok: dagOk,
+    tip_ok: tipOk,
+    summary_ok: summaryOk,
+    seal_ok: sealOk,
+    signature_ok: sealOk, // alias so the generic CLI line works
+    anchors_ok: anchorsOk,
+    signer,
+    claim: typeof envelope.claim === "string" ? envelope.claim : null,
+    summary: envelope.summary ?? null,
     errors,
   };
 }
@@ -308,6 +579,9 @@ export async function verifyText(text, { key = null, pinPubkey = null } = {}) {
       v = null;
     }
     if (v && typeof v === "object" && !Array.isArray(v)) {
+      if (typeof v.schema === "string" && v.schema.startsWith("goldseal")) {
+        return verifyGoldSeal(v, { pinPubkey });
+      }
       const isReceipt =
         v.events !== undefined || (typeof v.schema === "string" && v.schema.startsWith("korgex-receipt"));
       if (isReceipt) return verifyReceipt(v, { key, pinPubkey });

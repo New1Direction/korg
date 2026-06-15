@@ -32,3 +32,18 @@ def test_verify_anchors_flags_missing_seq():
 def test_verify_anchors_flags_malformed_record():
     chain = _chain(2)
     assert verify_anchors(chain, [{"seq_id": 1}]) != []
+
+
+def test_verify_anchors_matches_negative_and_zero_seq_ids():
+    # Cross-language parity regression: seq_id is a signed integer, so a chain
+    # with a negative or zero seq_id is a fully valid, in-domain artifact. Python
+    # matches anchors by raw integer equality and accepts these; the Rust verifier
+    # must too (it previously used as_u64, silently rejecting negatives — a
+    # same-bytes verdict split). Confirm both verdicts here on this side.
+    for sid in (-5, 0):
+        ev = {"seq_id": sid, "prev_hash": GENESIS, "x": 1}
+        ev["entry_hash"] = chain_hash(ev)
+        chain = [ev]
+        good = [{"seq_id": sid, "entry_hash": ev["entry_hash"], "anchor_kind": "git-tip"}]
+        assert verify_anchors(chain, good) == []
+        assert verify_anchors(chain, [{"seq_id": sid, "entry_hash": "deadbeef"}]) != []

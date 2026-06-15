@@ -172,3 +172,24 @@ def test_reads_canonical_journalevent_records(tmp_path):
     assert e.args == {"file_path": "rate_limiter.py"}
     assert e.triggered_by == 6
     assert "rate_limiter.py" in e.embed_text  # searchable via the nested args
+
+
+def test_poison_record_does_not_freeze_the_index(tmp_path):
+    """A record with a non-dict args (list), invalid JSON, or invalid UTF-8 between
+    good events must be skipped — the offset still advances and good events index."""
+    f = tmp_path / "ledger.jsonl"
+    _write_event(f, 1, "user_prompt", {"prompt": "first"})
+    # poison: truthy non-dict args (escapes `or {}`), a garbage line, and a bad byte
+    with f.open("ab") as fh:
+        fh.write(json.dumps({"seq": 2, "tool_name": "Bad", "args": ["x", "y"], "result": [1, 2],
+                             "source_agent": "a", "success": True}).encode() + b"\n")
+        fh.write(b"{not valid json}\n")
+        fh.write(b'{"seq": 3, "tool_name": "Edit", "args": {"file_path": "\xff bad utf8"}, '
+                 b'"result": {}, "source_agent": "a", "success": true}\n')
+    _write_event(f, 4, "user_prompt", {"prompt": "last"})
+
+    idx = EventIndex.from_paths(f)
+    added = idx.refresh()
+    tools = sorted(e.tool_name for e in idx.events)
+    assert "user_prompt" in tools and added >= 2, "good events must index despite poison lines"
+    assert idx.refresh() == 0, "offset advanced past the poison; idempotent re-refresh"
