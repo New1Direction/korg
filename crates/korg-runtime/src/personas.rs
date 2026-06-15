@@ -65,6 +65,7 @@ pub struct PersonaResult {
     pub output: serde_json::Value,
     pub confidence: f32,
     pub mutations: Vec<serde_json::Value>,
+    pub files_changed: usize,
     pub arena_self_score: serde_json::Value,
     pub crashed: bool,
     pub error_msg: Option<String>,
@@ -79,6 +80,7 @@ impl PersonaResult {
             output: json!({}),
             confidence: 0.85,
             mutations: vec![],
+            files_changed: 0,
             arena_self_score: json!({}),
             crashed: false,
             error_msg: None,
@@ -277,7 +279,16 @@ impl LlmPersona {
         };
 
         let response = self.provider.complete(request).await?;
-        let (output, confidence, frontmatter) = parse_structured_response(&response.content);
+        let (mut output, confidence, frontmatter) = parse_structured_response(&response.content);
+
+        // Surface the provider's real token usage onto the in-process result so the
+        // worker child (run_task_in_worktree) can attest truthful token velocity.
+        if let Some(obj) = output.as_object_mut() {
+            obj.insert(
+                "__tokens".into(),
+                serde_json::json!(response.usage.total_tokens),
+            );
+        }
 
         let mut mutations = vec![];
         if let Some(muts) = output.get("mutations") {
@@ -315,6 +326,7 @@ impl LlmPersona {
             output,
             confidence,
             mutations,
+            files_changed: 0,
             arena_self_score: self_score,
             crashed: false,
             error_msg: None,

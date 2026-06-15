@@ -1166,12 +1166,47 @@ mod tests {
         assert_eq!(entry.metadata.campaign_id, plan_id);
         assert_eq!(entry.event, ev1);
 
-        // 2. Verify clock synchronization
+        // 2. Verify clock synchronization.
+        //
+        // `synchronize_clock` does `clock = clock.merge(&ext, wall_clock_now)`, and
+        // `merge` takes `physical = max(wall_clock_now, self.physical, ext.physical)`.
+        // On a slow runner the real wall clock can advance past `sync_time` between
+        // capturing `journal.clock.physical` and the merge call, in which case the
+        // wall clock — not `ext` — wins the max. So we cannot assert exact equality
+        // against `sync_time` or an exact logical of 6 unconditionally; that was the
+        // source of the CI flake (`physical` ended up at the wall time, `logical` at 0).
+        //
+        // Assert the invariants that hold in BOTH cases instead:
         let sync_time = journal.clock.physical + 100;
         let ext = HlcTimestamp::new(sync_time, 5, 2);
         journal.synchronize_clock(ext);
-        assert_eq!(journal.clock.physical, sync_time);
-        assert_eq!(journal.clock.logical, 6);
+
+        // Physical is monotone and >= the max of all inputs, so the future external
+        // timestamp must have pulled the clock forward to at least `sync_time`.
+        assert!(
+            journal.clock.physical >= sync_time,
+            "sync must advance physical to >= external time: physical={}, sync_time={}",
+            journal.clock.physical,
+            sync_time
+        );
+        // The merged clock must causally dominate the external timestamp it absorbed.
+        // (Ord on HlcTimestamp is lexicographic over physical, then logical.) This is
+        // not a tautology: if merge dropped the external logical, this would fail when
+        // physical ties (the ext-wins case below).
+        assert!(
+            journal.clock > ext,
+            "merged clock must causally dominate external clock: clock={:?}, ext={:?}",
+            journal.clock,
+            ext
+        );
+        // When `ext` actually won the physical max (the common, fast-path case), the
+        // logical advance is fully deterministic: merge sets it to `ext.logical + 1`.
+        if journal.clock.physical == sync_time {
+            assert_eq!(
+                journal.clock.logical, 6,
+                "when external clock wins the physical max, logical = ext.logical + 1 = 6"
+            );
+        }
 
         // Appending after synchronization should tick clock
         let ev2 = CapabilityEvent::CapabilityDisabled {
