@@ -33,8 +33,11 @@ impl SingleWorkerHarness {
     }
 
     /// Main worker loop (legacy stub path).
+    ///
+    /// Diagnostics go to STDERR: if this path is ever reached from a worker
+    /// subprocess, stdout must stay a clean ACP envelope channel.
     pub async fn run(&mut self, client: &mut AcpClient) -> Result<()> {
-        println!(
+        eprintln!(
             "[Harness] Worker {} entering main loop (legacy client path)",
             self.worker_id
         );
@@ -49,7 +52,7 @@ impl SingleWorkerHarness {
                     permissions,
                     ..
                 } => {
-                    println!(
+                    eprintln!(
                         "[Harness] Received RouteWork with base_snapshot: {}",
                         base_snapshot
                     );
@@ -64,12 +67,12 @@ impl SingleWorkerHarness {
                     .await?;
                 }
                 _ => {
-                    println!("[Harness] Received unhandled message: {:?}", msg);
+                    eprintln!("[Harness] Received unhandled message: {:?}", msg);
                 }
             }
         }
 
-        println!("[Harness] Worker {} exiting after task", self.worker_id);
+        eprintln!("[Harness] Worker {} exiting after task", self.worker_id);
         Ok(())
     }
 
@@ -142,6 +145,10 @@ impl SingleWorkerHarness {
                                 eprintln!("[Harness] Sent signed tool result back to leader");
                             }
                         }
+                        // handle_route_work already sent the authoritative
+                        // TerminationReport (carrying the real success/doom_loop
+                        // status + terminal_tx_id). The leader reads it now that
+                        // stdout is a clean ACP channel — no extra report needed.
                     }
 
                     // === Direct tool request (if worker is sent a tool as first message) ===
@@ -346,7 +353,8 @@ impl SingleWorkerHarness {
             loop {
                 ticker.tick().await;
                 tick += 1;
-                println!(
+                // stderr, not stdout — stdout is the worker's ACP envelope channel.
+                eprintln!(
                     "[TelemetryEmitter] {} – live pulse #{} (continuous real-time telemetry)",
                     rid, tick
                 );

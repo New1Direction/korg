@@ -106,6 +106,21 @@ struct Cli {
     #[arg(long)]
     speculative: bool,
 
+    /// LLM provider for the whole swarm: `deterministic` (default, hermetic) or
+    /// `ollama` (live local model — every persona does real, measured work).
+    /// Exported as `KORG_DEFAULT_LLM` so each worker subprocess builds it too.
+    #[arg(long, global = true)]
+    provider: Option<String>,
+
+    /// Model name for a live provider (e.g. `qwen2.5:7b`). Exported as `KORG_MODEL`.
+    #[arg(long, global = true)]
+    model: Option<String>,
+
+    /// Base URL for a live provider (ollama default http://localhost:11434/v1).
+    /// Exported as `OLLAMA_BASE_URL`.
+    #[arg(long, global = true)]
+    base_url: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -260,18 +275,6 @@ enum Commands {
         /// Target repo. Defaults to a temp git-inited copy of the bundled fixture.
         #[arg(long)]
         repo: Option<std::path::PathBuf>,
-
-        /// Provider: `deterministic` (default, hermetic) or `ollama` (live local model).
-        #[arg(long, default_value = "deterministic")]
-        provider: String,
-
-        /// Model name for live providers (e.g. `qwen2.5:7b` for ollama).
-        #[arg(long)]
-        model: Option<String>,
-
-        /// Base URL override for the live provider (ollama default: http://localhost:11434/v1).
-        #[arg(long)]
-        base_url: Option<String>,
     },
 
     /// Run the premium Claude Code cooperative session replay and speculative rewind demo
@@ -492,6 +495,27 @@ async fn main() -> Result<()> {
 
     if cli.preview {
         korg_registry::IS_PREVIEW_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    // Export the swarm's LLM provider selection so every worker SUBPROCESS — each
+    // a separate `korg worker` OS process that builds its own provider via
+    // `KorgConfig::load()` (which reads these env vars) — uses it. Set once here at
+    // startup; the children inherit the environment on spawn. This makes the full
+    // multi-persona campaign run on a real model (`--provider ollama`) with no
+    // config threading. `run-once` reads the flags directly and ignores this.
+    //
+    // `set_var` is unsound if another thread reads the environment concurrently.
+    // These writes run once at the very top of `main()`, before any campaign task,
+    // worker spawn, or `KorgConfig::load()` is reached — so no concurrent env
+    // access is in flight here. (Edition 2021; `set_var` is still a safe fn.)
+    if let Some(provider) = &cli.provider {
+        std::env::set_var("KORG_DEFAULT_LLM", provider);
+        if let Some(model) = &cli.model {
+            std::env::set_var("KORG_MODEL", model);
+        }
+        if let Some(base_url) = &cli.base_url {
+            std::env::set_var("OLLAMA_BASE_URL", base_url);
+        }
     }
 
     if let Some(prompt) = &cli.prompt {
@@ -836,14 +860,17 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::RunOnce {
-            task,
-            repo,
-            provider,
-            model,
-            base_url,
-        } => {
-            run_once_command(task, repo, provider, model, base_url).await?;
+        Commands::RunOnce { task, repo } => {
+            run_once_command(
+                task,
+                repo,
+                cli.provider
+                    .clone()
+                    .unwrap_or_else(|| "deterministic".to_string()),
+                cli.model.clone(),
+                cli.base_url.clone(),
+            )
+            .await?;
         }
 
         Commands::Demo => {

@@ -276,7 +276,15 @@ impl LlmPersona {
             top_p: self.top_p,
             presence_penalty: self.presence_penalty,
             frequency_penalty: self.frequency_penalty,
-            response_format: None,
+            // Implementer personas (Benjamin/Lucas) must emit a JSON mutations
+            // block; ask OpenAI-compatible live providers for strictly valid JSON
+            // so the patch reliably parses. Planner/researcher/evaluator personas
+            // produce prose and must NOT be forced to JSON. The deterministic stub
+            // ignores this field, so the hermetic path is unchanged.
+            response_format: match self.persona {
+                Persona::Benjamin | Persona::Lucas => Some("json_object".to_string()),
+                _ => None,
+            },
         };
 
         let response = self.provider.complete(request).await?;
