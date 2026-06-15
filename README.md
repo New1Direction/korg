@@ -13,7 +13,7 @@
 
 ---
 
-![korg demo — rewind, fork, and replay AI agent decisions in real time](demo.gif)
+![korg demo — record, verify, and rewind an AI agent session as a hash-chained ledger](demo.gif)
 
 ---
 
@@ -49,7 +49,7 @@ Every agent action is:
 - **Appended** to an immutable, cryptographically-signed ledger
 - **Ordered** with Hybrid Logical Clocks (causal, deterministic, globally consistent)
 - **Replayable** — rebuild exact state at any point in history
-- **Reversible** — rewind, fork, or branch any decision
+- **Reversible** — rewind the ledger to any prior sequence point
 
 ---
 
@@ -155,7 +155,7 @@ The crate is not yet published to crates.io; install from source:
 git clone https://github.com/New1Direction/korg
 cd korg
 cargo build --release
-./target/release/korg-tui --help
+./target/release/korg --help
 ```
 
 ### Python bridge (for korgex / korgchat)
@@ -175,25 +175,29 @@ korg campaign --tui --prompt "Refactor the auth layer to use JWTs"
 # Web cockpit at localhost:8080
 korg campaign --web --prompt "Optimize the database connection pool"
 
-# Pure autonomous goal mode
-korg goal "Write and validate a full test suite for src/parser.rs"
+# Pure autonomous goal mode (--goal is a top-level flag)
+korg --goal "Write and validate a full test suite for src/parser.rs"
 
-# Preview without committing (speculative sandbox)
-korg run --preview "Refactor the main event loop"
+# Preview without committing (dry-run; --preview is a top-level flag)
+korg --preview "Refactor the main event loop"
 ```
 
-### Rewind & Fork
+### Rewind & Verify
 
 ```bash
-# Rewind to a specific ledger sequence point
+# Rewind the capability journal to a specific ledger sequence point
 korg rewind --seq 4
 
-# List all checkpoints in the current session
-korg checkpoints list
+# Drive the honest pipeline on a fixture and emit a verifiable ledger
+korg run-once "Fix the add function in src/lib.rs so it adds"
 
-# Restore from a specific checkpoint
-korg checkpoints restore --id <checkpoint-uuid>
+# Independently verify any korg-ledger@v1 journal (no trust in the producer)
+korg-verify <path-to-ledger.jsonl>
 ```
+
+> Speculative branch/fork and named checkpoints (`korg fork`, `korg checkpoints
+> list|restore`) are planned, not yet shipped. The reversibility surface today is
+> `korg rewind`.
 
 ---
 
@@ -212,8 +216,8 @@ Korg adapts its intelligence tier based on task complexity. Modes are governed e
 | `heavy-consciousness` | Maximum depth. Full HeavyConsciousness context injection. |
 
 ```bash
-korg run --mode research "Explore alternative approaches to the rate limiter"
-korg run --mode recovery "Carefully migrate the database schema"
+korg --mode research "Explore alternative approaches to the rate limiter"
+korg --mode recovery "Carefully migrate the database schema"
 ```
 
 ---
@@ -239,8 +243,8 @@ Korg treats AI cognition the same way a hypervisor treats compute and Git treats
 | Deterministic replay | ✅ | ❌ | ❌ | ❌ |
 | Causal HLC ordering | ✅ | ❌ | ❌ | ❌ |
 | Rewind execution | ✅ | ❌ | ❌ | ❌ |
-| Speculative branches | ✅ | ❌ | ❌ | ❌ |
-| Execution checkpoints | ✅ | ❌ | ❌ | ❌ |
+| Speculative branches | 🚧 planned | ❌ | ❌ | ❌ |
+| Execution checkpoints | 🚧 planned | ❌ | ❌ | ❌ |
 | Cryptographic audit trail | ✅ | ❌ | ❌ | ❌ |
 | Micro-healing | ✅ | ❌ | ❌ | ❌ |
 | Model-agnostic | ✅ | ✅ | ✅ | ✅ |
@@ -288,8 +292,9 @@ Korg is in active development. Current test coverage: **175 tests, 0 failures** 
 
 - [x] Append-only cognitive ledger with HLC ordering
 - [x] Deterministic replay and projection rebuilds
-- [x] Speculative execution + preview mode
-- [x] Execution checkpoints (O(1) restore)
+- [x] Preview / dry-run mode (`--preview`)
+- [ ] Speculative warm-boot execution (in progress)
+- [ ] Execution checkpoints / restore CLI (primitive exists; CLI planned)
 - [x] Micro-healing effect layer
 - [x] Multi-agent swarm orchestration (Captain, Harper, Benjamin, Lucas)
 - [x] TUI dashboard + Web cockpit
