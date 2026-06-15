@@ -33,6 +33,7 @@ fn req(system: &str, user: &str) -> LlmRequest {
         top_p: None,
         presence_penalty: None,
         frequency_penalty: None,
+        response_format: None,
     }
 }
 

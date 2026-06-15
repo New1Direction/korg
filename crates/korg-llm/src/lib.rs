@@ -69,7 +69,7 @@ pub enum MultiModalContent {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct LlmRequest {
     pub messages: Vec<Message>,
     pub temperature: f32,
@@ -86,6 +86,11 @@ pub struct LlmRequest {
     pub top_p: Option<f32>,
     pub presence_penalty: Option<f32>,
     pub frequency_penalty: Option<f32>,
+
+    /// When `Some("json_object")`, OpenAI-compatible providers are asked to
+    /// return strictly valid JSON (`response_format: {"type": "..."}`). None =
+    /// unchanged behavior. Other providers ignore it.
+    pub response_format: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -372,6 +377,9 @@ impl OpenAIProvider {
 
         if let Some(mt) = req.max_tokens {
             body["max_tokens"] = serde_json::json!(mt);
+        }
+        if let Some(rf) = &req.response_format {
+            body["response_format"] = serde_json::json!({ "type": rf });
         }
         if let Some(t) = tools_val {
             body["tools"] = t;
@@ -2241,6 +2249,7 @@ mod tests {
             top_p: None,
             presence_penalty: None,
             frequency_penalty: None,
+            response_format: None,
         };
 
         let response = provider.complete(request).await.unwrap();
@@ -2281,6 +2290,7 @@ mod tests {
             top_p: None,
             presence_penalty: None,
             frequency_penalty: None,
+            response_format: None,
         };
         let resp = provider.complete(request).await.unwrap();
         // honest null for an unknown task: empty mutations, NOT the mock echo string
@@ -2337,6 +2347,7 @@ mod tests {
             top_p: None,
             presence_penalty: None,
             frequency_penalty: None,
+            response_format: None,
         };
 
         let payload = provider.serialize_request(request, false);
@@ -2393,6 +2404,7 @@ mod tests {
             top_p: None,
             presence_penalty: None,
             frequency_penalty: None,
+            response_format: None,
         };
 
         let payload = provider.serialize_request(request, false);
@@ -2443,6 +2455,7 @@ mod tests {
             top_p: None,
             presence_penalty: None,
             frequency_penalty: None,
+            response_format: None,
         };
 
         let res = resilient.complete(request).await;
@@ -2528,6 +2541,7 @@ mod tests {
             top_p: None,
             presence_penalty: None,
             frequency_penalty: None,
+            response_format: None,
         };
 
         // This should try candidate-fail-1 first, trigger a cooldown, and then try candidate-success-2 and succeed!
@@ -2595,6 +2609,7 @@ mod tests {
             top_p: None,
             presence_penalty: None,
             frequency_penalty: None,
+            response_format: None,
         };
 
         // This should skip candidate-cooldown-1 and return success from candidate-active-2 immediately!
@@ -2629,6 +2644,7 @@ mod tests {
             top_p: Some(0.99),
             presence_penalty: Some(0.12),
             frequency_penalty: Some(0.34),
+            response_format: None,
         };
 
         let response = LlmResponse {
@@ -2683,11 +2699,37 @@ mod tests {
             top_p: Some(0.85),
             presence_penalty: Some(0.45),
             frequency_penalty: Some(0.65),
+            response_format: None,
         };
 
         let payload = provider.serialize_request(request, false);
         assert!((payload["top_p"].as_f64().unwrap() - 0.85).abs() < 1e-5);
         assert!((payload["presence_penalty"].as_f64().unwrap() - 0.45).abs() < 1e-5);
         assert!((payload["frequency_penalty"].as_f64().unwrap() - 0.65).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_openai_response_format_serialization() {
+        let provider =
+            OpenAIProvider::new("test_key".to_string(), None, Some("gpt-4o".to_string()));
+
+        // Some("json_object") → body carries response_format: { "type": "json_object" }
+        let with_format = LlmRequest {
+            response_format: Some("json_object".to_string()),
+            ..Default::default()
+        };
+        let payload = provider.serialize_request(with_format, false);
+        assert_eq!(payload["response_format"]["type"], "json_object");
+
+        // None → body has no response_format key at all (byte-identical to before)
+        let without_format = LlmRequest {
+            response_format: None,
+            ..Default::default()
+        };
+        let payload = provider.serialize_request(without_format, false);
+        assert!(
+            payload.get("response_format").is_none(),
+            "response_format must be absent when not requested"
+        );
     }
 }

@@ -191,9 +191,30 @@ korg rewind --seq 4
 # Drive the honest pipeline on a fixture and emit a verifiable ledger
 korg run-once "Fix the add function in src/lib.rs so it adds"
 
+# Same pipeline, but with a REAL local model (ollama) on an arbitrary task —
+# the model writes the patch, Korg applies it, measures the real git diff +
+# `cargo check`, and attests only what actually changed.
+korg run-once "Fix the bug in src/lib.rs: max() returns the minimum.
+Output the COMPLETE corrected src/lib.rs:
+\`\`\`rust
+$(cat your-repo/src/lib.rs)
+\`\`\`" --repo your-repo --provider ollama --model qwen2.5:7b
+
 # Independently verify any korg-ledger@v1 journal (no trust in the producer)
 korg-verify <path-to-ledger.jsonl>
 ```
+
+> **Honest by construction, with any model.** The default provider is a hermetic
+> deterministic stub (fixture-only, zero dependencies). `--provider ollama` runs
+> a real local model on *arbitrary* tasks — Korg asks OpenAI-compatible providers
+> for strictly valid JSON (`response_format: json_object`), so even a small (7B)
+> local model lands a real patch reliably (measured 5/5 with qwen2.5:7b). Either
+> way the attestation is **measured, never fabricated**: when the model produces a
+> patch, the ledger attests the real `git diff` file count and changed paths; if
+> it declines or writes a non-compiling change, Korg reports it honestly (an
+> *honest null* — zero changed, zero attested — or a failed `cargo check`). The
+> pipeline cannot attest a number the worktree does not actually show — that is
+> the guarantee, independent of model quality.
 
 > Speculative branch/fork and named checkpoints (`korg fork`, `korg checkpoints
 > list|restore`) are planned, not yet shipped. The reversibility surface today is

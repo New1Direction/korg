@@ -12,6 +12,7 @@ jobs:
   build-and-release:
     name: Build & Package Binary
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
