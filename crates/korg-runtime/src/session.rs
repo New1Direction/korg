@@ -358,6 +358,17 @@ impl SessionBackend for SubprocessBackend {
             cmd.env(k, v);
         }
 
+        // The worker builds its own LLM provider from `KorgConfig::load()`, which
+        // reads these env vars. The child inherits the parent env by default, but
+        // forward them explicitly so the worker's provider selection (e.g.
+        // `--provider ollama` exported by the CLI) is visible here and survives
+        // even if the inherited environment is ever cleared.
+        for key in ["KORG_DEFAULT_LLM", "KORG_MODEL", "OLLAMA_BASE_URL"] {
+            if let Ok(val) = std::env::var(key) {
+                cmd.env(key, val);
+            }
+        }
+
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;

@@ -33,6 +33,10 @@ pub fn init_tracing() {
         // Machine-readable JSON for log shipping / structured analysis
         let json_layer = fmt::layer()
             .json()
+            // Logs go to STDERR. STDOUT is reserved for program output — and, in
+            // `korg worker` subprocesses, for the ACP envelope stream the leader
+            // parses as JSON. A log line on stdout corrupts that protocol.
+            .with_writer(std::io::stderr)
             .with_current_span(true)
             .with_span_list(true)
             .with_target(true)
@@ -46,6 +50,9 @@ pub fn init_tracing() {
     } else {
         // Human-readable pretty output for development
         let pretty_layer = fmt::layer()
+            // Logs go to STDERR (see note above): stdout is the ACP channel for
+            // worker subprocesses and the program-output channel for the leader.
+            .with_writer(std::io::stderr)
             .with_target(true)
             .with_thread_ids(false)
             .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
