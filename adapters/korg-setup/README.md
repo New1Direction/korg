@@ -109,16 +109,9 @@ you can preview every action before committing.
 
 ## Tests
 
-45 tests cover:
-
-- 14 for the `~/.claude.json` editor (idempotent register/remove,
-  atomic backups, preservation of unrelated keys, env vars).
-- 13 for the launchd integration (plist shape, write idempotency,
-  install/uninstall, platform gating, `is_loaded` parser).
-- 11 for the setup orchestrator (binary detection, dry-run, idempotency,
-  ledger-dir creation, launchctl-failure reporting, no-daemon path).
-- 7 for the status reporter (empty install, partial install, loaded
-  launchd detection, format rendering).
+A test suite covers the `~/.claude.json` editor, launchd integration,
+setup orchestrator, status reporter, discovery, bridge registration, and
+Claude settings.
 
 Run them with the Korg workspace venv:
 

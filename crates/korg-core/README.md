@@ -140,7 +140,7 @@ korg-core   ← types, traits, paths, metrics, telemetry (this crate; no interna
   route. The field names on `NormalizedEvent` intentionally mirror the server's
   `AgentToolCallRequest` so adopting it later is a rename-and-move, not a redesign.
 
-7 unit tests cover `paths`, `metrics`, and `telemetry`; `event`, `adapter`, and
+Unit tests cover `paths`, `metrics`, and `telemetry`; `event`, `adapter`, and
 `subscription` are plain type definitions and are exercised by their consumers.
 
 ## License

@@ -129,8 +129,8 @@ korg_server::run_web_with_campaign(
   `/api/diff`, blob, and override endpoints) to anything on the network. There is no auth on
   the dashboard/telemetry/control routes — only the Anthropic proxy enforces `AuthenticatedUser`.
 - **WASM frontend handlers are empty stubs.** `wasm_js_handler` / `wasm_bytes_handler` return
-  zero-length bodies. The module doc comment still describes a "glassmorphism SPA," but in the
-  current code every page route serves the same static `LANDING_HTML`.
+  zero-length bodies. There is no bundled SPA/WASM frontend; every page route serves the same
+  static `LANDING_HTML`.
 - **Vision redaction.** Before broadcasting, `Ktrans` updates carrying `vision_attachments`
   marked `REDACTED`/`BLOCKED` have their image bytes swapped for a blackout PNG, unless
   `KorgConfig.security_vision.allow_raw_screenshots` is set.

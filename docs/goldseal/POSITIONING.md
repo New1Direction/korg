@@ -47,7 +47,7 @@ We do not start by selling a platform. We start by giving away a primitive that 
   issuer signature, and a human-legible summary that is **re-derived from the events**
   — so the "files touched / tools used / steps" a person reads literally cannot lie.
   (Shipped: `goldseal@v1`, this work.)
-- **Re-verification needs nothing of ours.** A 200-line dependency-light Rust binary,
+- **Re-verification needs nothing of ours.** A small dependency-light Rust binary,
   a stdlib Python module, or a single browser tab (Web Crypto) all check a seal
   byte-identically. **Zero trust in the tool that produced it.** That is the whole
   product.

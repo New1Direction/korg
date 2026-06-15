@@ -15,7 +15,6 @@ without human intervention.
 | Feature | Description |
 |---|---|
 | `korg autoheal` | Autonomous recovery loop: detect failure → identify root cause → rewind to last clean checkpoint → retry with corrected strategy |
-| Micro-healing at the effect layer | Per-tool failure recovery without full session rewind |
 | Incremental checkpoints | Background checkpoint compression — only delta since last checkpoint is stored |
 | Recovery confidence scoring | Each autoheal attempt is scored; low-confidence recoveries escalate to human approval |
 | Doom-loop circuit breaker | Hard limit on recursive recovery attempts with structured escalation |
