@@ -28,6 +28,7 @@ pub mod observation;
 pub mod personas;
 pub mod provenance;
 pub mod recovery;
+pub mod run_once;
 pub mod runtime;
 pub mod session;
 pub mod skills;

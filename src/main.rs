@@ -238,6 +238,19 @@ enum Commands {
         seq: u64,
     },
 
+    /// Drive the SP1 honest pipeline visibly on a fixture: real patch → real
+    /// `cargo check` → attested mutation count that equals the real git diff.
+    /// Never fabricates: an unrelated task yields an honest null (attested 0).
+    RunOnce {
+        /// The task to run (the fixture task "Fix the add function in src/lib.rs
+        /// so it adds" produces a real, compiling patch; anything else → honest null).
+        task: String,
+
+        /// Target repo. Defaults to a temp git-inited copy of the bundled fixture.
+        #[arg(long)]
+        repo: Option<std::path::PathBuf>,
+    },
+
     /// Run the premium Claude Code cooperative session replay and speculative rewind demo
     Demo,
 
@@ -797,6 +810,10 @@ async fn main() -> Result<()> {
             }
         }
 
+        Commands::RunOnce { task, repo } => {
+            run_once_command(task, repo).await?;
+        }
+
         Commands::Demo => {
             if let Err(e) = run_demo_internal(None).await {
                 eprintln!("\x1b[38;2;255;0;180m❌ Demo failed: {}\x1b[0m", e);
@@ -995,6 +1012,113 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Run the SP1 honest pipeline once and pretty-print the attestation. With no
+/// `--repo`, a temp git-inited copy of the bundled fixture is used so the demo
+/// is self-contained and reproducible. The printed "attested mutation count"
+/// equals the real git-diff file count by construction — the SP1 invariant made
+/// visible. An unrelated task prints `files_changed=0 · attested 0` (honest null).
+async fn run_once_command(task: String, repo: Option<std::path::PathBuf>) -> Result<()> {
+    let cyan = "\x1b[38;2;0;240;255m";
+    let green = "\x1b[38;2;0;255;128m";
+    let pink = "\x1b[38;2;255;0;180m";
+    let slate = "\x1b[38;2;120;125;140m";
+    let bold = "\x1b[1m";
+    let reset = "\x1b[0m";
+
+    let (repo_path, _temp) = match repo {
+        Some(p) => (p, None),
+        None => {
+            let dir = prepare_fixture_repo().await?;
+            println!(
+                "{slate}├──{reset} Using temp fixture repo: {cyan}{}{reset}",
+                dir.display()
+            );
+            (dir.clone(), Some(dir))
+        }
+    };
+
+    println!("{slate}└──{reset} Task: {bold}{cyan}{}{reset}\n", task);
+
+    let report = korg_runtime::run_once::run_once_honest(&task, &repo_path).await;
+
+    let check_color = if report.cargo_check == "Passed" {
+        green
+    } else {
+        pink
+    };
+    let check_upper = report.cargo_check.to_uppercase();
+
+    println!("{bold}{cyan}=== HONEST ATTESTATION ==={reset}");
+    println!(
+        "  files_changed={bold}{}{reset} · cargo check={check_color}{check_upper}{reset} · attested mutation count={bold}{}{reset} (== real git diff: {})",
+        report.files_changed, report.attested_count, report.numstat_files
+    );
+    if report.attested_count == report.numstat_files {
+        println!(
+            "  {green}✓{reset} attested count == real git-diff file count (SP1 invariant holds)"
+        );
+    } else {
+        println!("  {pink}✗ attested count diverges from the real diff{reset}");
+    }
+    if report.files_changed == 0 {
+        println!("  {slate}honest null: no fabricated mutations for this task{reset}");
+    }
+    if let Some(path) = &report.ledger_path {
+        println!(
+            "\n{slate}├──{reset} Verifiable ledger (korg-ledger@v1): {cyan}{}{reset}",
+            path.display()
+        );
+        println!(
+            "{slate}└──{reset} Verify with: {bold}korg-verify {}{reset}",
+            path.display()
+        );
+    }
+
+    Ok(())
+}
+
+/// Copy the bundled `fixtures/honest-demo-repo` into a fresh temp git repo (the
+/// "before" state) — the exact dance the keystone test and the run_once
+/// integration test use, so the demo and the tests agree byte-for-byte.
+async fn prepare_fixture_repo() -> Result<std::path::PathBuf> {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/honest-demo-repo");
+    if !src.join("src/lib.rs").exists() {
+        return Err(anyhow::anyhow!(
+            "bundled fixture not found at {} — pass --repo <path> to run against your own repo",
+            src.display()
+        ));
+    }
+    let dir = std::env::temp_dir().join(format!("korg-run-once-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(dir.join("src"))?;
+    std::fs::copy(src.join("Cargo.toml"), dir.join("Cargo.toml"))?;
+    std::fs::copy(src.join("src/lib.rs"), dir.join("src/lib.rs"))?;
+
+    async fn git(dir: &std::path::Path, args: &[&str]) -> Result<()> {
+        tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .await?;
+        Ok(())
+    }
+    git(&dir, &["init", "-q"]).await?;
+    git(&dir, &["add", "-A"]).await?;
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=korg@korg",
+            "-c",
+            "user.name=korg",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    )
+    .await?;
+    Ok(dir)
 }
 
 pub async fn run_developer_shell(_mode: String) -> Result<()> {
