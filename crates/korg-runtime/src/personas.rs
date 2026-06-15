@@ -276,6 +276,7 @@ impl LlmPersona {
             top_p: self.top_p,
             presence_penalty: self.presence_penalty,
             frequency_penalty: self.frequency_penalty,
+            response_format: None,
         };
 
         let response = self.provider.complete(request).await?;

@@ -78,6 +78,11 @@ fn benjamin_request(task: &str) -> LlmRequest {
         top_p: None,
         presence_penalty: None,
         frequency_penalty: None,
+        // Ask OpenAI-compatible live providers (ollama) for strictly valid JSON.
+        // The deterministic stub ignores this; for a live model it removes the
+        // "model emitted unparseable JSON" failure mode, so the patch lands
+        // reliably (or, honestly, an empty `{"mutations":[]}` → honest null).
+        response_format: Some("json_object".to_string()),
     }
 }
 
