@@ -1474,6 +1474,7 @@ pub async fn run_agent_loop(
             top_p: None,
             presence_penalty: None,
             frequency_penalty: None,
+            response_format: None,
         };
 
         println!("\n{slate}──── Agent Turn {} ────{reset}", turn + 1);

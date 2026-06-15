@@ -14,6 +14,10 @@ jobs:
   build:
     name: Build & Test
     runs-on: ubuntu-latest
+    # Fail fast on a hang (e.g. a test that spawns a stuck subprocess) instead of
+    # burning GitHub's 6h default. Generous vs a normal cold build+test+fuzz so
+    # only a genuine hang trips it.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -70,6 +74,7 @@ jobs:
   build-no-candle:
     name: Build (no optional features)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -96,6 +101,7 @@ jobs:
   conformance:
     name: Cross-language ledger conformance
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 

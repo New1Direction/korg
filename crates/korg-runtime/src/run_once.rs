@@ -78,18 +78,40 @@ fn benjamin_request(task: &str) -> LlmRequest {
         top_p: None,
         presence_penalty: None,
         frequency_penalty: None,
+        // Ask OpenAI-compatible live providers (ollama) for strictly valid JSON.
+        // The deterministic stub ignores this; for a live model it removes the
+        // "model emitted unparseable JSON" failure mode, so the patch lands
+        // reliably (or, honestly, an empty `{"mutations":[]}` → honest null).
+        response_format: Some("json_object".to_string()),
     }
 }
 
-/// Drive the honest pipeline once for Benjamin on `task` against `repo_path`,
-/// returning a report whose `attested_count` equals the real diff file count.
+/// Drive the honest pipeline once for Benjamin on `task` against `repo_path`
+/// with the hermetic [`DeterministicProvider`] — the zero-dependency default.
+/// Returns a report whose `attested_count` equals the real diff file count.
 pub async fn run_once_honest(task: &str, repo_path: &Path) -> HonestRunReport {
-    // 1. Ask the hermetic default provider (as Benjamin) for the patch.
     let provider = DeterministicProvider::new();
+    run_once_honest_with(task, repo_path, &provider).await
+}
+
+/// Drive the honest pipeline once for Benjamin on `task` against `repo_path`
+/// using `provider` — the deterministic stub for hermetic runs, or a **live
+/// model** (e.g. ollama) for real work on arbitrary tasks.
+///
+/// The pipeline is provider-agnostic and **fail-honest by construction**: a
+/// real model either returns an applyable patch (whose real diff is measured
+/// and attested) or output we cannot parse (no mutations → attested 0). It can
+/// never attest a number the worktree does not actually show.
+pub async fn run_once_honest_with(
+    task: &str,
+    repo_path: &Path,
+    provider: &dyn LlmProvider,
+) -> HonestRunReport {
+    // 1. Ask the provider (as Benjamin) for the patch.
     let resp = match provider.complete(benjamin_request(task)).await {
         Ok(r) => r,
         Err(_) => {
-            // The hermetic provider is infallible, but fail honest if it ever isn't:
+            // A live provider may fail (daemon down, timeout); fail honest:
             // no patch → no change → attested 0.
             return HonestRunReport {
                 files_changed: 0,
@@ -112,6 +134,9 @@ pub async fn run_once_honest(task: &str, repo_path: &Path) -> HonestRunReport {
 
     // 3. Measure reality — the real diff and whether the result compiles.
     let n = numstat(repo_path).await;
+    // The REAL changed paths (same staged set `numstat` just counted), so the
+    // ledger records what actually changed, not what the model claimed.
+    let changed = changed_paths(repo_path).await;
     let check = cargo_check(repo_path).await;
     let _metrics = honest_metrics(
         &apply,
@@ -127,7 +152,7 @@ pub async fn run_once_honest(task: &str, repo_path: &Path) -> HonestRunReport {
     let attested = n.files;
 
     // 4. Write a verifiable korg-ledger@v1 journal of the run's events.
-    let ledger_path = write_ledger(repo_path, task, &resp, attested, &check).ok();
+    let ledger_path = write_ledger(repo_path, task, &resp, attested, &changed, &check).ok();
 
     HonestRunReport {
         files_changed: n.files,
@@ -178,6 +203,27 @@ fn event(
     m
 }
 
+/// The REAL changed paths in the worktree vs HEAD — the same staged set
+/// `numstat` counts (`git add -A` has already run), so the recorded paths match
+/// the attested count. Records what actually changed on disk, never the model's
+/// claimed `target` or a hardcoded path — the ledger must not record a file the
+/// run did not touch.
+async fn changed_paths(worktree: &Path) -> Vec<String> {
+    let out = tokio::process::Command::new("git")
+        .args(["diff", "--cached", "--name-only"])
+        .current_dir(worktree)
+        .output()
+        .await;
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Build and persist the run's hash-chained journal to
 /// `<repo>/.korg/run-once.jsonl`, returning its path. The events form a
 /// well-formed causal DAG (each `triggered_by` references a strictly-earlier
@@ -187,6 +233,7 @@ fn write_ledger(
     task: &str,
     resp: &korg_llm::LlmResponse,
     attested: usize,
+    changed_paths: &[String],
     check: &CargoCheck,
 ) -> std::io::Result<PathBuf> {
     let mut events: Vec<Value> = Vec::new();
@@ -217,7 +264,7 @@ fn write_ledger(
         event(
             3,
             "apply_mutations",
-            json!({ "path": "src/lib.rs" }),
+            json!({ "paths": changed_paths }),
             json!({ "files_changed": attested }),
             Some(2),
         ),
