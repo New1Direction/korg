@@ -9,7 +9,9 @@ pub mod dag;
 pub mod events;
 pub mod pool;
 pub mod recovery;
+pub mod warm_boot;
 
 pub use dag::{DagNode, ExecutionDag, ExecutionSummary, NodeStatus, SpeculativeScheduler};
 pub use events::{BunEvent, BunEventOrOutcome, BunOutcome, EventLevel};
 pub use recovery::{heal_node, heal_node_with_context};
+pub use warm_boot::{warm_boot, warm_target_dir, WarmBootReport, WarmBootStatus};

@@ -778,6 +778,10 @@ pub async fn spawn_worker_process(
         routing_id: routing_id.clone(),
         payload,
         timeout_secs: WORKER_TIMEOUT.as_secs(),
+        // Both warm boot and this spawn derive warm_target_dir() from the SAME
+        // campaign session id, so the worker's cargo check reuses the warmed cache.
+        session_id: coordinator.session_id.to_string(),
+        speculative: coordinator.speculative(),
     };
 
     let (handle, mut rx) = coordinator.backend.spawn(&spec, &signing_key).await?;
