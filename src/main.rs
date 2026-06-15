@@ -244,17 +244,34 @@ enum Commands {
         seq: u64,
     },
 
-    /// Drive the SP1 honest pipeline visibly on a fixture: real patch → real
-    /// `cargo check` → attested mutation count that equals the real git diff.
-    /// Never fabricates: an unrelated task yields an honest null (attested 0).
+    /// Drive the SP1 honest pipeline visibly: real patch → real `cargo check` →
+    /// attested mutation count that equals the real git diff. Never fabricates:
+    /// an unrelated task (or unparseable model output) yields an honest null.
+    ///
+    /// Default provider is the hermetic deterministic stub (fixture-only). Pass
+    /// `--provider ollama --model <name> --repo <path>` to run a real local
+    /// model on an arbitrary task — the attestation is measured, not faked.
     RunOnce {
         /// The task to run (the fixture task "Fix the add function in src/lib.rs
-        /// so it adds" produces a real, compiling patch; anything else → honest null).
+        /// so it adds" produces a real, compiling patch under the default
+        /// deterministic provider; with `--provider ollama` any task is real).
         task: String,
 
         /// Target repo. Defaults to a temp git-inited copy of the bundled fixture.
         #[arg(long)]
         repo: Option<std::path::PathBuf>,
+
+        /// Provider: `deterministic` (default, hermetic) or `ollama` (live local model).
+        #[arg(long, default_value = "deterministic")]
+        provider: String,
+
+        /// Model name for live providers (e.g. `qwen2.5:7b` for ollama).
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Base URL override for the live provider (ollama default: http://localhost:11434/v1).
+        #[arg(long)]
+        base_url: Option<String>,
     },
 
     /// Run the premium Claude Code cooperative session replay and speculative rewind demo
@@ -819,8 +836,14 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::RunOnce { task, repo } => {
-            run_once_command(task, repo).await?;
+        Commands::RunOnce {
+            task,
+            repo,
+            provider,
+            model,
+            base_url,
+        } => {
+            run_once_command(task, repo, provider, model, base_url).await?;
         }
 
         Commands::Demo => {
@@ -1028,13 +1051,38 @@ async fn main() -> Result<()> {
 /// is self-contained and reproducible. The printed "attested mutation count"
 /// equals the real git-diff file count by construction — the SP1 invariant made
 /// visible. An unrelated task prints `files_changed=0 · attested 0` (honest null).
-async fn run_once_command(task: String, repo: Option<std::path::PathBuf>) -> Result<()> {
+async fn run_once_command(
+    task: String,
+    repo: Option<std::path::PathBuf>,
+    provider: String,
+    model: Option<String>,
+    base_url: Option<String>,
+) -> Result<()> {
+    use korg_llm::LlmProvider;
     let cyan = "\x1b[38;2;0;240;255m";
     let green = "\x1b[38;2;0;255;128m";
     let pink = "\x1b[38;2;255;0;180m";
     let slate = "\x1b[38;2;120;125;140m";
     let bold = "\x1b[1m";
     let reset = "\x1b[0m";
+
+    // Build the provider. Default is the hermetic deterministic stub; `ollama`
+    // is the live local model that does real work on arbitrary tasks.
+    let llm: std::sync::Arc<dyn LlmProvider> = match provider.as_str() {
+        "deterministic" => std::sync::Arc::new(korg_llm::DeterministicProvider::new()),
+        "ollama" => {
+            let m = model.as_deref().unwrap_or("llama3");
+            println!(
+                "{slate}├──{reset} Provider: {bold}{cyan}ollama{reset} · model {bold}{m}{reset} {slate}(live — real work, measured attestation){reset}"
+            );
+            std::sync::Arc::new(korg_llm::LocalOllamaProvider::new(base_url, model))
+        }
+        other => {
+            return Err(anyhow::anyhow!(
+                "unknown provider '{other}' — use 'deterministic' (hermetic) or 'ollama' (live local model)"
+            ));
+        }
+    };
 
     let (repo_path, _temp) = match repo {
         Some(p) => (p, None),
@@ -1050,7 +1098,8 @@ async fn run_once_command(task: String, repo: Option<std::path::PathBuf>) -> Res
 
     println!("{slate}└──{reset} Task: {bold}{cyan}{}{reset}\n", task);
 
-    let report = korg_runtime::run_once::run_once_honest(&task, &repo_path).await;
+    let report =
+        korg_runtime::run_once::run_once_honest_with(&task, &repo_path, llm.as_ref()).await;
 
     let check_color = if report.cargo_check == "Passed" {
         green
