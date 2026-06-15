@@ -68,6 +68,14 @@ pub struct LeaderOrchestrator {
     pub last_round_healed: bool,
     pub runtime_coordinator: Arc<crate::runtime::RuntimeCoordinator>,
     pub capability_resolver: Arc<tokio::sync::Mutex<korg_registry::CapabilityResolver>>,
+    /// When `false` (the hermetic default), the synthetic stress/telemetry
+    /// injectors are OFF and the evaluator scores only real `live_events`.
+    /// Enabled via `--inject-stress` for demos / fault-injection.
+    pub inject_stress: bool,
+    /// Running total of REAL mutations (summed `git diff --numstat` file counts)
+    /// across all completed rounds. Feeds the ledger's `total_mutations_so_far`
+    /// so the attested running total is a real measurement, not a synthetic formula.
+    pub total_real_mutations: usize,
 }
 
 /// First-class contract artifact (negotiated between Planner and Evaluator).
@@ -138,7 +146,14 @@ impl LeaderOrchestrator {
             last_round_healed: false,
             runtime_coordinator,
             capability_resolver,
+            inject_stress: false,
+            total_real_mutations: 0,
         }
+    }
+
+    /// Enable/disable the synthetic stress + telemetry injectors (default off).
+    pub fn set_inject_stress(&mut self, on: bool) {
+        self.inject_stress = on;
     }
 
     pub fn session_id(&self) -> Uuid {
@@ -193,32 +208,37 @@ impl LeaderOrchestrator {
             println!("    {}", j);
         }
 
-        // Feed a synthetic telemetry pulse into the Evaluator's own window for continuity
-        let te = TraceEvent {
-            agent_id: "leader-aggregate".into(),
-            risk_score: if verdict.overall == "TERMINATE" {
-                0.82
-            } else {
-                0.45
-            },
-            epistemic_confidence: if verdict.passed_rubrics >= 4 {
-                0.81
-            } else {
-                0.52
-            },
-            conflict_rate: if verdict.doom_loop_detected {
-                0.48
-            } else {
-                0.18
-            },
-            token_velocity: if verdict.doom_loop_detected {
-                240.0
-            } else {
-                95.0
-            },
-            ..Default::default()
-        };
-        self.evaluator.ingest(te);
+        // Feed a SYNTHETIC continuity pulse into the Evaluator's window — its fields
+        // are hardcoded constants chosen by verdict booleans, not real measurements,
+        // so it must never contaminate the default (honest) scoring path. Gated like
+        // the other synthetic injectors: only under --inject-stress.
+        if self.inject_stress {
+            let te = TraceEvent {
+                agent_id: "leader-aggregate".into(),
+                risk_score: if verdict.overall == "TERMINATE" {
+                    0.82
+                } else {
+                    0.45
+                },
+                epistemic_confidence: if verdict.passed_rubrics >= 4 {
+                    0.81
+                } else {
+                    0.52
+                },
+                conflict_rate: if verdict.doom_loop_detected {
+                    0.48
+                } else {
+                    0.18
+                },
+                token_velocity: if verdict.doom_loop_detected {
+                    240.0
+                } else {
+                    95.0
+                },
+                ..Default::default()
+            };
+            self.evaluator.ingest(te);
+        }
 
         let action = verdict.recommended_action.as_str();
         let decision_log = format!(
@@ -615,6 +635,7 @@ impl LeaderOrchestrator {
         arena_winner: String,
         arena_confidence: f32,
         mutations_this_round: usize,
+        total_mutations_so_far: usize,
         verdict: &EvaluationVerdict,
     ) {
         let session_id = self.session_id;
@@ -677,7 +698,7 @@ impl LeaderOrchestrator {
                 verdict: verdict_json.clone(),
                 leader_action: leader_action.clone(),
                 new_swarm_size: swarm_size,
-                total_mutations_so_far: (round + 1) * 5,
+                total_mutations_so_far,
                 tx_hash: "".to_string(), // Set to empty string for deterministic hashing
                 parent_hashes: campaign_tips.clone(),
                 state_merkle_root: state_merkle_root.clone(),
@@ -704,7 +725,7 @@ impl LeaderOrchestrator {
                 verdict: verdict_json,
                 leader_action,
                 new_swarm_size: swarm_size,
-                total_mutations_so_far: (round + 1) * 5,
+                total_mutations_so_far,
                 tx_hash: tx_hash.clone(),
                 parent_hashes: campaign_tips,
                 state_merkle_root,
@@ -799,11 +820,13 @@ impl LeaderOrchestrator {
 
     async fn persist_final_summary_ktrans(&mut self) {
         // Round 999 is the conventional marker for final summary
+        let total_real = self.total_real_mutations;
         self.persist_campaign_ktrans(
             999,
             "FINAL".to_string(),
             0.0,
             0,
+            total_real,
             &EvaluationVerdict {
                 verdict_id: Uuid::now_v7(),
                 session_id: self.session_id,
@@ -894,30 +917,34 @@ impl LeaderOrchestrator {
                 let _ = tokio::fs::write(format!("{}/blackboard.json", bb_dir), pretty).await;
             }
 
-            // Spawn background tokio thread that runs the Captain planner and Critic evaluator asynchronously
-            let bb_clone = self.telemetry_blackboard.clone();
-            let description_clone = description.clone();
-            tokio::spawn(async move {
-                println!("\n{bold}{gold}⏳ [Async Oversight] Background Captain Planner + Critic Evaluator started...{reset}");
-                // Simulate recursive planning debate
-                for round in 1..=3 {
-                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-                    let text = format!("[Async Oversight] Round {}: Planner/Critic analyzing architecture, scanning risks for: {}", round, description_clone);
-                    println!("{slate}{}{reset}", text);
+            // Spawn background tokio thread that runs the Captain planner and Critic evaluator asynchronously.
+            // This whole task only fabricates synthetic "captain-async-planner" traces, so it is gated
+            // behind --inject-stress; the default hermetic path injects nothing here.
+            if self.inject_stress {
+                let bb_clone = self.telemetry_blackboard.clone();
+                let description_clone = description.clone();
+                tokio::spawn(async move {
+                    println!("\n{bold}{gold}⏳ [Async Oversight] Background Captain Planner + Critic Evaluator started...{reset}");
+                    // Simulate recursive planning debate
+                    for round in 1..=3 {
+                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                        let text = format!("[Async Oversight] Round {}: Planner/Critic analyzing architecture, scanning risks for: {}", round, description_clone);
+                        println!("{slate}{}{reset}", text);
 
-                    let trace = TraceEvent {
-                        agent_id: "captain-async-planner".to_string(),
-                        risk_score: 0.12 * round as f32,
-                        epistemic_confidence: 0.88,
-                        surface_text: text.clone(),
-                        ..Default::default()
-                    };
-                    if let Ok(mut bb) = bb_clone.lock() {
-                        bb.ingest_trace_events(vec![trace]);
+                        let trace = TraceEvent {
+                            agent_id: "captain-async-planner".to_string(),
+                            risk_score: 0.12 * round as f32,
+                            epistemic_confidence: 0.88,
+                            surface_text: text.clone(),
+                            ..Default::default()
+                        };
+                        if let Ok(mut bb) = bb_clone.lock() {
+                            bb.ingest_trace_events(vec![trace]);
+                        }
                     }
-                }
-                println!("{bold}{green}✓ [Async Oversight] Background planning and risk critique completed.{reset}\n");
-            });
+                    println!("{bold}{green}✓ [Async Oversight] Background planning and risk critique completed.{reset}\n");
+                });
+            }
 
             return Ok(contract);
         }
@@ -1450,6 +1477,13 @@ impl LeaderOrchestrator {
             }
             let results = final_results;
 
+            // Honest ledger count: the REAL number of files changed this round is the
+            // sum of each worker's measured `git diff --numstat` file count (plumbed up
+            // from the worker child in Unit B). This is what the ledger attests — no
+            // synthetic `arena_outcome["mutations"].unwrap_or(3) + round%2` fabrication.
+            let real_files_changed: usize = results.iter().map(|r| r.files_changed).sum();
+            self.total_real_mutations += real_files_changed;
+
             // Aggregate any vision attachments captured during this round
             for r in &results {
                 self.current_round_vision_attachments
@@ -1515,22 +1549,25 @@ impl LeaderOrchestrator {
             }
 
             // Optional stress pulse so the harsh critic has realistic adversarial signal to evaluate
-            // (makes the demo more interesting and shows the combinatorial logic firing)
-            let stress_event = TraceEvent {
-                agent_id: "stress-test-worker".to_string(),
-                risk_score: 0.71,
-                epistemic_confidence: 0.44,
-                conflict_rate: 0.31,
-                token_velocity: 195.0,
-                gpu_util: 0.81,
-                verified_count_delta: 0,
-                authority_improvement: 0.05,
-                surface_text:
-                    "multiple conflicting approaches, low verification rate, rising semantic churn"
-                        .to_string(),
-                ..Default::default()
-            };
-            self.evaluator.ingest(stress_event);
+            // (makes the demo more interesting and shows the combinatorial logic firing).
+            // Synthetic — gated behind --inject-stress so the default path scores only real events.
+            if self.inject_stress {
+                let stress_event = TraceEvent {
+                    agent_id: "stress-test-worker".to_string(),
+                    risk_score: 0.71,
+                    epistemic_confidence: 0.44,
+                    conflict_rate: 0.31,
+                    token_velocity: 195.0,
+                    gpu_util: 0.81,
+                    verified_count_delta: 0,
+                    authority_improvement: 0.05,
+                    surface_text:
+                        "multiple conflicting approaches, low verification rate, rising semantic churn"
+                            .to_string(),
+                    ..Default::default()
+                };
+                self.evaluator.ingest(stress_event);
+            }
 
             // Run the full harsh 5-rubric evaluation on genuine swarm data + stress signal
             let verdict = self.evaluator.evaluate(self.session_id).await;
@@ -1600,85 +1637,95 @@ impl LeaderOrchestrator {
                     let _ = tx.try_send(crate::tui_bridge::TuiUpdate::Arena {
                         round,
                         winner: winner_name.clone(),
-                        mutations: arena_outcome["mutations"].as_u64().unwrap_or(3) as usize
-                            + (round % 2),
+                        mutations: real_files_changed,
                     });
 
                     let _ = tx.try_send(crate::tui_bridge::TuiUpdate::PersonaTelemetry {
-                        scores: [
-                            real_scores[0] + (round as f32 * 0.08).sin() * 0.02,
-                            real_scores[1] + (round as f32 * 0.12).cos() * 0.02,
-                            real_scores[2] + (round as f32 * 0.06).sin() * 0.02,
-                            real_scores[3] + (round as f32 * 0.10).cos() * 0.02,
-                        ],
+                        // Raw real arena scores — no cosmetic sin/cos jitter.
+                        scores: real_scores,
                         telemetry_merges: (round * 12) as u32,
-                        crdt_sync_frequency: 1.2 + (round as f32 * 0.15),
-                        conflicts_count: (round / 3) as u32,
+                        // The lock/CRDT sub-fields have no real subsystem feeding them,
+                        // so they are honest zeros on the default path; --inject-stress
+                        // restores the synthetic demo values.
+                        crdt_sync_frequency: if self.inject_stress {
+                            1.2 + (round as f32 * 0.15)
+                        } else {
+                            0.0
+                        },
+                        conflicts_count: if self.inject_stress {
+                            (round / 3) as u32
+                        } else {
+                            0
+                        },
                         provenance_chain_length: (round + 1) as u32,
-                        lock_states: vec![
-                            (
-                                "Captain".to_string(),
-                                if round % 3 == 0 {
-                                    "WRITE".to_string()
-                                } else {
-                                    "READ".to_string()
-                                },
-                                format!("{:.2}ms", 0.12 + (round as f32 * 0.01)),
-                                if round % 3 == 0 {
-                                    "Negotiating contract".to_string()
-                                } else {
-                                    "Monitoring".to_string()
-                                },
-                            ),
-                            (
-                                "Harper".to_string(),
-                                if round % 4 == 1 {
-                                    "WRITE".to_string()
-                                } else if round % 4 == 0 {
-                                    "READ".to_string()
-                                } else {
-                                    "IDLE".to_string()
-                                },
-                                format!("{:.2}ms", 0.18 + (round as f32 * 0.015)),
-                                if round % 4 == 1 {
-                                    "Generating edits".to_string()
-                                } else {
-                                    "Idle".to_string()
-                                },
-                            ),
-                            (
-                                "Benjamin".to_string(),
-                                if round % 4 == 2 {
-                                    "WRITE".to_string()
-                                } else if round % 4 == 0 {
-                                    "READ".to_string()
-                                } else {
-                                    "IDLE".to_string()
-                                },
-                                format!("{:.2}ms", 0.15 + (round as f32 * 0.02)),
-                                if round % 4 == 2 {
-                                    "Synthesizing patch".to_string()
-                                } else {
-                                    "Idle".to_string()
-                                },
-                            ),
-                            (
-                                "Lucas".to_string(),
-                                if round % 4 == 3 {
-                                    "WRITE".to_string()
-                                } else if round % 4 == 0 {
-                                    "READ".to_string()
-                                } else {
-                                    "IDLE".to_string()
-                                },
-                                format!("{:.2}ms", 0.22 + (round as f32 * 0.008)),
-                                if round % 4 == 3 {
-                                    "Verifying test cases".to_string()
-                                } else {
-                                    "Idle".to_string()
-                                },
-                            ),
-                        ],
+                        lock_states: if self.inject_stress {
+                            vec![
+                                (
+                                    "Captain".to_string(),
+                                    if round % 3 == 0 {
+                                        "WRITE".to_string()
+                                    } else {
+                                        "READ".to_string()
+                                    },
+                                    format!("{:.2}ms", 0.12 + (round as f32 * 0.01)),
+                                    if round % 3 == 0 {
+                                        "Negotiating contract".to_string()
+                                    } else {
+                                        "Monitoring".to_string()
+                                    },
+                                ),
+                                (
+                                    "Harper".to_string(),
+                                    if round % 4 == 1 {
+                                        "WRITE".to_string()
+                                    } else if round % 4 == 0 {
+                                        "READ".to_string()
+                                    } else {
+                                        "IDLE".to_string()
+                                    },
+                                    format!("{:.2}ms", 0.18 + (round as f32 * 0.015)),
+                                    if round % 4 == 1 {
+                                        "Generating edits".to_string()
+                                    } else {
+                                        "Idle".to_string()
+                                    },
+                                ),
+                                (
+                                    "Benjamin".to_string(),
+                                    if round % 4 == 2 {
+                                        "WRITE".to_string()
+                                    } else if round % 4 == 0 {
+                                        "READ".to_string()
+                                    } else {
+                                        "IDLE".to_string()
+                                    },
+                                    format!("{:.2}ms", 0.15 + (round as f32 * 0.02)),
+                                    if round % 4 == 2 {
+                                        "Synthesizing patch".to_string()
+                                    } else {
+                                        "Idle".to_string()
+                                    },
+                                ),
+                                (
+                                    "Lucas".to_string(),
+                                    if round % 4 == 3 {
+                                        "WRITE".to_string()
+                                    } else if round % 4 == 0 {
+                                        "READ".to_string()
+                                    } else {
+                                        "IDLE".to_string()
+                                    },
+                                    format!("{:.2}ms", 0.22 + (round as f32 * 0.008)),
+                                    if round % 4 == 3 {
+                                        "Verifying test cases".to_string()
+                                    } else {
+                                        "Idle".to_string()
+                                    },
+                                ),
+                            ]
+                        } else {
+                            vec![]
+                        },
                     });
 
                     let total_tokens =
@@ -1717,15 +1764,18 @@ impl LeaderOrchestrator {
 
                 // Also inject a small amount of evolving synthetic signal so the demo stays interesting
                 // even after the short-lived subprocesses have exited.
-                let synthetic = TraceEvent {
-                    agent_id: format!("live-worker-{}", round % 4),
-                    risk_score: 0.38 + ((round as f32) * 0.04).sin().abs() * 0.25,
-                    epistemic_confidence: 0.72 - (round as f32 * 0.025).max(0.0),
-                    token_velocity: 85.0 + (round as f32 * 7.0),
-                    conflict_rate: 0.11 + (round as f32 * 0.015),
-                    ..Default::default()
-                };
-                self.evaluator.ingest(synthetic);
+                // Synthetic — gated behind --inject-stress so the default path scores only real events.
+                if self.inject_stress {
+                    let synthetic = TraceEvent {
+                        agent_id: format!("live-worker-{}", round % 4),
+                        risk_score: 0.38 + ((round as f32) * 0.04).sin().abs() * 0.25,
+                        epistemic_confidence: 0.72 - (round as f32 * 0.025).max(0.0),
+                        token_velocity: 85.0 + (round as f32 * 7.0),
+                        conflict_rate: 0.11 + (round as f32 * 0.015),
+                        ..Default::default()
+                    };
+                    self.evaluator.ingest(synthetic);
+                }
 
                 // Run the full harsh critic on the current window
                 let live_verdict = self.evaluator.evaluate(self.session_id).await;
@@ -1741,7 +1791,8 @@ impl LeaderOrchestrator {
                     round,
                     winner_name.clone(), // in real flow this comes from the Arena result
                     arena_outcome["confidence"].as_f64().unwrap_or(0.87) as f32,
-                    arena_outcome["mutations"].as_u64().unwrap_or(3) as usize + (round % 2),
+                    real_files_changed,
+                    self.total_real_mutations,
                     &live_verdict,
                 )
                 .await;
@@ -3361,6 +3412,29 @@ fn copy_dir_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn inject_stress_defaults_off() {
+        let leader = LeaderOrchestrator::new("task".to_string(), None);
+        assert!(
+            !leader.inject_stress,
+            "the default campaign path must inject no synthetic signal"
+        );
+    }
+
+    #[test]
+    fn real_mutation_count_replaces_synthetic_formula() {
+        // The honest count is the sum of per-worker files_changed, NOT
+        // arena_outcome["mutations"].unwrap_or(3) + round%2.
+        use crate::personas::{Persona, PersonaResult};
+        let mut a = PersonaResult::new(Persona::Benjamin, "r".into());
+        a.files_changed = 1;
+        let mut b = PersonaResult::new(Persona::Harper, "r".into());
+        b.files_changed = 0;
+        let results = vec![a, b];
+        let real: usize = results.iter().map(|r| r.files_changed).sum();
+        assert_eq!(real, 1, "the attested count is the real per-worker sum");
+    }
 
     #[tokio::test]
     async fn test_contract_negotiation_loop() {

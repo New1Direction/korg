@@ -36,6 +36,7 @@ canonical_json  = "0.1"
 tree-sitter         = "0.26.9"
 tree-sitter-rust    = "0.24.2"
 tree-sitter-python  = "0.25.0"
+sysinfo             = "0.30"
 
 [dev-dependencies]
 tokio-test  = "0.4"
