@@ -3951,7 +3951,12 @@ mod tests {
     /// missing-semicolon error that fails `cargo check`; the loop heals it
     /// (inserts `;`), and the re-measured numstat count must flow into the
     /// returned PersonaResult.
+    // Drives a REAL heal: spawns a worker to fix a deliberately-broken crate and
+    // re-runs `cargo check`. Works locally (worker + cargo present) but hangs in
+    // CI (the worker never completes), so it ran for hours and red-lined the job.
+    // The no-op sibling below covers the hermetic path; run this with `--ignored`.
     #[tokio::test]
+    #[ignore = "drives a real self-heal worker subprocess + cargo check; CI-hostile/hangs — run locally with --ignored"]
     async fn test_self_healing_loop_success() {
         // Unique routing id so this test's worktree path can't collide with
         // other runs/tests sharing the cache dir.
