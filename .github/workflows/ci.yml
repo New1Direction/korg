@@ -69,3 +69,36 @@ jobs:
 
       - name: Run tests (no default features)
         run: cargo test --no-default-features --verbose
+
+  conformance:
+    name: Cross-language ledger conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Python spec oracle reproduces the frozen vectors
+        run: python3 spec/korg-ledger-v1/conformance.py
+
+      - name: JS spec oracle reproduces the frozen vectors
+        run: node spec/korg-ledger-v1/js/conformance.mjs
+
+      - name: Install pytest
+        run: python3 -m pip install --quiet pytest
+
+      - name: Producer + capture + setup + reader test suites
+        run: |
+          PYTHONPATH="adapters/korg-ledger-py/src:adapters/claude-code/src:adapters/korg-setup/src:adapters/recall-mcp/src" \
+            python3 -m pytest -q \
+              adapters/korg-ledger-py/tests \
+              adapters/claude-code/tests \
+              adapters/korg-setup/tests \
+              adapters/recall-mcp/tests/test_index.py \
+              adapters/recall-mcp/tests/test_text.py

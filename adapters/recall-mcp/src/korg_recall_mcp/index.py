@@ -18,6 +18,32 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
+def _normalize_record(obj: dict) -> dict:
+    """Return a flat {seq, source_agent, tool_name, args, result, triggered_by, success}
+    from EITHER a legacy flat record OR a canonical korg-ledger@v1 JournalEvent."""
+    ev = obj.get("event")
+    if isinstance(ev, dict) and "tool_name" in ev:  # canonical JournalEvent
+        meta = obj.get("metadata") or {}
+        return {
+            "seq": obj.get("seq_id", 0),
+            "source_agent": ev.get("source_agent", ""),
+            "tool_name": ev.get("tool_name", ""),
+            "args": ev.get("args") or {},
+            "result": ev.get("result") or {},
+            "triggered_by": meta.get("triggered_by"),
+            "success": ev.get("success", True),
+        }
+    return {  # legacy flat
+        "seq": obj.get("seq", 0),
+        "source_agent": obj.get("source_agent", ""),
+        "tool_name": obj.get("tool_name", ""),
+        "args": obj.get("args") or {},
+        "result": obj.get("result") or {},
+        "triggered_by": obj.get("triggered_by"),
+        "success": obj.get("success", True),
+    }
+
+
 @dataclass
 class IndexedEvent:
     """One event with the metadata needed for ranking and display.
@@ -107,20 +133,21 @@ class EventIndex:
                     continue
                 if not isinstance(obj, dict):
                     continue
-                embed_text = text_for_event(obj)
+                rec = _normalize_record(obj)
+                embed_text = text_for_event(rec)
                 if not embed_text:
                     continue
                 self.events.append(
                     IndexedEvent(
                         source_file=key,
-                        seq=int(obj.get("seq", 0)),
-                        source_agent=str(obj.get("source_agent", "")),
-                        tool_name=str(obj.get("tool_name", "")),
-                        args=dict(obj.get("args") or {}),
-                        result=dict(obj.get("result") or {}),
+                        seq=int(rec["seq"] or 0),
+                        source_agent=str(rec["source_agent"]),
+                        tool_name=str(rec["tool_name"]),
+                        args=dict(rec["args"]),
+                        result=dict(rec["result"]),
                         embed_text=embed_text,
-                        triggered_by=obj.get("triggered_by"),
-                        success=bool(obj.get("success", True)),
+                        triggered_by=rec["triggered_by"],
+                        success=bool(rec["success"]),
                     )
                 )
                 added += 1

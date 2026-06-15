@@ -1218,6 +1218,7 @@ mod tests {
             event: ev1,
             prev_hash: String::new(),
             entry_hash: String::new(),
+            event_sig: None,
         };
         assert!(proj.apply(&envelope1).is_ok());
         let state = proj.snapshot();
@@ -1238,6 +1239,7 @@ mod tests {
             event: ev2,
             prev_hash: String::new(),
             entry_hash: String::new(),
+            event_sig: None,
         };
         assert!(proj.apply(&envelope2).is_ok());
         let state = proj.snapshot();
@@ -1259,6 +1261,7 @@ mod tests {
             event: ev3,
             prev_hash: String::new(),
             entry_hash: String::new(),
+            event_sig: None,
         };
         assert!(proj.apply(&envelope3).is_ok());
         let state = proj.snapshot();
@@ -1281,6 +1284,7 @@ mod tests {
             event: ev4,
             prev_hash: String::new(),
             entry_hash: String::new(),
+            event_sig: None,
         };
         assert!(proj.apply(&envelope4).is_ok());
         let state = proj.snapshot();
@@ -1299,6 +1303,7 @@ mod tests {
             event: ev5,
             prev_hash: String::new(),
             entry_hash: String::new(),
+            event_sig: None,
         };
         assert!(proj.apply(&envelope5).is_ok());
         let state = proj.snapshot();
@@ -1455,6 +1460,7 @@ mod tests {
                 event: ev1,
                 prev_hash: String::new(),
                 entry_hash: String::new(),
+                event_sig: None,
             },
             JournalEvent {
                 schema_version: "1.0".to_string(),
@@ -1463,6 +1469,7 @@ mod tests {
                 event: ev2,
                 prev_hash: String::new(),
                 entry_hash: String::new(),
+                event_sig: None,
             },
         ];
 

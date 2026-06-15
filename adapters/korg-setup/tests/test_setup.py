@@ -212,6 +212,57 @@ def test_no_daemon_skips_launchd(tmp_config, tmp_ledger_dir, tmp_ledger_file):
     assert daemon_step.status == "skip"
 
 
+def _which_with_hook(name):
+    return {
+        "korg-ingest-claude": "/fake/korg-ingest-claude",
+        "korg-recall-mcp": "/fake/korg-recall-mcp",
+        "korg-hook": "/fake/korg-hook",
+    }.get(name)
+
+
+def test_setup_registers_hook_when_present(tmp_config, tmp_ledger_dir, tmp_ledger_file, tmp_path):
+    settings = tmp_path / ".claude" / "settings.json"
+    with patch("korg_setup.setup.shutil.which", side_effect=_which_with_hook):
+        report = run_setup(
+            ledger_dir=tmp_ledger_dir, ledger_file=tmp_ledger_file,
+            claude_config_path=tmp_config, claude_settings_path=settings,
+            install_daemon=False,
+        )
+    assert report.overall_ok
+    hooks_step = next(s for s in report.steps if s.name == "hooks")
+    assert hooks_step.status == "ok"
+    saved = json.loads(settings.read_text())
+    assert saved["hooks"]["PostToolUse"][0]["hooks"][0]["command"] == "/fake/korg-hook"
+
+
+def test_setup_warns_when_hook_binary_absent(tmp_config, tmp_ledger_dir, tmp_ledger_file, tmp_path):
+    settings = tmp_path / ".claude" / "settings.json"
+    # _which_stub resolves recall + ingest but NOT korg-hook
+    with patch("korg_setup.setup.shutil.which", side_effect=_which_stub):
+        report = run_setup(
+            ledger_dir=tmp_ledger_dir, ledger_file=tmp_ledger_file,
+            claude_config_path=tmp_config, claude_settings_path=settings,
+            install_daemon=False,
+        )
+    assert report.overall_ok  # missing hook is a warning, not a failure
+    hooks_step = next(s for s in report.steps if s.name == "hooks")
+    assert hooks_step.status == "warn"
+    assert not settings.exists()
+
+
+def test_setup_does_not_require_ingest_binary(tmp_config, tmp_ledger_dir, tmp_ledger_file, tmp_path):
+    # only recall + hook present; the daemon binary is gone — setup must still succeed
+    def which(name):
+        return {"korg-recall-mcp": "/fake/korg-recall-mcp", "korg-hook": "/fake/korg-hook"}.get(name)
+    with patch("korg_setup.setup.shutil.which", side_effect=which):
+        report = run_setup(
+            ledger_dir=tmp_ledger_dir, ledger_file=tmp_ledger_file,
+            claude_config_path=tmp_config, claude_settings_path=tmp_path / ".claude" / "settings.json",
+            install_daemon=False,
+        )
+    assert report.overall_ok
+
+
 # ── format_report ──────────────────────────────────────────────────────
 
 

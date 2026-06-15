@@ -30,7 +30,10 @@ from korg_recall_mcp.search import (
 from korg_recall_mcp.server import SERVER_VERSION, format_matches_for_llm, serve_stdio
 
 
-DEFAULT_LEDGER = Path.home() / ".korg" / "claude-events.jsonl"
+# Default to the directory of per-session verifiable ledgers (korg-ledger@v1).
+# EventIndex.refresh() globs *.jsonl within a directory path. The legacy flat
+# ~/.korg/claude-events.jsonl can still be passed explicitly via --ledger.
+DEFAULT_LEDGER = Path.home() / ".korg" / "sessions"
 
 
 def main(argv: list[str] | None = None) -> int:
