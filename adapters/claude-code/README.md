@@ -55,17 +55,24 @@ graph identical in shape to what korgex's own agent loop produces.
 
 ## Two ways to use it
 
-### 1. Live tail mode (recommended)
+> **Recommended live path: `korg-setup` + `korg-hook`.** The verifiable,
+> zero-config capture model (PostToolUse/Stop hook → per-session verifiable
+> ledger at `~/.korg/sessions/<id>.jsonl`) is described in
+> [What it produces](#what-it-produces). The `korg-ingest-claude --tail/--once`
+> CLI below still works, but it emits the **legacy un-chained flat ledger**;
+> run `korg-backfill --migrate-flat <path>` to upgrade an existing flat ledger
+> to the per-session format.
 
-`korg follows you in real time` — the adapter watches
-`~/.claude/projects/**/*.jsonl` and streams new events into a korg
-ledger as Claude Code writes them. Install, run once, get a continuously-
-growing ledger forever:
+### Legacy flat-file tail (`korg-ingest-claude`)
+
+The adapter watches `~/.claude/projects/**/*.jsonl` and streams new events into
+a **legacy flat (un-chained)** korg ledger as Claude Code writes them. Install,
+run once, get a continuously-growing flat ledger:
 
 ```bash
 pip install -e ./adapters/claude-code
 
-# Watch ~/.claude/projects, append events to ~/.korg/claude-events.jsonl
+# Watch ~/.claude/projects, append events to ~/.korg/claude-events.jsonl (legacy flat ledger)
 korg-ingest-claude --tail
 
 # Just print events to stdout (no file write):
@@ -83,18 +90,23 @@ The byte-offset state is persistent — kill the process and restart any
 time; it picks up exactly where it left off. The state file at
 `~/.korg/claude-tail-state.json` survives reboots.
 
-### 2. One-shot backfill
+### One-shot backfill of history
 
-For the existing pile of session files on your disk right now:
+For the existing pile of session files on your disk right now, use
+`korg-backfill` — it re-derives the **verifiable per-session ledgers** under
+`~/.korg/sessions/` for every historical session.
+
+The legacy `korg-ingest-claude --once` still exists, but it writes the **legacy
+un-chained flat ledger** instead:
 
 ```bash
-korg-ingest-claude --once --out ~/.korg/claude-events.jsonl
-# [korg-ingest-claude] one-shot pass complete · files_active=42 events=128304 ...
+korg-ingest-claude --once --out ~/.korg/claude-events.jsonl   # legacy flat ledger
+# [korg-ingest-claude] one-shot pass complete · files_active=N events=M ...
 ```
 
 Runs once, ingests everything you haven't ingested yet, exits.
 
-### 3. Library usage
+### Library usage
 
 For embedding into your own ledger plumbing:
 
@@ -109,7 +121,7 @@ def emit(body: dict) -> int | None:
 
 
 # Single-session replay:
-adapter = ClaudeCodeAdapter(emit, source_agent="agent:claude-code@2.1.150")
+adapter = ClaudeCodeAdapter(emit, source_agent="agent:claude-code@2.1.0")
 with Path("~/.claude/projects/-Users-you-Documents-foo/abc.jsonl").expanduser().open() as f:
     stats = adapter.ingest(f)
 

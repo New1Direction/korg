@@ -26,8 +26,10 @@ format:
   `FunctionCall`, `ToolDefinition` (JSON-schema parameters), and
   `MultiModalContent::Image`.
 - `LlmRequest` — messages plus generation params (`temperature`, `max_tokens`,
-  `top_p`, penalties, `stop_sequences`, `tools`, `multimodal`) and optional
-  provenance metadata (`tx_id`, `session_id`, `policy_hash`).
+  `top_p`, penalties, `stop_sequences`, `tools`, `multimodal`, `response_format`)
+  and optional provenance metadata (`tx_id`, `session_id`, `policy_hash`).
+  `response_format = Some("json_object")` asks OpenAI-compatible providers for
+  strict JSON; other providers ignore it.
 - `LlmResponse` / `LlmDelta` (streaming chunk), `TokenUsage`, `FinishReason`,
   and the `LlmError` enum (`Http`, `Timeout`, `RateLimit`, `Auth`, `Parser`,
   `Network`, `CircuitBreakerOpen`, `Unknown`).
@@ -59,6 +61,11 @@ pub trait LlmProvider: Send + Sync + 'static {
 - **`MockProvider`** — offline provider for tests; queue canned
   `Result<LlmResponse, _>` values via `set_response`, or stream deltas via
   `set_stream_deltas`. Falls back to echoing the last user message.
+- **`DeterministicProvider`** — hermetic, fixture-only offline provider
+  (`src/deterministic.rs`). Produces reproducible, role-shaped artifacts for a
+  known fixture task and an honest null (empty mutations, low confidence) for
+  anything else — it never fabricates. Selected via `default_llm = "deterministic"`
+  and used by the honest `korg run-once` pipeline.
 
 ### Resilience decorators
 
@@ -90,8 +97,8 @@ pub trait LlmProvider: Send + Sync + 'static {
   structs (`VisionPolicyConfig`, `PathsPolicyConfig`, `NetworkPolicyConfig`,
   `TokensPolicyConfig`). The `Toml*` structs are the deserialization mirror.
 - **`build_provider(&KorgConfig)`** — builds the default provider (selected by
-  `default_llm`: `openai` / `anthropic` / `grok` / `ollama` / `rotator`, else
-  `mock`), already wrapped in `ResilientLlmProvider`.
+  `default_llm`: `openai` / `anthropic` / `grok` / `ollama` / `rotator` /
+  `deterministic`, else `mock`), already wrapped in `ResilientLlmProvider`.
 - **`build_provider_for_persona(&KorgConfig, name)`** — applies a
   `[personas.<name>]` override (provider/model/temperature) for the Leader,
   Workers (`captain`/`harper`/`benjamin`/`lucas`), and `evaluator`; returns the
@@ -154,6 +161,7 @@ let req = LlmRequest {
     top_p: None,
     presence_penalty: None,
     frequency_penalty: None,
+    response_format: None,
 };
 
 let resp = provider.complete(req).await?;

@@ -178,6 +178,12 @@ korg campaign --web --prompt "Optimize the database connection pool"
 # Pure autonomous goal mode (--goal is a top-level flag)
 korg --goal "Write and validate a full test suite for src/parser.rs"
 
+# Run the full multi-persona swarm on a REAL local model — every persona
+# (Captain, Harper, Benjamin, Lucas, Evaluator) runs as a real worker
+# subprocess doing real, measured, attested work. Defaults to a hermetic
+# deterministic provider; `--provider ollama` makes it live.
+korg --goal "Fix the failing test in src/lib.rs" --provider ollama --model qwen2.5:7b
+
 # Preview without committing (dry-run; --preview is a top-level flag)
 korg --preview "Refactor the main event loop"
 ```
@@ -215,6 +221,14 @@ korg-verify <path-to-ledger.jsonl>
 > *honest null* — zero changed, zero attested — or a failed `cargo check`). The
 > pipeline cannot attest a number the worktree does not actually show — that is
 > the guarantee, independent of model quality.
+
+> **Verify it in your browser — sends nothing.** Zero-install, client-side
+> verifiers (Web Crypto) for any `korg-ledger@v1` journal or Gold Seal:
+> [verify a session](https://new1direction.github.io/korg/web/index.html) ·
+> [verify a Gold Seal](https://new1direction.github.io/korg/web/seal.html) ·
+> [time-travel explorer](https://new1direction.github.io/korg/web/explore.html).
+> They hash-chain, check the causal DAG, validate Ed25519 signatures, and
+> re-derive the human summary from the events — all locally.
 
 > Speculative branch/fork and named checkpoints (`korg fork`, `korg checkpoints
 > list|restore`) are planned, not yet shipped. The reversibility surface today is
@@ -267,6 +281,8 @@ Korg treats AI cognition the same way a hypervisor treats compute and Git treats
 | Speculative branches | 🚧 planned | ❌ | ❌ | ❌ |
 | Execution checkpoints | 🚧 planned | ❌ | ❌ | ❌ |
 | Cryptographic audit trail | ✅ | ❌ | ❌ | ❌ |
+| Independently-verifiable Gold Seal | ✅ | ❌ | ❌ | ❌ |
+| Honest attestation (real diff, never fabricated) | ✅ | ❌ | ❌ | ❌ |
 | Micro-healing | ✅ | ❌ | ❌ | ❌ |
 | Model-agnostic | ✅ | ✅ | ✅ | ✅ |
 
@@ -282,7 +298,7 @@ Korg treats AI cognition the same way a hypervisor treats compute and Git treats
 | Ledger ordering | Hybrid Logical Clocks (HLC) |
 | Workspace snapshots | Git Merkle tree (O(1) restore via `write-tree` / `read-tree`) |
 | Cryptographic attestation | Ed25519 (ed25519-dalek) |
-| Semantic governance | BERT cosine similarity (Candle / Hugging Face) |
+| Semantic governance | BERT cosine similarity via the optional `candle` feature (Hugging Face); a deterministic embedding fallback runs when `candle` is not built |
 | TUI dashboard | Ratatui + Crossterm |
 | Web cockpit | Axum + SSE |
 | Syntax highlighting | Syntect + tree-sitter |
@@ -291,7 +307,7 @@ Korg treats AI cognition the same way a hypervisor treats compute and Git treats
 
 ## Architecture Deep Dive
 
-→ **[Read the full technical write-up](https://github.com/New1Direction/korg/blob/main/ARCHITECTURE.md)** *(coming soon)*
+→ **[Read the full technical write-up](https://github.com/New1Direction/korg/blob/main/ARCHITECTURE.md)**
 
 ### Real-World Audit Ledger Example
 You can inspect a real-world cognitive audit ledger produced by Korg. This NDJSON file records a live session where Claude Code was prompted to call Korg's MCP tools to refactor a function and rename all call sites, capturing the full HLC causal graph and `actor_id` recorder metadata:
@@ -309,23 +325,28 @@ The short version:
 
 ## Status
 
-Korg is in active development. Current test coverage: **175 tests, 0 failures** (162 cargo across 8 crates + 13 pytest for the PyO3 bridge).
+Korg is in active development, built on a **frozen `korg-ledger@v1` spec with cross-language conformance** (Rust + Python + JS). Test footprint: **300+ Rust tests across the workspace plus Python/JS conformance suites**, CI-gated (build · tests · cross-language oracle · differential fuzz) and green on `main`.
 
-- [x] Append-only cognitive ledger with HLC ordering
+**Shipped:**
+- [x] Append-only, hash-chained cognitive ledger with HLC ordering
 - [x] Deterministic replay and projection rebuilds
+- [x] Reversible execution — rewind the ledger to any prior sequence point (tamper-evident `LedgerRewind`)
+- [x] Per-event Ed25519 signatures + structural anchoring (`korg-ledger@v1` §8)
+- [x] **Gold Seal (`goldseal@v1`)** — a public, independently-verifiable certificate of agent work, with zero-install in-browser verifiers
+- [x] **Honest pipeline** (`korg run-once`) — real patch → real `cargo check` → an attested mutation count that equals the real `git diff`; never fabricates (reports an honest null instead)
+- [x] **Live local model** (`--provider ollama`) — real per-persona work on arbitrary tasks
+- [x] **Multi-agent swarm** (Captain, Harper, Benjamin, Lucas, Evaluator) — genuine worker subprocesses doing real, measured, attested work with DAG data-flow between personas
+- [x] Zero-config Claude Code capture (PostToolUse/Stop hooks → verifiable per-session ledgers)
+- [x] Micro-healing effect layer · TUI dashboard + Web cockpit
+- [x] Cryptographic provenance attestation · single-authority CognitionMode governance
 - [x] Preview / dry-run mode (`--preview`)
-- [ ] Speculative warm-boot execution (in progress)
-- [ ] Execution checkpoints / restore CLI (primitive exists; CLI planned)
-- [x] Micro-healing effect layer
-- [x] Multi-agent swarm orchestration (Captain, Harper, Benjamin, Lucas)
-- [x] TUI dashboard + Web cockpit
-- [x] Cryptographic provenance attestation
-- [x] Single-authority CognitionMode governance
-- [ ] `cargo install korg` on crates.io
-- [ ] Remote swarm workers
-- [ ] WASM backends
-- [ ] IDE language server integration
-- [ ] Distributed checkpoint synchronization
+
+**Planned / not yet shipped:**
+- [ ] Speculative branches / fork + execution-checkpoint restore CLI (primitives exist; CLI planned)
+- [ ] `cargo install korg` on crates.io · npm-published verifier
+- [ ] Live network anchoring resolver (trusted-time witness — the remaining honest limit)
+- [ ] Remote swarm workers · WASM backends · IDE language-server integration · distributed checkpoint sync
+- [ ] Fully passive capture without agent cooperation
 
 ---
 
