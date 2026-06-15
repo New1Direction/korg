@@ -111,17 +111,17 @@ partial — read these honestly before relying on a panel:
 
 - **All `TuiUpdate` variants are wired** to `KorgTui` state, so any panel the
   orchestrator actually emits for will update live.
-- **`update_from_leader` is a stub** — it takes a `&LeaderOrchestrator` and
-  does nothing; the comment says "Real integration would pull live data here."
 - **The campaign spawn is acknowledged as a workaround.** `run_tui_with_campaign`
   notes in-code that proper event hooks on `LeaderOrchestrator` don't exist
   yet, so it "runs the campaign and periodically sends updates."
-- **Several fields are seeded with placeholder data** in `KorgTui::default()`
-  (persona scores, lock states, the per-persona sparkline histories) and a
-  "demo heartbeat" nudges `h_sem` while `current_verdict` still says
-  "Waiting…". Telemetry shown before the first real `TuiUpdate` is cosmetic.
-- **The git timeline falls back to hardcoded sample commits** if `git log`
-  returns nothing.
+- **Telemetry, persona scores, lock states, and sparkline histories default to
+  empty/zero** in `KorgTui::default()` and are populated only from real
+  `TuiUpdate` signals — never seeded or fabricated. Before the first update,
+  panels read as empty rather than showing demo data (`current_verdict`
+  honestly defaults to "Waiting for first evaluation...").
+- **The git timeline reads real `git log` metadata;** on any failure (no git,
+  non-zero exit, or empty output) it leaves the timeline empty rather than
+  fabricating commits.
 - `fuzzy_match` exists both as a `KorgTui` method (used by the palette) and as
   a duplicate free function at the bottom of the file.
 

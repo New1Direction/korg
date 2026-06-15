@@ -12,7 +12,7 @@ The entire Korg backend is implemented in Rust, which provides compile-time guar
 
 -   **Ownership and Borrowing**: Rust's ownership model ensures that there is always one and only one "owner" of any given piece of memory. Data can be immutably borrowed by multiple parties or mutably borrowed by exactly one party. This statically prevents data races at compile time. In Korg, shared state like the `Blackboard` is wrapped in concurrency primitives like `Arc<Mutex<T>>`, which enforce these borrowing rules at runtime, ensuring that even in a highly concurrent multi-agent system, there are no data races.
 -   **Absence of Null and Undefined Behavior**: Rust's type system eliminates null pointer dereferences through the `Option<T>` and `Result<T, E>` enums. This forces developers to handle the absence of a value explicitly, preventing entire classes of bugs and security vulnerabilities common in other systems languages.
--   **Fearless Concurrency**: The combination of ownership rules and type-system constraints allows Korg to manage the 4-Persona Swarm with "fearless concurrency." The compiler guarantees that any data shared between threads (i.e., between the Leader orchestrator and its various tasks) is done so safely.
+-   **Fearless Concurrency**: The combination of ownership rules and type-system constraints allows Korg to manage the 5-Persona Swarm with "fearless concurrency." The compiler guarantees that any data shared between threads (i.e., between the Leader orchestrator and its various tasks) is done so safely.
 
 ### 1.2. Isolated Execution via Process Sandboxing
 
@@ -34,9 +34,9 @@ At the heart of Korg's concurrency model is the **Blackboard**, a central, obser
 -   **CRDT-like Merging**: The `perform_semantic_merge` function in `src/leader.rs` exemplifies this principle. It takes the outputs from all competing personas and uses a "Synthesizer" persona (Lucas) to reconcile them into a single, cohesive set of mutations. This is analogous to a CRDT merge function that resolves concurrent updates into a deterministic, final state.
 -   **Observability**: The Blackboard is the "Gravitational Well" around which the swarm orbits. It is the single source of truth for system telemetry. Personas emit `SwarmTelemetryPulse` messages, which the Leader ingests into the Blackboard's `trace_buffer`. The `Evaluator` then reads this buffer to assess the swarm's health, creating a tight, observable feedback loop. The state is exposed via the `/api/state` endpoint for the web cockpit, providing real-time observability to the human operator.
 
-## 3. 4-Persona Adversarial Swarm Topology
+## 3. 5-Persona Adversarial Swarm Topology
 
-Korg employs a fixed 4-persona swarm, where each agent has a specialized, adversarial role. This division of labor creates a system of checks and balances that promotes robust, high-quality output.
+Korg employs a fixed 5-persona swarm, where each agent has a specialized, adversarial role. This division of labor creates a system of checks and balances that promotes robust, high-quality output.
 
 1.  **Orchestrator Captain (The Planner)**:
     -   **Role**: High-level strategist and planner.
@@ -44,7 +44,7 @@ Korg employs a fixed 4-persona swarm, where each agent has a specialized, advers
 
 2.  **Auditor Harper (The Researcher/Critic)**:
     -   **Role**: Context-gatherer, researcher, and adversarial critic.
-    -   **Function**: During `ContractNegotiation`, Harper (acting as part of the `Evaluator`) critiques the Captain's proposed criteria for ambiguity and relevance, forcing a more robust contract. During execution, Harper is assigned "Research" tasks, gathering information from the codebase or external sources to inform the Builder. Harper's primary function is to prevent the swarm from "hallucinating" or working with incorrect assumptions.
+    -   **Function**: During `ContractNegotiation`, Harper critiques the Captain's proposed criteria for ambiguity and relevance, forcing a more robust contract. During execution, Harper is assigned "Research" tasks, gathering information from the codebase or external sources to inform the Builder. Harper's primary function is to prevent the swarm from "hallucinating" or working with incorrect assumptions.
 
 3.  **Builder Benjamin (The Coder)**:
     -   **Role**: Primary code generator and implementer.
@@ -53,6 +53,10 @@ Korg employs a fixed 4-persona swarm, where each agent has a specialized, advers
 4.  **Synthesizer Lucas (The Reconciler)**:
     -   **Role**: Merger and finalizer.
     -   **Function**: After all personas have submitted their work, the `LeaderOrchestrator` invokes Lucas. As shown in `perform_semantic_merge`, Lucas's job is to take the winning proposal from the **Arena** and intelligently merge it with complementary ideas from the other personas. This produces a final, cohesive patch that is more robust than any single persona's output.
+
+5.  **Evaluator (The Harsh Adversarial Critic)**:
+    -   **Role**: Independent scoring authority and Generator/Evaluator loop.
+    -   **Function**: Spawned separately by the Leader (`Spawning Evaluator to score persona ...`), the Evaluator receives a generator persona's output and scores it against the negotiated contract rubrics in the **Arena**, following the Anthropic-style Generator/Evaluator loop. It is a distinct persona (`Persona::Evaluator`), not a role played by any of the four workers above, and it is what turns the swarm's output into a measured, adversarially-checked verdict.
 
 This adversarial collaboration ensures that a plan is critiqued before it's executed, code is generated based on a solid plan, and multiple proposed solutions are synthesized into a superior final product.
 
@@ -142,6 +146,17 @@ Korg maintains a tamper-proof audit trail of every significant action using a cr
     -   When an operator initiates a "Playhead Steering Fork" (as described in `DOCS.md` and handled in `leader.rs`), Korg uses the selected transaction's `codebase_merkle_root` to physically reset the workspace using `git read-tree --reset -u <tree-hash>`.
     -   Simultaneously, it uses the `state_merkle_root` to find the corresponding state blob and rehydrate the logical `Blackboard`.
     -   This powerful feature allows an operator to rewind the AI's "thought process" and codebase to any valid, signed point in history and "fork" its execution in a new direction, all with cryptographic guarantees of integrity.
+
+### 5.1. Verifiable Flight-Recorder Capabilities
+
+Beyond the in-process provenance chain above, Korg ships a set of independently-verifiable, "flight-recorder" capabilities that let third parties check an agent's work without trusting Korg itself:
+
+-   **`korg-ledger@v1`**: A frozen, hash-chained, HLC-ordered, tamper-evident event ledger with cross-language conformance (Rust/Python/JS). Each event carries an Ed25519 per-event signature, and the ledger supports git-tip structural anchoring for offline structural verification.
+-   **Gold Seal (`goldseal@v1`)**: A public, independently-verifiable certificate of agent work, produced by the `korg-seal` CLI (mint/anchor/resolve/verify) and checkable by three conformant verifiers (`korg-verify` in Rust, plus Python and JS) as well as zero-install in-browser verifiers hosted on GitHub Pages.
+-   **Honest `korg run-once` pipeline**: Runs a real patch through a real `cargo check` and attests a mutation count that *equals* the real `git diff` (file count + changed paths). When it cannot produce a real result, it reports an honest null rather than fabricating one.
+-   **Provider model**: The default is a hermetic `DeterministicProvider` (fixture-only); `--provider ollama` runs a live local model on arbitrary tasks.
+
+**Planned (not yet shipped):** live *network* time-witness anchoring (the anchor structure and offline verification are shipped; only the trusted-time witness fetch remains an honest limit), `crates.io`/npm publishing of the CLIs and verifiers, and a `korg fork` / execution-checkpoint-restore CLI (the primitives exist; the shipped reversibility today is `korg rewind`).
 
 ## 6. OCR Pixel Redaction & Visual Firewall (`src/vision_policy.rs`)
 

@@ -181,17 +181,19 @@ Result text format (one line per match, designed for direct LLM consumption):
 
 ## Tests
 
-49 cover everything end-to-end:
+Tests cover everything end-to-end:
 
 - 9 tests for the text flattener (per-event-type extraction, trimming, fallbacks).
-- 9 tests for the index (incremental load, malformed-line tolerance,
+- 11 tests for the index (incremental load, malformed-line tolerance,
   partial-line hold-back, multi-file, new-file pickup, triggered_by preservation).
-- 17 tests for the recall engine (substring + semantic, top_n, min_score,
+- 16 tests for the recall engine (substring + semantic, top_n, min_score,
   tool_filter, automatic refresh, auto-mode fallback, explicit-semantic
   raising without fastembed).
-- 14 tests for the MCP server (full initialize/list/call roundtrip,
+- 16 tests for the MCP server (full initialize/list/call roundtrip,
   unknown-method errors, notification handling, ping, tool_filter through
   the JSON-RPC surface, malformed-line tolerance, serve_stdio loop).
+- 17 tests for the introspect document (korg:introspect@v1 schema,
+  callables, exit_codes, command_id stability).
 
 Run them with the Korg workspace venv (which has fastembed):
 

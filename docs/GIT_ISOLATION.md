@@ -111,7 +111,7 @@ During timeline time-travel replay or manual operator branching, Korg reconstruc
 git read-tree --reset -u <codebase_merkle_root>
 ```
 
-This bypasses traditional file-by-file patching, using Git's low-level tree matching algorithm to reset the directory layout to the exact millisecond-level state of the historical transaction in less than 50ms, while preserving the logical CRDT Blackboard state by importing the matching state-blob.
+This bypasses traditional file-by-file patching, using Git's low-level tree matching algorithm to reset the directory layout to the exact state of the historical transaction in a single low-level tree operation, while preserving the logical CRDT Blackboard state by importing the matching state-blob.
 
 ---
 
