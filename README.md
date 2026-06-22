@@ -322,6 +322,36 @@ The short version:
 4. **ExecutionCheckpoint** — snapshot of `{ledger_offset, projection_state, lease_map, workspace_tree_hash}`. Restores full runtime state in O(1) without replaying the entire event stream.
 5. **CapabilityExecutor** — executes the physical effect DAG. Failures trigger automatic micro-healing before escalating.
 
+### System overview
+
+```mermaid
+flowchart TD
+    Agent["MCP-compatible agent<br/>(Claude Code, Codex, korgex)"]
+
+    subgraph Ingest["Ingestion paths"]
+        MCP["mcp_server.py<br/>(MCP / JSON-RPC stdio sink)"]
+        Bridge["korg-bridge<br/>(PyO3 in-process writer)"]
+        Server["korg-server<br/>(Axum HTTP + SSE)"]
+    end
+
+    Journal["korg-registry · CapabilityJournal<br/>append-only WAL · HLC order · triggered_by DAG"]
+    Chain["korg-ledger@v1<br/>hash-chain: prev_hash to entry_hash<br/>SHA-256 / HMAC + Ed25519"]
+    Projection["ProjectionEngine<br/>pure folds to read models"]
+    Rewind["rewind / rewind_with_seal<br/>truncate to seq + LedgerRewind tip"]
+    Verify["korg-verify (+ Python / JS)<br/>verify_chain · verify_dag · sig · Gold Seal"]
+    Runtime["korg-runtime<br/>multi-persona swarm · git-worktree sandbox<br/>arena · evaluator · run_once"]
+
+    Agent --> MCP --> Journal
+    Agent --> Bridge --> Journal
+    Agent --> Server --> Journal
+    Runtime --> Journal
+    Journal --> Chain
+    Journal --> Projection
+    Journal --> Rewind
+    Rewind --> Projection
+    Chain --> Verify
+```
+
 ---
 
 ## Status
