@@ -3,6 +3,7 @@
 **A causally-ordered, rewindable event-ledger for autonomous AI agents.**
 *Every step your AI agent takes, recorded in a hash-chained ledger you can independently verify — tamper-evident, zero trust, no blockchain.*
 
+[![CI](https://github.com/New1Direction/korg/actions/workflows/ci.yml/badge.svg)](https://github.com/New1Direction/korg/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![Rust 2021](https://img.shields.io/badge/rust-2021-93450a.svg?style=flat-square)](https://www.rust-lang.org)
 [![Tests](https://img.shields.io/badge/tests-175%20passing-brightgreen.svg?style=flat-square)](https://github.com/New1Direction/korg)
