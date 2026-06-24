@@ -277,6 +277,23 @@ enum Commands {
         repo: Option<std::path::PathBuf>,
     },
 
+    /// Fan ONE task across N isolated git worktrees, run the honest pipeline in
+    /// each, pick a winner deterministically, and seal the whole fan-out as one
+    /// verifiable korg-ledger@v1 journal. Defaults to the hermetic provider; use
+    /// `--provider ollama` for real, diverse candidates.
+    Parallel {
+        /// The task to fan across N candidates.
+        task: String,
+
+        /// Target repo. Defaults to a temp git-inited copy of the bundled fixture.
+        #[arg(long)]
+        repo: Option<std::path::PathBuf>,
+
+        /// Number of parallel candidates to run.
+        #[arg(long, short = 'n', default_value = "3")]
+        n: usize,
+    },
+
     /// Run the premium Claude Code cooperative session replay and speculative rewind demo
     Demo,
 
@@ -872,6 +889,19 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Commands::Parallel { task, repo, n } => {
+            parallel_command(
+                task,
+                repo,
+                n,
+                cli.provider
+                    .clone()
+                    .unwrap_or_else(|| "deterministic".to_string()),
+                cli.model.clone(),
+                cli.base_url.clone(),
+            )
+            .await?;
+        }
 
         Commands::Demo => {
             if let Err(e) = run_demo_internal(None).await {
@@ -1158,6 +1188,100 @@ async fn run_once_command(
         println!(
             "{slate}└──{reset} Verify with: {bold}korg-verify {}{reset}",
             path.display()
+        );
+    }
+
+    Ok(())
+}
+
+/// Fan one task across N isolated worktrees, pick a winner deterministically,
+/// and seal the whole fan-out into one verifiable korg-ledger@v1 journal — the
+/// visible "verifiable parallel runs" path. Mirrors `run_once_command`'s provider
+/// build + repo prep, then delegates the orchestration to `run_parallel`.
+async fn parallel_command(
+    task: String,
+    repo: Option<std::path::PathBuf>,
+    n: usize,
+    provider: String,
+    model: Option<String>,
+    base_url: Option<String>,
+) -> Result<()> {
+    use korg_llm::LlmProvider;
+    let cyan = "\x1b[38;2;0;240;255m";
+    let green = "\x1b[38;2;0;255;128m";
+    let pink = "\x1b[38;2;255;0;180m";
+    let slate = "\x1b[38;2;120;125;140m";
+    let bold = "\x1b[1m";
+    let reset = "\x1b[0m";
+
+    let llm: std::sync::Arc<dyn LlmProvider> = match provider.as_str() {
+        "deterministic" => std::sync::Arc::new(korg_llm::DeterministicProvider::new()),
+        "ollama" => {
+            let m = model.as_deref().unwrap_or("llama3");
+            println!(
+                "{slate}├──{reset} Provider: {bold}{cyan}ollama{reset} · model {bold}{m}{reset} {slate}(live — diverse candidates){reset}"
+            );
+            std::sync::Arc::new(korg_llm::LocalOllamaProvider::new(base_url, model))
+        }
+        other => {
+            return Err(anyhow::anyhow!(
+                "unknown provider '{other}' — use 'deterministic' (hermetic) or 'ollama' (live local model)"
+            ));
+        }
+    };
+
+    let (repo_path, _temp) = match repo {
+        Some(p) => (p, None),
+        None => {
+            let dir = prepare_fixture_repo().await?;
+            println!(
+                "{slate}├──{reset} Using temp fixture repo: {cyan}{}{reset}",
+                dir.display()
+            );
+            (dir.clone(), Some(dir))
+        }
+    };
+
+    println!(
+        "{slate}└──{reset} Fanning {bold}{cyan}{n}{reset} candidate(s) on task: {bold}{cyan}{}{reset}\n",
+        task
+    );
+
+    let outcome = korg_runtime::parallel::run_parallel(&task, &repo_path, n, llm.as_ref()).await;
+
+    println!("{bold}{cyan}=== PARALLEL CANDIDATES ==={reset}");
+    for c in &outcome.candidates {
+        let mark = if c.cargo_check == "Passed" {
+            format!("{green}✓{reset}")
+        } else {
+            format!("{pink}✗{reset}")
+        };
+        let tag = if outcome.winner_index == Some(c.index) {
+            format!(" {bold}{green}← WINNER{reset}")
+        } else {
+            String::new()
+        };
+        println!(
+            "  [{}] {mark} cargo {} · {} file(s) changed{}",
+            c.index, c.cargo_check, c.files_changed, tag
+        );
+    }
+    println!("\n{slate}├──{reset} {}", outcome.winner_reason);
+
+    if let Some(path) = &outcome.journal_path {
+        println!(
+            "{slate}├──{reset} Verifiable fan-out journal (korg-ledger@v1): {cyan}{}{reset}",
+            path.display()
+        );
+        println!(
+            "{slate}└──{reset} Verify the whole run with: {bold}korg-verify {}{reset}",
+            path.display()
+        );
+    }
+    if let Some(i) = outcome.winner_index {
+        println!(
+            "\n{green}Winner kept on branch{reset} {bold}{}{reset} {slate}— review/merge it; losers were cleaned up.{reset}",
+            outcome.candidates[i].branch
         );
     }
 
