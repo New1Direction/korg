@@ -1,19 +1,19 @@
-name: Gold Seal demo — mint → verify in CI
+name: Certificate demo — mint → verify in CI
 
 # Dogfoods the whole loop in GitHub Actions: build a session ledger, mint a
-# goldseal@v1 with korg-seal, verify it with the independent verifier (pinned to
+# korgcert@v1 with korg-seal, verify it with the independent verifier (pinned to
 # the issuer), and prove a tampered copy is rejected. This is what "verified
 # agent work in CI" looks like.
 on:
   workflow_dispatch:
-  # On PRs: mint + verify and post a sticky Gold Seal check comment (the demo).
+  # On PRs: mint + verify and post a sticky Certificate check comment (the demo).
   pull_request:
     paths:
       - "adapters/korg-seal/**"
       - "adapters/korg-ledger-py/**"
       - "spec/korg-ledger-v1/**"
-      - ".github/actions/verify-goldseal/**"
-      - ".github/workflows/goldseal-demo.yml"
+      - ".github/actions/verify-korgcert/**"
+      - ".github/workflows/korgcert-demo.yml"
   # On main (post-merge): dogfood without commenting.
   push:
     branches: [main]
@@ -21,12 +21,12 @@ on:
       - "adapters/korg-seal/**"
       - "adapters/korg-ledger-py/**"
       - "spec/korg-ledger-v1/**"
-      - ".github/actions/verify-goldseal/**"
-      - ".github/workflows/goldseal-demo.yml"
+      - ".github/actions/verify-korgcert/**"
+      - ".github/workflows/korgcert-demo.yml"
 
 permissions:
   contents: read
-  pull-requests: write  # so the Action can post the sticky Gold Seal comment
+  pull-requests: write  # so the Action can post the sticky Certificate comment
 
 jobs:
   mint-and-verify:
@@ -48,41 +48,41 @@ jobs:
       - name: Build a session ledger
         run: python spec/korg-ledger-v1/tools/make_demo_session.py demo-session.jsonl
 
-      - name: Mint a Gold Seal (capture the issuer key)
+      - name: Mint a Certificate (capture the issuer key)
         id: mint
         run: |
           python -m korg_seal mint demo-session.jsonl \
             --claim "CI demo: agent added a /healthz endpoint with a passing test" \
-            --key issuer.ed25519 -o demo.goldseal.json
+            --key issuer.ed25519 -o demo.korgcert.json
           echo "pub=$(python -m korg_seal key --key issuer.ed25519)" >> "$GITHUB_OUTPUT"
 
-      - name: Verify the Gold Seal — pinned to the issuer (must PASS)
-        uses: ./.github/actions/verify-goldseal
+      - name: Verify the Certificate — pinned to the issuer (must PASS)
+        uses: ./.github/actions/verify-korgcert
         with:
-          path: demo.goldseal.json
+          path: demo.korgcert.json
           pin-pubkey: ${{ steps.mint.outputs.pub }}
 
       - name: A tampered seal must FAIL (negative test)
         run: |
           python - <<'PY'
           import json
-          e = json.load(open("demo.goldseal.json"))
+          e = json.load(open("demo.korgcert.json"))
           e["claim"] = "CI demo: agent fixed an unrelated critical security bug"  # move the claim
-          json.dump(e, open("tampered.goldseal.json", "w"))
+          json.dump(e, open("tampered.korgcert.json", "w"))
           PY
-          if node spec/korg-ledger-v1/js/verify.mjs tampered.goldseal.json; then
-            echo "::error::a tampered Gold Seal verified — this must never happen"
+          if node spec/korg-ledger-v1/js/verify.mjs tampered.korgcert.json; then
+            echo "::error::a tampered Certificate verified — this must never happen"
             exit 1
           fi
-          echo "✓ tampered Gold Seal correctly rejected"
+          echo "✓ tampered Certificate correctly rejected"
 
       - name: Job summary
         if: always()
         run: |
           {
-            echo "### 🛡️ korg Gold Seal — verified in CI"
+            echo "### 🛡️ korg Certificate — verified in CI"
             echo ""
-            echo "Minted a Gold Seal from a session ledger and verified it with the independent"
+            echo "Minted a Certificate from a session ledger and verified it with the independent"
             echo "verifier, pinned to issuer \`${{ steps.mint.outputs.pub }}\`. A tampered copy was"
             echo "correctly rejected. Re-verify in a browser: <https://new1direction.github.io/korg/web/seal.html>"
           } >> "$GITHUB_STEP_SUMMARY"

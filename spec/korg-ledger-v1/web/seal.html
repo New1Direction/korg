@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>korg Gold Seal — verify what an AI agent actually did, in your browser</title>
+<title>korg Certificate — verify what an AI agent actually did, in your browser</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23131a1f'/%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%23f0c46a' stroke-width='1.5'/%3E%3Cpath d='M5.5 8l1.8 1.8L10.7 6' fill='none' stroke='%23f0c46a' stroke-width='1.6'/%3E%3C/svg%3E" />
-<meta name="description" content="A korg Gold Seal is a portable, cryptographically-signed certificate of an AI-agent session. Verify it — hash chain, re-derived summary, Ed25519 seal — entirely in your browser. Zero trust, no install, sends nothing." />
+<meta name="description" content="A korg Certificate is a portable, cryptographically-signed certificate of an AI-agent session. Verify it — hash chain, re-derived summary, Ed25519 seal — entirely in your browser. Zero trust, no install, sends nothing." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
@@ -187,7 +187,7 @@
 <header>
   <div class="wrap bar">
     <span class="mark">korg <b>Gold&nbsp;Seal</b></span>
-    <span class="sub">goldseal@v1</span>
+    <span class="sub">korgcert@v1</span>
     <span class="nav">
       <a href="./index.html">ledger verifier →</a>
       <span class="privacy">runs in your browser · sends nothing</span>
@@ -198,7 +198,7 @@
 <main class="wrap">
   <section class="hero">
     <h1>Proof of what an agent <em>actually</em> did.</h1>
-    <p class="lede">A <strong>Gold Seal</strong> is a portable, signed certificate of an AI-agent
+    <p class="lede">A <strong>Certificate</strong> is a portable, signed certificate of an AI-agent
       session. Drop one below and this page re-checks the hash&#8209;chain, <strong>re-derives the
       summary from the events</strong> so it can't lie, and verifies the issuer's Ed25519 seal —
       entirely on your machine. <strong>Zero trust in whoever produced it.</strong></p>
@@ -206,10 +206,10 @@
     <div class="intake">
       <div class="drop" id="drop">
         <div class="drop-head">
-          <strong>Drop a <code>goldseal.json</code></strong>
+          <strong>Drop a <code>korgcert.json</code></strong>
           <span>or paste the certificate below (a single JSON object)</span>
         </div>
-        <textarea id="input" spellcheck="false" aria-label="Gold Seal certificate" placeholder='{"schema":"goldseal@v1","spec":"korg-ledger@v1","claim":"…","tip":"…","summary":{…},"events":[…],"seal":{"alg":"ed25519","pubkey":"…","sig":"…"}}'></textarea>
+        <textarea id="input" spellcheck="false" aria-label="Certificate certificate" placeholder='{"schema":"korgcert@v1","spec":"korg-ledger@v1","claim":"…","tip":"…","summary":{…},"events":[…],"seal":{"alg":"ed25519","pubkey":"…","sig":"…"}}'></textarea>
         <div class="opt-row">
           <label class="field">pin the issuer public key (hex) — optional; reject any other signer
             <input type="text" id="pubkey" spellcheck="false" placeholder="e.g. 197f6b23e16c8532…" />
@@ -243,7 +243,7 @@
       </div>
 
       <div class="attest">
-        <span class="kicker" id="kicker">Gold Seal · goldseal@v1</span>
+        <span class="kicker" id="kicker">Certificate · korgcert@v1</span>
         <div class="claim" id="claim">—</div>
         <div class="rederive" id="rederive"></div>
         <dl class="meta-grid" id="metagrid"></dl>
@@ -254,7 +254,7 @@
 
     <div class="badge-wrap" id="badgewrap">
       <h3>Stamp it on the work</h3>
-      <span class="badge-live"><span class="bl">korg Gold Seal</span><span class="br" id="badgeword">✓ verified</span></span>
+      <span class="badge-live"><span class="bl">korg Certificate</span><span class="br" id="badgeword">✓ verified</span></span>
       <div class="snippet">
         <button class="copy" id="copybadge">copy</button>
         <textarea id="badgecode" spellcheck="false" readonly aria-label="badge snippet"></textarea>
@@ -284,12 +284,12 @@
 </main>
 
 <footer class="wrap">
-  <span>goldseal@v1 · <a href="../GOLDSEAL.md">spec</a> · independent verifier · Web Crypto Ed25519 + SHA-256</span>
+  <span>korgcert@v1 · <a href="../KORGCERT.md">spec</a> · independent verifier · Web Crypto Ed25519 + SHA-256</span>
   <span>engine: ../js/verify.mjs (conformance-pinned)</span>
 </footer>
 
 <script type="module">
-import { verifyGoldSeal, deriveSummary, canonicalize } from "../js/verify.mjs";
+import { verifyKorgCert, deriveSummary, canonicalize } from "../js/verify.mjs";
 
 const $ = (id) => document.getElementById(id);
 const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -303,12 +303,12 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 
 function parseSeal(text) {
   text = text.trim();
-  if (!text) throw new Error("paste a Gold Seal or load an example");
+  if (!text) throw new Error("paste a Certificate or load an example");
   let v;
   try { v = JSON.parse(text); } catch { throw new Error("not valid JSON"); }
-  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("a Gold Seal is a single JSON object");
-  if (typeof v.schema !== "string" || !v.schema.startsWith("goldseal")) {
-    throw new Error("this is not a goldseal@v1 certificate (wrong/absent schema)");
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("a Certificate is a single JSON object");
+  if (typeof v.schema !== "string" || !v.schema.startsWith("korgcert")) {
+    throw new Error("this is not a korgcert@v1 certificate (wrong/absent schema)");
   }
   return v;
 }
@@ -320,7 +320,7 @@ async function run() {
   catch (e) { $("err").textContent = "✗ " + e.message; $("err").hidden = false; return; }
 
   const pin = $("pubkey").value.trim().toLowerCase() || null;
-  const v = await verifyGoldSeal(env, { pinPubkey: pin });
+  const v = await verifyKorgCert(env, { pinPubkey: pin });
   render(env, v);
 }
 
@@ -335,8 +335,8 @@ function render(env, v) {
   if (!reduce && v.valid) med.parentElement.parentElement.classList.add("stamp-anim");
 
   $("kicker").textContent = v.valid
-    ? `Gold Seal · verified · ${v.event_count} events`
-    : `Gold Seal · INVALID · ${v.errors.length} problem(s)`;
+    ? `Certificate · verified · ${v.event_count} events`
+    : `Certificate · INVALID · ${v.errors.length} problem(s)`;
   $("claim").textContent = typeof env.claim === "string" ? env.claim : "(no claim)";
 
   // the headline: re-derive the summary in-browser and prove it matches (or not)
@@ -399,8 +399,8 @@ function render(env, v) {
     const id = (env.tip || "").slice(0, 16);
     const verifier = "https://new1direction.github.io/korg/web/seal.html";
     const md =
-`<!-- korg Gold Seal · seal ${id} · ${v.event_count} events · re-verify by dropping this goldseal.json at ${verifier} (or run \`korg-verify goldseal.json\`) -->
-[![korg Gold Seal: verified](https://img.shields.io/badge/korg%20Gold%20Seal-verified-2ea043?logo=ed25519)](${verifier}) · seal \`${id}…\` · ${v.event_count} events · issuer \`${(signer || "").slice(0, 12)}…\``;
+`<!-- korg Certificate · seal ${id} · ${v.event_count} events · re-verify by dropping this korgcert.json at ${verifier} (or run \`korg-verify korgcert.json\`) -->
+[![korg Certificate: verified](https://img.shields.io/badge/korg%20Gold%20Seal-verified-2ea043?logo=ed25519)](${verifier}) · seal \`${id}…\` · ${v.event_count} events · issuer \`${(signer || "").slice(0, 12)}…\``;
     $("badgecode").value = md;
   }
 
@@ -422,7 +422,7 @@ $("copybadge").addEventListener("click", async () => {
 });
 
 async function loadExample(which) {
-  const env = await (await fetch("samples/goldseal.json")).text();
+  const env = await (await fetch("samples/korgcert.json")).text();
   let obj = JSON.parse(env);
   if (which === "summary") obj.summary.files = [];          // forge the human summary
   else if (which === "claim") obj.claim = "Fixed an unrelated critical security bug"; // move the claim

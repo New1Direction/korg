@@ -1,4 +1,4 @@
-// Verify korg Gold Seals / ledgers, render a rich Markdown report into the job
+// Verify korg Certificates / ledgers, render a rich Markdown report into the job
 // summary, and (on a pull_request) upsert a single sticky PR comment. Reuses the
 // repo's conformance-pinned verify.mjs — zero extra deps. Exit 0 iff all valid.
 import { appendFileSync, readFileSync } from "node:fs";
@@ -49,7 +49,7 @@ for (const f of files) {
 const allValid = results.every((r) => r.verdict && r.verdict.valid);
 
 const L = [];
-L.push(allValid ? "## 🛡️ ✅ Gold Seal verified" : "## 🛡️ ❌ Gold Seal verification FAILED");
+L.push(allValid ? "## 🛡️ ✅ Certificate verified" : "## 🛡️ ❌ Certificate verification FAILED");
 L.push("");
 L.push("_Independently verified — zero trust in the tool that produced it._");
 L.push("");
@@ -64,7 +64,7 @@ for (const r of results) {
   const e = r.env || {};
   L.push(`### ${v.valid ? "✅" : "❌"} \`${r.f}\` — ${v.kind} ${v.valid ? "VALID" : "INVALID"}`);
   L.push("");
-  if (v.kind === "goldseal") {
+  if (v.kind === "korgcert") {
     const s = e.summary || {};
     // Every field below is seal-derived (untrusted) → esc() before interpolation,
     // and NOT wrapped in backticks (esc neutralizes them, which would break a span).
@@ -143,10 +143,10 @@ if (wantComment && token && repo && pr) {
         headers: h,
         body: JSON.stringify({ body }),
       });
-      console.log(`korg: updated sticky Gold Seal comment ${existing.id} on PR #${pr}`);
+      console.log(`korg: updated sticky Certificate comment ${existing.id} on PR #${pr}`);
     } else {
       await fetch(issueComments, { method: "POST", headers: h, body: JSON.stringify({ body }) });
-      console.log(`korg: posted Gold Seal comment on PR #${pr}`);
+      console.log(`korg: posted Certificate comment on PR #${pr}`);
     }
   } catch (e) {
     console.log(`::warning::korg could not upsert the PR comment: ${e.message}`);

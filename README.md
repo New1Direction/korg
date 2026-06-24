@@ -224,9 +224,9 @@ korg-verify <path-to-ledger.jsonl>
 > the guarantee, independent of model quality.
 
 > **Verify it in your browser — sends nothing.** Zero-install, client-side
-> verifiers (Web Crypto) for any `korg-ledger@v1` journal or Gold Seal:
+> verifiers (Web Crypto) for any `korg-ledger@v1` journal or Certificate:
 > [verify a session](https://new1direction.github.io/korg/web/index.html) ·
-> [verify a Gold Seal](https://new1direction.github.io/korg/web/seal.html) ·
+> [verify a Certificate](https://new1direction.github.io/korg/web/seal.html) ·
 > [time-travel explorer](https://new1direction.github.io/korg/web/explore.html).
 > They hash-chain, check the causal DAG, validate Ed25519 signatures, and
 > re-derive the human summary from the events — all locally.
@@ -282,7 +282,7 @@ Korg treats AI cognition the same way a hypervisor treats compute and Git treats
 | Speculative branches | 🚧 planned | ❌ | ❌ | ❌ |
 | Execution checkpoints | 🚧 planned | ❌ | ❌ | ❌ |
 | Cryptographic audit trail | ✅ | ❌ | ❌ | ❌ |
-| Independently-verifiable Gold Seal | ✅ | ❌ | ❌ | ❌ |
+| Independently-verifiable Certificate | ✅ | ❌ | ❌ | ❌ |
 | Honest attestation (real diff, never fabricated) | ✅ | ❌ | ❌ | ❌ |
 | Micro-healing | ✅ | ❌ | ❌ | ❌ |
 | Model-agnostic | ✅ | ✅ | ✅ | ✅ |
@@ -338,7 +338,7 @@ flowchart TD
     Chain["korg-ledger@v1<br/>hash-chain: prev_hash to entry_hash<br/>SHA-256 / HMAC + Ed25519"]
     Projection["ProjectionEngine<br/>pure folds to read models"]
     Rewind["rewind / rewind_with_seal<br/>truncate to seq + LedgerRewind tip"]
-    Verify["korg-verify (+ Python / JS)<br/>verify_chain · verify_dag · sig · Gold Seal"]
+    Verify["korg-verify (+ Python / JS)<br/>verify_chain · verify_dag · sig · Certificate"]
     Runtime["korg-runtime<br/>multi-persona swarm · git-worktree sandbox<br/>arena · evaluator · run_once"]
 
     Agent --> MCP --> Journal
@@ -363,7 +363,7 @@ Korg is in active development, built on a **frozen `korg-ledger@v1` spec with cr
 - [x] Deterministic replay and projection rebuilds
 - [x] Reversible execution — rewind the ledger to any prior sequence point (tamper-evident `LedgerRewind`)
 - [x] Per-event Ed25519 signatures + structural anchoring (`korg-ledger@v1` §8)
-- [x] **Gold Seal (`goldseal@v1`)** — a public, independently-verifiable certificate of agent work, with zero-install in-browser verifiers
+- [x] **Certificate (`korgcert@v1`)** — a public, independently-verifiable certificate of agent work, with zero-install in-browser verifiers
 - [x] **Honest pipeline** (`korg run-once`) — real patch → real `cargo check` → an attested mutation count that equals the real `git diff`; never fabricates (reports an honest null instead)
 - [x] **Live local model** (`--provider ollama`) — real per-persona work on arbitrary tasks
 - [x] **Multi-agent swarm** (Captain, Harper, Benjamin, Lucas, Evaluator) — genuine worker subprocesses doing real, measured, attested work with DAG data-flow between personas

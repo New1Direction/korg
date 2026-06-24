@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>korg time-travel — replay a verified AI-agent session, step by step</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23131a1f'/%3E%3Ccircle cx='8' cy='8' r='5.5' fill='none' stroke='%237ef0c0' stroke-width='1.4'/%3E%3Cpath d='M8 5v3l2 1.4' fill='none' stroke='%237ef0c0' stroke-width='1.4'/%3E%3C/svg%3E" />
-<meta name="description" content="Replay any korg-ledger@v1 AI-agent session or Gold Seal, step by step, in your browser. Scrub the timeline and watch the cumulative state evolve while the hash-chain verifies under it. Zero trust, no install, sends nothing." />
+<meta name="description" content="Replay any korg-ledger@v1 AI-agent session or Certificate, step by step, in your browser. Scrub the timeline and watch the cumulative state evolve while the hash-chain verifies under it. Zero trust, no install, sends nothing." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
@@ -143,7 +143,7 @@
     <span class="mark">korg <b>time-travel</b></span>
     <span class="sub">korg-ledger@v1</span>
     <span class="nav">
-      <a href="./seal.html">Gold Seal →</a>
+      <a href="./seal.html">Certificate →</a>
       <a href="./index.html">ledger verifier →</a>
       <span class="privacy">runs in your browser · sends nothing</span>
     </span>
@@ -153,7 +153,7 @@
 <main class="wrap">
   <section class="hero" id="hero">
     <h1>Replay what the agent <em>actually</em> did.</h1>
-    <p class="lede">Drop a captured session or a <strong>Gold Seal</strong>. Scrub the timeline and
+    <p class="lede">Drop a captured session or a <strong>Certificate</strong>. Scrub the timeline and
       watch the state evolve — files touched, tools used, step by step — while the
       <strong>hash-chain verifies under every frame</strong>. A break lights up red at the exact
       step it happened. Entirely on your machine.</p>
@@ -161,16 +161,16 @@
     <div class="intake">
       <div class="drop" id="drop">
         <div class="drop-head">
-          <strong>Drop a <code>ledger.jsonl</code> or <code>goldseal.json</code></strong>
+          <strong>Drop a <code>ledger.jsonl</code> or <code>korgcert.json</code></strong>
           <span>or paste below</span>
         </div>
-        <textarea id="input" spellcheck="false" aria-label="session ledger or Gold Seal" placeholder='a korg-ledger@v1 session (one JSON event per line / a JSON array) or a goldseal@v1 certificate'></textarea>
+        <textarea id="input" spellcheck="false" aria-label="session ledger or Certificate" placeholder='a korg-ledger@v1 session (one JSON event per line / a JSON array) or a korgcert@v1 certificate'></textarea>
         <div class="actions">
           <button class="btn-go" id="load">▸ Load session</button>
           <div class="examples">
             <span>try:</span>
             <button class="chip" data-ex="session">real session</button>
-            <button class="chip" data-ex="seal">a Gold Seal</button>
+            <button class="chip" data-ex="seal">a Certificate</button>
             <button class="chip" data-ex="tampered">tampered ✗</button>
           </div>
         </div>
@@ -211,7 +211,7 @@
 
 <footer class="wrap">
   <span>korg-ledger@v1 · time-travel explorer · Web Crypto SHA-256 + Ed25519</span>
-  <span><a href="../GOLDSEAL.md">spec</a> · engine ../js/verify.mjs</span>
+  <span><a href="../KORGCERT.md">spec</a> · engine ../js/verify.mjs</span>
 </footer>
 
 <script type="module">
@@ -243,7 +243,7 @@ function parseInput(text) {
     let v;
     try { v = JSON.parse(text); } catch { v = null; }
     if (v && typeof v === "object" && !Array.isArray(v)) {
-      if (typeof v.schema === "string" && v.schema.startsWith("goldseal")) {
+      if (typeof v.schema === "string" && v.schema.startsWith("korgcert")) {
         return { events: Array.isArray(v.events) ? v.events : [], seal: v };
       }
       if (Array.isArray(v.events)) return { events: v.events, seal: null };
@@ -291,7 +291,7 @@ async function load(text) {
   $("vstamp").textContent = ok ? "INTACT" : "TAMPERED";
   $("vclaim").textContent = parsed.seal ? (parsed.seal.claim || "") : "";
   const signer = parsed.seal?.seal?.pubkey;
-  $("vmeta").textContent = (parsed.seal ? `goldseal · ${signer ? "signed " + signer.slice(0, 12) + "…" : "unsigned"} · ` : "") + `${EVENTS.length} events`;
+  $("vmeta").textContent = (parsed.seal ? `korgcert · ${signer ? "signed " + signer.slice(0, 12) + "…" : "unsigned"} · ` : "") + `${EVENTS.length} events`;
 
   $("work").classList.add("show");
   $("hero").scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
@@ -342,7 +342,7 @@ function setStep(n) {
 }
 
 function renderState() {
-  // cumulative state at the playhead — re-derive over the slice (same rule as a Gold Seal)
+  // cumulative state at the playhead — re-derive over the slice (same rule as a Certificate)
   const slice = EVENTS.slice(0, CURRENT);
   const s = deriveSummary(slice);
   const last = view(EVENTS[CURRENT - 1]);
@@ -390,7 +390,7 @@ const drop = $("drop");
 drop.addEventListener("drop", async (e) => { const f = e.dataTransfer.files[0]; if (!f) return; $("input").value = await f.text(); load($("input").value); });
 
 async function example(which) {
-  const map = { session: "samples/session.jsonl", tampered: "samples/tampered.jsonl", seal: "samples/goldseal.json" };
+  const map = { session: "samples/session.jsonl", tampered: "samples/tampered.jsonl", seal: "samples/korgcert.json" };
   const txt = await (await fetch(map[which])).text();
   $("input").value = txt.trim();
   load(txt);

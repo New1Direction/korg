@@ -1,6 +1,6 @@
 """Issuer Ed25519 key management for korg-seal.
 
-The issuer key is the identity behind a Gold Seal — relying parties pin its
+The issuer key is the identity behind a Certificate — relying parties pin its
 public half (``korg-seal verify --pin``). The 32-byte raw seed lives at
 ``~/.korg/issuer.ed25519`` with ``0600`` perms, generated on first use.
 """

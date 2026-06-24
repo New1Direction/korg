@@ -15,7 +15,7 @@ import {
   verifyChain,
   verifyEventSig,
   verifyAnchors,
-  verifyGoldSeal,
+  verifyKorgCert,
   verifyReceipt,
   deriveSummary,
 } from "./verify.mjs";
@@ -136,14 +136,14 @@ async function run() {
     if (!ok) failures++;
   }
 
-  // Cross-impl goldseal@v1: the frozen goldseal-v1.json was MINTED BY PYTHON.
+  // Cross-impl korgcert@v1: the frozen korgcert-v1.json was MINTED BY PYTHON.
   // JS must (a) verify it valid, (b) re-derive the identical summary, and (c)
   // reject a lying summary + a stripped seal — proving Python-mint / JS-verify.
   {
     const env = JSON.parse(
-      readFileSync(here("../../../crates/korg-verify/tests/fixtures/goldseal-v1.json"), "utf8")
+      readFileSync(here("../../../crates/korg-verify/tests/fixtures/korgcert-v1.json"), "utf8")
     );
-    const v = await verifyGoldSeal(env);
+    const v = await verifyKorgCert(env);
     const derived = dec.decode(canonicalize(deriveSummary(env.events)));
     const embedded = dec.decode(canonicalize(env.summary));
     const lying = JSON.parse(JSON.stringify(env));
@@ -155,18 +155,18 @@ async function run() {
     delete unanchored.anchors;
     const ok =
       v.valid &&
-      v.kind === "goldseal" &&
+      v.kind === "korgcert" &&
       v.summary_ok === true &&
       v.anchors_ok === true &&
       derived === embedded &&
-      !(await verifyGoldSeal(lying)).valid &&
-      !(await verifyGoldSeal(stripped)).valid &&
-      !(await verifyGoldSeal(unanchored)).valid;
-    console.log(`  [${ok ? "PASS" : "FAIL"}] goldseal-v1.json          cross-impl seal + summary + bound anchors (Python→JS)`);
+      !(await verifyKorgCert(lying)).valid &&
+      !(await verifyKorgCert(stripped)).valid &&
+      !(await verifyKorgCert(unanchored)).valid;
+    console.log(`  [${ok ? "PASS" : "FAIL"}] korgcert-v1.json          cross-impl seal + summary + bound anchors (Python→JS)`);
     if (!ok) failures++;
   }
 
-  // Adversarial robustness: verifyGoldSeal must never throw on hostile input and
+  // Adversarial robustness: verifyKorgCert must never throw on hostile input and
   // never return valid for junk or any single-char hash/sig flip (mirrors the
   // Python Hypothesis + Rust proptest fuzz suites). Seeded LCG → reproducible.
   {
@@ -179,12 +179,12 @@ async function run() {
       const o = {}; const n = Math.floor(rnd() * 5); for (let i = 0; i < n; i++) o["k" + Math.floor(rnd() * 9)] = randJson(d - 1); return o;
     };
     let ok = true;
-    const safe = async (v) => { try { return (await verifyGoldSeal(v)).valid === false; } catch { return false; } };
-    const crafted = [null, true, 42, "x", [], {}, [1, 2, 3], { events: "nope" }, { events: [1, 2] }, { schema: "goldseal@v1" }, { schema: "goldseal@v1", events: [{}] }, { schema: "goldseal@v1", events: [null] }];
+    const safe = async (v) => { try { return (await verifyKorgCert(v)).valid === false; } catch { return false; } };
+    const crafted = [null, true, 42, "x", [], {}, [1, 2, 3], { events: "nope" }, { events: [1, 2] }, { schema: "korgcert@v1" }, { schema: "korgcert@v1", events: [{}] }, { schema: "korgcert@v1", events: [null] }];
     for (const c of crafted) ok = ok && (await safe(c));
     for (let i = 0; i < 400; i++) ok = ok && (await safe(randJson(4)));
 
-    const fix = JSON.parse(readFileSync(here("../../../crates/korg-verify/tests/fixtures/goldseal-v1.json"), "utf8"));
+    const fix = JSON.parse(readFileSync(here("../../../crates/korg-verify/tests/fixtures/korgcert-v1.json"), "utf8"));
     for (let i = 0; i < 64; i++) {
       const m = JSON.parse(JSON.stringify(fix));
       const t = m.tip.split(""); t[i] = t[i] === "0" ? "f" : "0"; m.tip = t.join("");
@@ -195,7 +195,7 @@ async function run() {
       const s = m.seal.sig.split(""); s[i] = s[i] === "0" ? "f" : "0"; m.seal.sig = s.join("");
       ok = ok && (await safe(m));
     }
-    console.log(`  [${ok ? "PASS" : "FAIL"}] goldseal fuzz             no-throw + junk/mutations rejected`);
+    console.log(`  [${ok ? "PASS" : "FAIL"}] korgcert fuzz             no-throw + junk/mutations rejected`);
     if (!ok) failures++;
   }
 

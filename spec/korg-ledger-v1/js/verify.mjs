@@ -390,16 +390,16 @@ export async function verifyReceipt(receipt, { key = null, pinPubkey = null } = 
   };
 }
 
-// ── goldseal@v1 ──────────────────────────────────────────────────────────────
-// A Gold Seal is a public, independently-verifiable certificate: a receipt
+// ── korgcert@v1 ──────────────────────────────────────────────────────────────
+// A Certificate is a public, independently-verifiable certificate: a receipt
 // superset that additionally binds a human-legible summary (re-derived from the
 // events, so it cannot lie) and an issuer Ed25519 seal over the canonical header.
-// Byte-identical derivation + header to the Python (korg_ledger.goldseal) and
+// Byte-identical derivation + header to the Python (korg_ledger.korgcert) and
 // Rust (korg-verify) implementations.
 
 // `events` is excluded (bound via tip); `seal` is the signature. `anchors` ARE
 // signed — the seal commits to the anchor set (still structurally chain-bound too).
-const GOLDSEAL_NON_HEADER = ["events", "seal"];
+const KORGCERT_NON_HEADER = ["events", "seal"];
 
 function eventView(e) {
   if (e === null || typeof e !== "object" || Array.isArray(e)) return [undefined, undefined, undefined];
@@ -443,11 +443,11 @@ export function deriveSummary(events) {
   };
 }
 
-/** The signed portion of a Gold Seal: the envelope minus events and seal (so it
+/** The signed portion of a Certificate: the envelope minus events and seal (so it
  *  includes anchors when present — the seal commits to the anchor set). */
 export function sealHeader(envelope) {
   const h = { ...envelope };
-  for (const k of GOLDSEAL_NON_HEADER) delete h[k];
+  for (const k of KORGCERT_NON_HEADER) delete h[k];
   return h;
 }
 
@@ -469,11 +469,11 @@ export async function verifySealSig(pubkeyHex, header, sigHex) {
 }
 
 /**
- * Verify a goldseal@v1 envelope: chain + DAG, tip matches head, event_count,
+ * Verify a korgcert@v1 envelope: chain + DAG, tip matches head, event_count,
  * the re-derived summary matches byte-for-byte, and the Ed25519 seal signature.
  * `pinPubkey` requires the issuer to equal a key the relying party trusts.
  */
-export async function verifyGoldSeal(envelope, { pinPubkey = null } = {}) {
+export async function verifyKorgCert(envelope, { pinPubkey = null } = {}) {
   // Hostile/non-object input → empty envelope → invalid, never throws.
   if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) envelope = {};
   const events = Array.isArray(envelope.events) ? envelope.events : [];
@@ -522,20 +522,20 @@ export async function verifyGoldSeal(envelope, { pinPubkey = null } = {}) {
     }
     sealOk = ok;
   } else {
-    // A goldseal@v1 envelope MUST carry a seal — a stripped seal is a downgrade,
+    // A korgcert@v1 envelope MUST carry a seal — a stripped seal is a downgrade,
     // not a valid (merely unsigned) artifact. Fails the verdict in all impls.
     sealOk = false;
     errors.push(
       pinPubkey != null
         ? `seal is absent but signer ${pinPubkey} was required`
-        : "seal is absent (unsigned Gold Seal)"
+        : "seal is absent (unsigned Certificate)"
     );
   }
 
   const valid = chainOk && dagOk && tipOk && countOk && summaryOk && sealOk !== false && anchorsOk !== false;
   return {
     valid,
-    kind: "goldseal",
+    kind: "korgcert",
     event_count: events.length,
     chain_ok: chainOk,
     dag_ok: dagOk,
@@ -579,8 +579,8 @@ export async function verifyText(text, { key = null, pinPubkey = null } = {}) {
       v = null;
     }
     if (v && typeof v === "object" && !Array.isArray(v)) {
-      if (typeof v.schema === "string" && v.schema.startsWith("goldseal")) {
-        return verifyGoldSeal(v, { pinPubkey });
+      if (typeof v.schema === "string" && v.schema.startsWith("korgcert")) {
+        return verifyKorgCert(v, { pinPubkey });
       }
       const isReceipt =
         v.events !== undefined || (typeof v.schema === "string" && v.schema.startsWith("korgex-receipt"));

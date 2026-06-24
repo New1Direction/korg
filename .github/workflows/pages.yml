@@ -1,14 +1,14 @@
 name: Deploy verifier to GitHub Pages
 
 # Publishes the zero-install, client-side verifiers + the korg-ledger@v1 /
-# goldseal@v1 specs. The Pages root is spec/korg-ledger-v1/, so:
+# korgcert@v1 specs. The Pages root is spec/korg-ledger-v1/, so:
 #   /                → landing page (index.html)
-#   /web/seal.html   → the Gold Seal verifier
+#   /web/seal.html   → the Certificate verifier
 #   /web/index.html  → the raw-ledger verifier
 #   /js/verify.mjs   → the conformance-pinned engine the pages import
 on:
   push:
-    branches: [main, feat/goldseal-certificate]
+    branches: [main, feat/korgcert-certificate]
     paths: ["spec/korg-ledger-v1/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 

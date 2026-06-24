@@ -1,4 +1,4 @@
-"""goldseal@v1 — derivation, structural verification, and (crypto) seal tests.
+"""korgcert@v1 — derivation, structural verification, and (crypto) seal tests.
 
 The structural half (derivation + chain/tip/summary checks) is stdlib-only and
 always runs. The Ed25519 seal half needs `cryptography` and is skipped when the
@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from korg_ledger import chain_hash
-from korg_ledger.goldseal import (
+from korg_ledger.korgcert import (
     SCHEMA,
     build_envelope,
     derive_summary,
@@ -21,7 +21,7 @@ from korg_ledger.goldseal import (
 
 AGENT = "agent:korgex@0.14.1"
 REPO = Path(__file__).resolve().parents[3]
-FIXTURE = REPO / "crates" / "korg-verify" / "tests" / "fixtures" / "goldseal-v1.json"
+FIXTURE = REPO / "crates" / "korg-verify" / "tests" / "fixtures" / "korgcert-v1.json"
 
 
 def _chain(steps):

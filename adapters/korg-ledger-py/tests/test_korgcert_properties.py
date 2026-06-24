@@ -1,4 +1,4 @@
-"""Property-based hardening for the Gold Seal verifiers.
+"""Property-based hardening for the Certificate verifiers.
 
 Two security invariants, fuzzed:
   1. The verifier NEVER crashes on hostile input — arbitrary JSON, malformed
@@ -20,10 +20,10 @@ pytest.importorskip("cryptography")
 from hypothesis import HealthCheck, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
-from korg_ledger.goldseal import derive_summary, verify_structure  # noqa: E402
+from korg_ledger.korgcert import derive_summary, verify_structure  # noqa: E402
 from korg_ledger.signing import verify_seal  # noqa: E402
 
-FIXTURE = Path(__file__).resolve().parents[3] / "crates/korg-verify/tests/fixtures/goldseal-v1.json"
+FIXTURE = Path(__file__).resolve().parents[3] / "crates/korg-verify/tests/fixtures/korgcert-v1.json"
 
 # arbitrary JSON-shaped values (incl. floats/nan/inf, deep nesting, junk keys)
 json_values = st.recursive(
@@ -52,7 +52,7 @@ def test_verify_structure_never_crashes_and_junk_is_invalid(blob):
 def test_verify_seal_never_crashes_and_junk_is_invalid(blob):
     errs = verify_seal(blob)
     assert isinstance(errs, list)
-    assert errs != [], "arbitrary input must never verify as a valid Gold Seal"
+    assert errs != [], "arbitrary input must never verify as a valid Certificate"
 
 
 @given(blob=json_values)
