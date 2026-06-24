@@ -1,14 +1,14 @@
-//! Cross-implementation goldseal@v1 interop + adversarial tamper coverage.
+//! Cross-implementation korgcert@v1 interop + adversarial tamper coverage.
 //!
-//! `goldseal-v1.json` is a frozen fixture MINTED BY PYTHON
-//! (`spec/korg-ledger-v1/tools/mint_goldseal_fixture.py`, seed `[42; 32]`). This
-//! proves a Python-minted Gold Seal verifies — unchanged — under the independent
+//! `korgcert-v1.json` is a frozen fixture MINTED BY PYTHON
+//! (`spec/korg-ledger-v1/tools/mint_korgcert_fixture.py`, seed `[42; 32]`). This
+//! proves a Python-minted Certificate verifies — unchanged — under the independent
 //! Rust verifier (the JS verifier checks the same bytes in
 //! `spec/korg-ledger-v1/js/conformance.mjs`). It also pins the security
 //! properties: the summary cannot lie, the claim cannot move, and a stripped
 //! seal is a downgrade — not a merely-unsigned artifact.
 
-use korg_verify::{verify_goldseal, verify_text};
+use korg_verify::{verify_korgcert, verify_text};
 use serde_json::Value;
 
 fn fixture(name: &str) -> String {
@@ -21,19 +21,19 @@ fn fixture(name: &str) -> String {
 }
 
 fn seal() -> Value {
-    serde_json::from_str(&fixture("goldseal-v1.json")).unwrap()
+    serde_json::from_str(&fixture("korgcert-v1.json")).unwrap()
 }
 
 fn pubkey() -> String {
-    fixture("goldseal-v1.pubkey").trim().to_string()
+    fixture("korgcert-v1.pubkey").trim().to_string()
 }
 
 #[test]
-fn python_minted_goldseal_verifies_under_rust() {
-    let v = verify_text(&fixture("goldseal-v1.json"), None, None).unwrap();
+fn python_minted_korgcert_verifies_under_rust() {
+    let v = verify_text(&fixture("korgcert-v1.json"), None, None).unwrap();
     assert_eq!(
-        v.kind, "goldseal",
-        "auto-detect must route to the goldseal path"
+        v.kind, "korgcert",
+        "auto-detect must route to the korgcert path"
     );
     assert!(
         v.valid,
@@ -49,12 +49,12 @@ fn python_minted_goldseal_verifies_under_rust() {
 fn pinned_issuer_key_is_enforced() {
     let env = seal();
     assert!(
-        verify_goldseal(&env, Some(&pubkey())).valid,
+        verify_korgcert(&env, Some(&pubkey())).valid,
         "correct pin must pass"
     );
 
     let wrong = "00".repeat(32);
-    let v = verify_goldseal(&env, Some(&wrong));
+    let v = verify_korgcert(&env, Some(&wrong));
     assert!(!v.valid, "a wrong pinned issuer key must fail");
     assert_eq!(v.signature_ok, Some(false));
 }
@@ -64,7 +64,7 @@ fn a_lying_summary_is_rejected() {
     // Drop a touched file from the summary — the re-derivation must catch it.
     let mut env = seal();
     env["summary"]["files"] = serde_json::json!(["src/app.py"]);
-    let v = verify_goldseal(&env, None);
+    let v = verify_korgcert(&env, None);
     assert!(!v.valid);
     assert_eq!(v.summary_ok, Some(false));
 }
@@ -73,7 +73,7 @@ fn a_lying_summary_is_rejected() {
 fn tampering_an_event_breaks_the_chain() {
     let mut env = seal();
     env["events"][2]["args"]["file_path"] = Value::String("src/evil.py".into());
-    let v = verify_goldseal(&env, None);
+    let v = verify_korgcert(&env, None);
     assert!(!v.valid);
     assert!(!v.chain_ok);
 }
@@ -84,7 +84,7 @@ fn moving_the_claim_breaks_the_seal() {
     // without invalidating the seal (the chain stays intact, so only the seal fails).
     let mut env = seal();
     env["claim"] = Value::String("did something else entirely".into());
-    let v = verify_goldseal(&env, None);
+    let v = verify_korgcert(&env, None);
     assert!(!v.valid);
     assert!(v.chain_ok, "the event chain is untouched");
     assert_eq!(v.signature_ok, Some(false));
@@ -94,8 +94,8 @@ fn moving_the_claim_breaks_the_seal() {
 fn a_stripped_seal_is_a_downgrade_not_merely_unsigned() {
     let mut env = seal();
     env.as_object_mut().unwrap().remove("seal");
-    let v = verify_goldseal(&env, None);
-    assert!(!v.valid, "a goldseal@v1 without a seal must not verify");
+    let v = verify_korgcert(&env, None);
+    assert!(!v.valid, "a korgcert@v1 without a seal must not verify");
     assert_eq!(v.signature_ok, Some(false));
 }
 
@@ -103,9 +103,9 @@ fn a_stripped_seal_is_a_downgrade_not_merely_unsigned() {
 fn anchors_are_bound_into_the_seal() {
     // The fixture carries a git-tip anchor. It must verify both structurally
     // (entry_hash ↔ chain) and cryptographically (the seal signs the anchor set) —
-    // anchors are no longer a detachable sidecar on a Gold Seal.
+    // anchors are no longer a detachable sidecar on a Certificate.
     let env = seal();
-    let v = verify_goldseal(&env, None);
+    let v = verify_korgcert(&env, None);
     assert!(v.valid, "anchored fixture must verify: {:?}", v.errors);
     assert_eq!(
         v.anchors_ok,
@@ -116,14 +116,14 @@ fn anchors_are_bound_into_the_seal() {
     // Strip the anchor → the signed header changes → the seal no longer verifies.
     let mut stripped = env.clone();
     stripped.as_object_mut().unwrap().remove("anchors");
-    let v = verify_goldseal(&stripped, None);
+    let v = verify_korgcert(&stripped, None);
     assert!(!v.valid, "stripping a bound anchor must break the seal");
     assert_eq!(v.signature_ok, Some(false));
 
     // Forge the anchor's commit proof → still inside the signed header → fails.
     let mut forged = env.clone();
     forged["anchors"][0]["anchor_proof"]["commit"] = Value::String("f".repeat(40));
-    let v = verify_goldseal(&forged, None);
+    let v = verify_korgcert(&forged, None);
     assert!(!v.valid, "forging an anchor proof must break the seal");
     assert_eq!(v.signature_ok, Some(false));
 }

@@ -2,7 +2,7 @@
 
 **Status:** FROZEN · **Canonical home:** this directory (`korg/spec/korg-ledger-v1/`) is the normative source; all implementations conform to it.
 
-> **Try it live (zero install, sends nothing):** **[Gold Seal verifier](https://new1direction.github.io/korg/web/seal.html)** · **[ledger verifier](https://new1direction.github.io/korg/web/index.html)** · **[time-travel explorer](https://new1direction.github.io/korg/web/explore.html)** · **[home](https://new1direction.github.io/korg/)**
+> **Try it live (zero install, sends nothing):** **[Certificate verifier](https://new1direction.github.io/korg/web/seal.html)** · **[ledger verifier](https://new1direction.github.io/korg/web/index.html)** · **[time-travel explorer](https://new1direction.github.io/korg/web/explore.html)** · **[home](https://new1direction.github.io/korg/)**
 
 A korg-ledger is a hash-chained log of agent events. Each event carries
 `prev_hash` (the previous event's `entry_hash`, or a genesis anchor) and
@@ -20,11 +20,11 @@ the key), not merely tamper-evident.
 | File | Role |
 |---|---|
 | [`SPEC.md`](./SPEC.md) | the normative specification (canonicalization, preimage, chaining, HMAC, verify + DAG algorithms) |
-| [`GOLDSEAL.md`](./GOLDSEAL.md) | **`goldseal@v1`** — the normative spec for the public, independently-verifiable *certificate*: a receipt superset that binds a re-derived (un-spoofable) human summary + an issuer Ed25519 seal. |
+| [`KORGCERT.md`](./KORGCERT.md) | **`korgcert@v1`** — the normative spec for the public, independently-verifiable *certificate*: a receipt superset that binds a re-derived (un-spoofable) human summary + an issuer Ed25519 seal. |
 | [`vectors/`](./vectors/) + [`conformance.json`](./conformance.json) | the golden conformance vectors with **frozen tip hashes** — the cross-language oracle |
 | [`conformance.py`](./conformance.py) | a dependency-free Python reference verifier (the executable oracle) |
 | [`js/`](./js/) | a dependency-free JavaScript verifier (`verify.mjs`) + its conformance harness, for Node and the browser |
-| [`web/`](./web/) | **two zero-install in-browser verifiers** (Web Crypto, send nothing): [`index.html`](./web/index.html) checks a raw `ledger.jsonl`; [`seal.html`](./web/seal.html) checks a **Gold Seal** — re-deriving the summary live so you can watch it match (or, when tampered, fail). Host on GitHub Pages and anyone verifies a shared session or seal in a tab. |
+| [`web/`](./web/) | **two zero-install in-browser verifiers** (Web Crypto, send nothing): [`index.html`](./web/index.html) checks a raw `ledger.jsonl`; [`seal.html`](./web/seal.html) checks a **Certificate** — re-deriving the summary live so you can watch it match (or, when tampered, fail). Host on GitHub Pages and anyone verifies a shared session or seal in a tab. |
 
 ## Conformance
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a small deterministic korg-ledger@v1 session for the Gold Seal CI demo.
+"""Write a small deterministic korg-ledger@v1 session for the Certificate CI demo.
 
 Usage: python3 make_demo_session.py [out.jsonl]
 Requires korg-ledger-py on PYTHONPATH (adapters/korg-ledger-py/src).

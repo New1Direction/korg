@@ -1,5 +1,5 @@
 {
-  "schema": "goldseal@v1",
+  "schema": "korgcert@v1",
   "spec": "korg-ledger@v1",
   "claim": "Added a /healthz endpoint to src/app.py with a passing regression test",
   "issued_at": 1760000000,
@@ -122,6 +122,6 @@
   "seal": {
     "alg": "ed25519",
     "pubkey": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
-    "sig": "a30927527dd88461958288d42d775b06833c488f023f0a054bb7895415f75994b8ac4521c2e3923f86a2f760eda1c58a711e7f3052a3c28cca3a99ac7c9f4307"
+    "sig": "b01ddf8d10e9819d772ea1892548877e805eba11dfad57afa355a52dc9f78963072e5f2be7412006ba1f79f6ae52b8a9e0030b9c149584e5e1eb9f4ac3e3a800"
   }
 }

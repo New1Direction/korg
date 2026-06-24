@@ -1,23 +1,23 @@
-# goldseal@v1 — Public, Independently-Verifiable Certificate
+# korgcert@v1 — Public, Independently-Verifiable Certificate
 
-> A **Gold Seal** is a single, self-contained JSON object that attests an AI-agent
+> A **Certificate** is a single, self-contained JSON object that attests an AI-agent
 > session happened as claimed — and lets *anyone* re-verify it offline, with zero
 > trust in the tool that produced it. It is a strict superset of `korgex-receipt@v1`
 > built on the [`korg-ledger@v1`](./SPEC.md) chain primitives.
 
-A receipt proves the event chain is intact. A Gold Seal adds the part a **human**
+A receipt proves the event chain is intact. A Certificate adds the part a **human**
 actually reads — *what the agent did* — and binds it cryptographically so it
 **cannot lie**. The summary is not asserted; it is a pure function of the events,
 re-derived by the verifier and rejected on any mismatch.
 
 This document is normative. An implementation conforms iff it reproduces the
-frozen fixture `crates/korg-verify/tests/fixtures/goldseal-v1.json` (minted by the
+frozen fixture `crates/korg-verify/tests/fixtures/korgcert-v1.json` (minted by the
 Python reference, verified byte-identically by the Rust `korg-verify` and the JS
 `verify.mjs`).
 
 ---
 
-## 1. Threat model — what a Gold Seal does and does not prove
+## 1. Threat model — what a Certificate does and does not prove
 
 A green verdict proves, with **no trust in the issuer's tooling**:
 
@@ -43,18 +43,18 @@ It explicitly does **NOT** prove, on its own:
   asserts; it is signature-protected (cannot be altered by a third party) but is
   not machine-checkable against the events. Trust it exactly as much as you trust
   the pinned issuer. The machine-checked facts live in `summary`.
-- **Semantic correctness of the work.** A Gold Seal proves the session is a
+- **Semantic correctness of the work.** A Certificate proves the session is a
   faithful record — not that the code is good.
 
 ---
 
 ## 2. Envelope
 
-A Gold Seal is one JSON object:
+A Certificate is one JSON object:
 
 | Field         | Type           | Bound by | Meaning |
 |---------------|----------------|----------|---------|
-| `schema`      | `"goldseal@v1"`| seal     | Format identifier. |
+| `schema`      | `"korgcert@v1"`| seal     | Format identifier. |
 | `spec`        | `"korg-ledger@v1"` | seal | Underlying chain spec. |
 | `claim`       | string         | seal     | Issuer-asserted one-line description (prose, not machine-checked). |
 | `issued_at`   | integer        | seal     | Unix seconds the seal was minted (integer — floats are out of canonicalization scope, SPEC §2). |
@@ -120,7 +120,7 @@ captures path-bearing arguments by the fixed key set `{file_path, path}`; this i
 *defined* rule (exact re-derivation), not a best-effort heuristic.
 
 > **Why this matters.** The legacy receipt signature covers only the `tip` hash —
-> the summary a human reads is unprotected. A Gold Seal closes that gap twice over:
+> the summary a human reads is unprotected. A Certificate closes that gap twice over:
 > the summary is re-derived from events (cannot disagree with them) *and* the seal
 > signs it (cannot be swapped for the events independently).
 
@@ -131,7 +131,7 @@ captures path-bearing arguments by the fixed key set `{file_path, path}`; this i
 A conforming verifier, given an envelope and an optional pinned issuer key, runs in
 order and the verdict is **valid** iff every applicable check passes:
 
-1. `schema == "goldseal@v1"`.
+1. `schema == "korgcert@v1"`.
 2. `verify_chain(events)` is empty — the hash chain is intact (SPEC §5).
 3. `verify_dag(events)` is empty — unique `seq_id`s and strictly-earlier
    `triggered_by` links.
@@ -140,7 +140,7 @@ order and the verdict is **valid** iff every applicable check passes:
 6. `canonicalize(derive_summary(events)) == canonicalize(summary)` (§4).
 7. **Seal present** — verify `seal.sig` is a valid Ed25519 signature by
    `seal.pubkey` over `canonicalize(header)` (§3). An **absent seal fails**: a
-   `goldseal@v1` without a seal is a *downgrade*, not a merely-unsigned artifact.
+   `korgcert@v1` without a seal is a *downgrade*, not a merely-unsigned artifact.
 8. If a key is pinned, `seal.pubkey` MUST equal it.
 9. If `anchors` is present and non-empty, each anchor's `entry_hash` MUST match the
    chain event at its `seq_id` (structural; SPEC §8.2). The anchor set is also
@@ -149,10 +149,10 @@ order and the verdict is **valid** iff every applicable check passes:
 
 ### Graceful degradation
 
-A Gold Seal carries an `events` array, so an **older, receipt-only verifier** still
+A Certificate carries an `events` array, so an **older, receipt-only verifier** still
 checks it — chain + DAG + tip — and reports it as a valid but *unsigned* receipt (it
 does not know about `seal`/`summary`). That is honest: an old tool proves integrity;
-a goldseal-aware tool additionally proves the summary and authorship.
+a korgcert-aware tool additionally proves the summary and authorship.
 
 ---
 
@@ -182,12 +182,12 @@ a goldseal-aware tool additionally proves the summary and authorship.
 
 ## 7. Conformance
 
-The frozen fixture `crates/korg-verify/tests/fixtures/goldseal-v1.json` is minted by
-`spec/korg-ledger-v1/tools/mint_goldseal_fixture.py` (Python, seed `[42; 32]`) and is
+The frozen fixture `crates/korg-verify/tests/fixtures/korgcert-v1.json` is minted by
+`spec/korg-ledger-v1/tools/mint_korgcert_fixture.py` (Python, seed `[42; 32]`) and is
 the cross-implementation oracle:
 
 - **Python** mints it and `korg_ledger.signing.verify_seal` round-trips it.
-- **Rust** `korg-verify` verifies it (`crates/korg-verify/tests/goldseal.rs`) and the
+- **Rust** `korg-verify` verifies it (`crates/korg-verify/tests/korgcert.rs`) and the
   `korg-verify` binary renders its summary.
 - **JS** `verify.mjs` verifies it and re-derives the identical summary
   (`spec/korg-ledger-v1/js/conformance.mjs`).

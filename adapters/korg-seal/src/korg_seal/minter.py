@@ -1,4 +1,4 @@
-"""Mint a goldseal@v1 certificate from a captured session ledger."""
+"""Mint a korgcert@v1 certificate from a captured session ledger."""
 from __future__ import annotations
 
 import json
@@ -32,10 +32,10 @@ def mint(
     anchors: list | None = None,
     strict: bool = True,
 ) -> dict:
-    """Mint a signed Gold Seal from the ledger at ``ledger_path``.
+    """Mint a signed Certificate from the ledger at ``ledger_path``.
 
     Refuses (in ``strict`` mode) to seal a chain that does not verify — you
-    should never put a Gold Seal on a tampered history. ``issuer_agent``
+    should never put a Certificate on a tampered history. ``issuer_agent``
     defaults to a label derived from the issuer key; ``issued_at`` defaults to
     the current Unix time.
     """
@@ -73,7 +73,7 @@ def anchor(
     seq_id: int | None = None,
     anchored_at: str | None = None,
 ) -> dict:
-    """Re-mint an existing Gold Seal with a git-tip anchor bound into the seal.
+    """Re-mint an existing Certificate with a git-tip anchor bound into the seal.
 
     Anchoring is post-hoc: you mint a seal, publish/commit it to a public repo,
     then anchor it to that commit. Because the anchor is *bound* (signed), this

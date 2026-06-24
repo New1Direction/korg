@@ -88,7 +88,7 @@ def test_mint_produces_a_seal_that_verifies(tmp_path):
     ledger, _ = _sample(tmp_path)
     seed = bytes([7]) * 32
     seal = mint_mod.mint(ledger_path=ledger, claim="added healthz", seed=seed, issued_at=1)
-    assert seal["schema"] == "goldseal@v1"
+    assert seal["schema"] == "korgcert@v1"
     assert verify_seal(seal) == []
     # issuer label is derived from the key when not given
     assert seal["issuer"]["agent"].startswith("agent:korg-seal#")

@@ -1,6 +1,6 @@
-"""goldseal@v1 — the public, independently-verifiable certificate layer.
+"""korgcert@v1 — the public, independently-verifiable certificate layer.
 
-A Gold Seal is a single self-contained JSON object that wraps a verified
+A Certificate is a single self-contained JSON object that wraps a verified
 korg-ledger@v1 event chain together with a human-legible *summary* and an
 Ed25519 *seal* signed by an issuer. Anyone can re-verify it offline, with zero
 trust in the tool that produced it:
@@ -17,19 +17,19 @@ trust in the tool that produced it:
 This module is **stdlib-only**: it does derivation + the structural checks
 (1-3). The Ed25519 seal signature (4) lives in :mod:`korg_ledger.signing`
 (the optional ``[signing]`` extra), mirroring how per-event signing is kept
-off the stdlib core. ``goldseal@v1`` is a strict superset of
-``korgex-receipt@v1`` — a Gold Seal still verifies as a receipt under an older
+off the stdlib core. ``korgcert@v1`` is a strict superset of
+``korgex-receipt@v1`` — a Certificate still verifies as a receipt under an older
 receipt-only verifier (chain + DAG + tip), which simply does not see the
 stronger seal/summary guarantees.
 
 Cross-language conformant with the Rust ``korg-verify`` and JS ``verify.mjs``
-goldseal codepaths: derivation and the canonical header are byte-identical.
+korgcert codepaths: derivation and the canonical header are byte-identical.
 """
 from __future__ import annotations
 
 from ._hash import canonicalize, verify_anchors, verify_chain
 
-SCHEMA = "goldseal@v1"
+SCHEMA = "korgcert@v1"
 SPEC = "korg-ledger@v1"
 
 #: Envelope keys that are NOT part of the signed header. ``events`` is excluded
@@ -94,7 +94,7 @@ def derive_summary(events: list) -> dict:
 
 
 def seal_header(envelope: dict) -> dict:
-    """The signed portion of a Gold Seal: the envelope minus ``events`` and
+    """The signed portion of a Certificate: the envelope minus ``events`` and
     ``seal`` (so it includes ``anchors`` when present).
 
     This is the exact object whose canonicalization is the seal signature
@@ -114,7 +114,7 @@ def build_envelope(
     issued_at: int,
     anchors: list | None = None,
 ) -> dict:
-    """Assemble the *unsigned* Gold Seal envelope (header + events [+ anchors]).
+    """Assemble the *unsigned* Certificate envelope (header + events [+ anchors]).
 
     The caller signs ``seal_header(envelope)`` and attaches the ``seal``. Kept
     separate from signing so the stdlib core can construct the bound object
@@ -142,7 +142,7 @@ def build_envelope(
 
 
 def verify_structure(envelope: dict) -> list:
-    """Run the hermetic, crypto-free half of Gold Seal verification.
+    """Run the hermetic, crypto-free half of Certificate verification.
 
     Returns a list of human-readable errors; empty iff the chain, DAG, tip,
     event_count and the **re-derived summary** all check out. The Ed25519 seal

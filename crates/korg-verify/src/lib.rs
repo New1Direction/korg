@@ -45,7 +45,7 @@ pub struct Verdict {
     /// `None` when no `--anchors` sidecar was supplied; `Some(true/false)` for the
     /// structural anchor check (each anchor's entry_hash matches the chain).
     pub anchors_ok: Option<bool>,
-    /// `None` for receipts/journals; `Some(true/false)` for a goldseal@v1 — whether
+    /// `None` for receipts/journals; `Some(true/false)` for a korgcert@v1 — whether
     /// the embedded summary byte-matches the summary re-derived from the events.
     pub summary_ok: Option<bool>,
     pub errors: Vec<String>,
@@ -271,8 +271,8 @@ pub fn verify_receipt(receipt: &Value, key: Option<&[u8]>, pin_pubkey: Option<&s
     }
 }
 
-/// A Gold Seal's bound, human-legible summary, derived as a *pure function* of the
-/// event chain. Byte-identical to the Python (`korg_ledger.goldseal.derive_summary`)
+/// A Certificate's bound, human-legible summary, derived as a *pure function* of the
+/// event chain. Byte-identical to the Python (`korg_ledger.korgcert.derive_summary`)
 /// and JS (`deriveSummary`) implementations — a verifier re-derives it and rejects
 /// any mismatch, so the summary cannot lie about what the agent did.
 fn derive_summary(events: &[Value]) -> Value {
@@ -318,7 +318,7 @@ fn derive_summary(events: &[Value]) -> Value {
     })
 }
 
-/// The signed portion of a Gold Seal: the envelope minus `events` and `seal` (so
+/// The signed portion of a Certificate: the envelope minus `events` and `seal` (so
 /// it includes `anchors` when present — the seal commits to the anchor set). Its
 /// canonicalization is the seal-signature preimage (identical at mint and verify).
 fn seal_header(envelope: &Value) -> Value {
@@ -349,14 +349,14 @@ fn verify_seal_sig(pubkey_hex: &str, header: &Value, sig_hex: &str) -> bool {
     }
 }
 
-/// Verify a `goldseal@v1` certificate: the embedded chain + DAG, the recorded tip
+/// Verify a `korgcert@v1` certificate: the embedded chain + DAG, the recorded tip
 /// and event_count, the **re-derived summary** (byte-equal to the embedded one),
-/// and the issuer's Ed25519 seal over the canonical header. A goldseal is a receipt
+/// and the issuer's Ed25519 seal over the canonical header. A korgcert is a receipt
 /// superset, so it also passes an older receipt-only verifier (chain + DAG + tip) —
 /// minus the summary/seal guarantees. A stripped seal fails the verdict (downgrade).
 ///
 /// `pin_pubkey`: require the issuer to equal a key the relying party already trusts.
-pub fn verify_goldseal(envelope: &Value, pin_pubkey: Option<&str>) -> Verdict {
+pub fn verify_korgcert(envelope: &Value, pin_pubkey: Option<&str>) -> Verdict {
     let events: Vec<Value> = envelope
         .get("events")
         .and_then(|e| e.as_array())
@@ -369,9 +369,9 @@ pub fn verify_goldseal(envelope: &Value, pin_pubkey: Option<&str>) -> Verdict {
     let dag_ok = dag.is_empty();
     errors.extend(dag);
 
-    let schema_ok = envelope.get("schema").and_then(|s| s.as_str()) == Some("goldseal@v1");
+    let schema_ok = envelope.get("schema").and_then(|s| s.as_str()) == Some("korgcert@v1");
     if !schema_ok {
-        errors.push("schema is not goldseal@v1".to_string());
+        errors.push("schema is not korgcert@v1".to_string());
     }
 
     let claimed_tip = envelope.get("tip").and_then(|t| t.as_str());
@@ -434,11 +434,11 @@ pub fn verify_goldseal(envelope: &Value, pin_pubkey: Option<&str>) -> Verdict {
         }
         (Some(ok), Some(pubkey.to_string()))
     } else {
-        // A goldseal@v1 MUST carry a seal — a stripped seal is a downgrade, not a
+        // A korgcert@v1 MUST carry a seal — a stripped seal is a downgrade, not a
         // merely-unsigned artifact. Fails the verdict in all implementations.
         errors.push(match pin_pubkey {
             Some(pin) => format!("seal is absent but signer {pin} was required"),
-            None => "seal is absent (unsigned Gold Seal)".to_string(),
+            None => "seal is absent (unsigned Certificate)".to_string(),
         });
         (Some(false), None)
     };
@@ -464,7 +464,7 @@ pub fn verify_goldseal(envelope: &Value, pin_pubkey: Option<&str>) -> Verdict {
         && anchors_ok != Some(false);
     Verdict {
         valid,
-        kind: "goldseal",
+        kind: "korgcert",
         event_count: events.len(),
         chain_ok,
         dag_ok,
@@ -478,7 +478,7 @@ pub fn verify_goldseal(envelope: &Value, pin_pubkey: Option<&str>) -> Verdict {
     }
 }
 
-/// Auto-detect a goldseal@v1 certificate, a receipt (`{…,"events":[…]}` or
+/// Auto-detect a korgcert@v1 certificate, a receipt (`{…,"events":[…]}` or
 /// `schema: korgex-receipt@*`), or a journal (array or JSONL) and verify accordingly.
 pub fn verify_text(
     text: &str,
@@ -492,9 +492,9 @@ pub fn verify_text(
         if let Ok(v) = serde_json::from_str::<Value>(text) {
             if v.get("schema")
                 .and_then(|s| s.as_str())
-                .is_some_and(|s| s.starts_with("goldseal"))
+                .is_some_and(|s| s.starts_with("korgcert"))
             {
-                return Ok(verify_goldseal(&v, pin_pubkey));
+                return Ok(verify_korgcert(&v, pin_pubkey));
             }
             let is_receipt = v.get("events").is_some()
                 || v.get("schema")

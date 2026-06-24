@@ -1,8 +1,8 @@
 //! Adversarial robustness: the verifier must NEVER panic on hostile input and
 //! must NEVER accept something it shouldn't. Mirrors the Python Hypothesis suite
-//! (`test_goldseal_properties.py`).
+//! (`test_korgcert_properties.py`).
 
-use korg_verify::{verify_goldseal, verify_text};
+use korg_verify::{verify_korgcert, verify_text};
 use proptest::prelude::*;
 use serde_json::Value;
 
@@ -25,7 +25,7 @@ fn json_value() -> impl Strategy<Value = Value> {
 
 fn fixture() -> Value {
     let path = format!(
-        "{}/tests/fixtures/goldseal-v1.json",
+        "{}/tests/fixtures/korgcert-v1.json",
         env!("CARGO_MANIFEST_DIR")
     );
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
@@ -47,10 +47,10 @@ fn flip(s: &str, i: usize, c: char) -> String {
 }
 
 proptest! {
-    /// verify_goldseal never panics on arbitrary JSON, and arbitrary input is never valid.
+    /// verify_korgcert never panics on arbitrary JSON, and arbitrary input is never valid.
     #[test]
-    fn verify_goldseal_never_panics_and_junk_is_invalid(v in json_value()) {
-        let verdict = verify_goldseal(&v, None);
+    fn verify_korgcert_never_panics_and_junk_is_invalid(v in json_value()) {
+        let verdict = verify_korgcert(&v, None);
         prop_assert!(!verdict.valid, "arbitrary JSON must never verify");
     }
 
@@ -66,7 +66,7 @@ proptest! {
         let mut env = fixture();
         let tip = env["tip"].as_str().unwrap().to_string();
         env["tip"] = Value::String(flip(&tip, i, c.chars().next().unwrap()));
-        prop_assert!(!verify_goldseal(&env, None).valid);
+        prop_assert!(!verify_korgcert(&env, None).valid);
     }
 
     /// Flipping any character of the seal signature is rejected.
@@ -75,7 +75,7 @@ proptest! {
         let mut env = fixture();
         let sig = env["seal"]["sig"].as_str().unwrap().to_string();
         env["seal"]["sig"] = Value::String(flip(&sig, i, c.chars().next().unwrap()));
-        prop_assert!(!verify_goldseal(&env, None).valid);
+        prop_assert!(!verify_korgcert(&env, None).valid);
     }
 
     /// Replacing any event with arbitrary JSON is rejected.
@@ -84,6 +84,6 @@ proptest! {
         let mut env = fixture();
         let n = env["events"].as_array().unwrap().len();
         env["events"][idx % n] = junk;
-        prop_assert!(!verify_goldseal(&env, None).valid);
+        prop_assert!(!verify_korgcert(&env, None).valid);
     }
 }

@@ -38,8 +38,8 @@ def verify_event_sig(public_bytes: bytes, event: dict, sig_hex: str) -> bool:
         return False
 
 
-# ── goldseal@v1 — seal-level signing ────────────────────────────────────────
-# The seal signs the canonical *header* (the Gold Seal envelope minus
+# ── korgcert@v1 — seal-level signing ────────────────────────────────────────
+# The seal signs the canonical *header* (the Certificate envelope minus
 # events/seal/anchors), binding claim + issuer + tip + event_count + summary
 # together under one Ed25519 key. Same primitive as per-event signing:
 # Ed25519 over the canonical preimage, lowercase hex.
@@ -56,7 +56,7 @@ def public_key_hex(private_seed: bytes) -> str:
 
 
 def sign_seal(private_seed: bytes, header: dict) -> str:
-    """Ed25519-sign a Gold Seal header's canonical bytes. Lowercase-hex sig."""
+    """Ed25519-sign a Certificate header's canonical bytes. Lowercase-hex sig."""
     from ._hash import canonicalize
 
     key = Ed25519PrivateKey.from_private_bytes(private_seed)
@@ -86,23 +86,23 @@ def mint_seal(
     private_seed: bytes,
     anchors: list | None = None,
 ) -> dict:
-    """Mint a signed goldseal@v1 envelope from a verified event chain.
+    """Mint a signed korgcert@v1 envelope from a verified event chain.
 
     Builds the bound header (deriving the summary from ``events``), signs its
     canonical bytes, and attaches the ``seal``. The returned object verifies
     under :func:`verify_seal` and — being a receipt superset — under any
     receipt-only verifier (chain + DAG + tip).
     """
-    from . import goldseal
+    from . import korgcert
 
-    envelope = goldseal.build_envelope(
+    envelope = korgcert.build_envelope(
         events=events,
         claim=claim,
         issuer_agent=issuer_agent,
         issued_at=issued_at,
         anchors=anchors,
     )
-    header = goldseal.seal_header(envelope)
+    header = korgcert.seal_header(envelope)
     envelope["seal"] = {
         "alg": "ed25519",
         "pubkey": public_key_hex(private_seed),
@@ -112,7 +112,7 @@ def mint_seal(
 
 
 def verify_seal(envelope: dict, pin_pubkey: str | None = None) -> list:
-    """Fully verify a goldseal@v1 envelope: structure (chain + DAG + tip +
+    """Fully verify a korgcert@v1 envelope: structure (chain + DAG + tip +
     re-derived summary) plus the Ed25519 seal signature. Returns a list of
     errors; empty iff valid.
 
@@ -120,18 +120,18 @@ def verify_seal(envelope: dict, pin_pubkey: str | None = None) -> list:
     already trusts — closing the self-referential hole where a bare check only
     proves the seal matches the *returned* key.
     """
-    from . import goldseal
+    from . import korgcert
 
     if not isinstance(envelope, dict):
         return ["envelope is not a JSON object"]
 
-    errors = goldseal.verify_structure(envelope)
+    errors = korgcert.verify_structure(envelope)
 
     seal = envelope.get("seal")
     if isinstance(seal, dict):
         pubkey = seal.get("pubkey") or ""
         sig = seal.get("sig") or ""
-        header = goldseal.seal_header(envelope)
+        header = korgcert.seal_header(envelope)
         ok = False
         try:
             ok = verify_seal_sig(bytes.fromhex(pubkey), header, sig)
@@ -144,6 +144,6 @@ def verify_seal(envelope: dict, pin_pubkey: str | None = None) -> list:
     elif pin_pubkey is not None:
         errors.append(f"seal is absent but signer {pin_pubkey} was required")
     else:
-        errors.append("seal is absent (unsigned Gold Seal)")
+        errors.append("seal is absent (unsigned Certificate)")
 
     return errors

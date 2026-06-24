@@ -10,11 +10,11 @@ USAGE:
     korg-verify <file> [--key <str>] [--pubkey <hex>] [--pin-event-pubkey <hex>] [--anchors <file>] [--json]
 
 ARGS:
-    <file>          a Gold Seal (goldseal@v1), a korg receipt (.json), or a journal (.jsonl / JSON array)
+    <file>          a Certificate (korgcert@v1), a korg receipt (.json), or a journal (.jsonl / JSON array)
 
 OPTIONS:
     --key <str>                HMAC key (raw bytes) for keyed chains
-    --pubkey <hex>             pin the expected signer — the receipt-tip signer or the Gold Seal issuer
+    --pubkey <hex>             pin the expected signer — the receipt-tip signer or the Certificate issuer
     --pin-event-pubkey <hex>   require every event's per-event Ed25519 event_sig to verify under this key
     --anchors <file>           verify an anchors.jsonl sidecar (structural: entry_hash ↔ chain)
     --json                     machine-readable verdict
@@ -140,9 +140,9 @@ fn main() -> ExitCode {
         });
         println!("{out}");
     } else {
-        // For a Gold Seal, surface the human-legible (and re-derived) summary —
+        // For a Certificate, surface the human-legible (and re-derived) summary —
         // that is the artifact's whole purpose.
-        let seal_view = (verdict.kind == "goldseal")
+        let seal_view = (verdict.kind == "korgcert")
             .then(|| serde_json::from_str::<serde_json::Value>(&text).ok())
             .flatten();
         print_human(&verdict, &file, seal_view.as_ref());
@@ -192,7 +192,7 @@ fn print_human(v: &korg_verify::Verdict, file: &str, seal: Option<&serde_json::V
     }
 }
 
-/// Render a verified Gold Seal's human-legible attestation. Every line here was
+/// Render a verified Certificate's human-legible attestation. Every line here was
 /// re-derived from the signed event chain, so it is exactly what happened.
 fn print_seal_summary(env: &serde_json::Value) {
     if let Some(claim) = env.get("claim").and_then(|c| c.as_str()) {

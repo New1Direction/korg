@@ -110,7 +110,7 @@ def resolve_anchor(anchor: dict, fetch=None) -> AnchorResult:
 
 
 def resolve_seal(env: dict, fetch=None) -> list[AnchorResult]:
-    """Resolve every git-tip anchor embedded in a Gold Seal."""
+    """Resolve every git-tip anchor embedded in a Certificate."""
     anchors = env.get("anchors") or []
     return [
         resolve_anchor(a, fetch=fetch)

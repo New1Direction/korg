@@ -152,7 +152,7 @@ Korg maintains a tamper-proof audit trail of every significant action using a cr
 Beyond the in-process provenance chain above, Korg ships a set of independently-verifiable, "flight-recorder" capabilities that let third parties check an agent's work without trusting Korg itself:
 
 -   **`korg-ledger@v1`**: A frozen, hash-chained, HLC-ordered, tamper-evident event ledger with cross-language conformance (Rust/Python/JS). Each event carries an Ed25519 per-event signature, and the ledger supports git-tip structural anchoring for offline structural verification.
--   **Gold Seal (`goldseal@v1`)**: A public, independently-verifiable certificate of agent work, produced by the `korg-seal` CLI (mint/anchor/resolve/verify) and checkable by three conformant verifiers (`korg-verify` in Rust, plus Python and JS) as well as zero-install in-browser verifiers hosted on GitHub Pages.
+-   **Certificate (`korgcert@v1`)**: A public, independently-verifiable certificate of agent work, produced by the `korg-seal` CLI (mint/anchor/resolve/verify) and checkable by three conformant verifiers (`korg-verify` in Rust, plus Python and JS) as well as zero-install in-browser verifiers hosted on GitHub Pages.
 -   **Honest `korg run-once` pipeline**: Runs a real patch through a real `cargo check` and attests a mutation count that *equals* the real `git diff` (file count + changed paths). When it cannot produce a real result, it reports an honest null rather than fabricating one.
 -   **Provider model**: The default is a hermetic `DeterministicProvider` (fixture-only); `--provider ollama` runs a live local model on arbitrary tasks.
 

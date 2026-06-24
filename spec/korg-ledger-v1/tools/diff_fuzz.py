@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Differential fuzzer — prove the three independent goldseal@v1 verifiers AGREE.
+"""Differential fuzzer — prove the three independent korgcert@v1 verifiers AGREE.
 
-For each adversarially-mutated Gold Seal, run the Python, Rust, and JS verifiers
+For each adversarially-mutated Certificate, run the Python, Rust, and JS verifiers
 and assert they return the same validity. Three independent codepaths written
 from one spec must never disagree on a verdict; a divergence is a conformance bug.
 
-All candidates keep ``schema: goldseal@v1`` so every verifier routes to its
-goldseal path (the per-language fuzz suites already cover off-schema / non-object
+All candidates keep ``schema: korgcert@v1`` so every verifier routes to its
+korgcert path (the per-language fuzz suites already cover off-schema / non-object
 input). Needs the built ``korg-verify`` binary + node + cryptography.
 
     PYTHONPATH=adapters/korg-ledger-py/src python3 spec/korg-ledger-v1/tools/diff_fuzz.py
@@ -26,7 +26,7 @@ sys.path.insert(0, str(REPO / "adapters" / "korg-ledger-py" / "src"))
 
 from korg_ledger.signing import verify_seal  # noqa: E402
 
-FIXTURE = REPO / "crates" / "korg-verify" / "tests" / "fixtures" / "goldseal-v1.json"
+FIXTURE = REPO / "crates" / "korg-verify" / "tests" / "fixtures" / "korgcert-v1.json"
 VERIFY_MJS = REPO / "spec" / "korg-ledger-v1" / "js" / "verify.mjs"
 RUST_BIN = next(
     (p for p in [REPO / "target/debug/korg-verify", REPO / "target/release/korg-verify"] if p.exists()),

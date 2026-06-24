@@ -1,9 +1,9 @@
-name: "Verify korg Gold Seal"
+name: "Verify korg Certificate"
 description: >-
-  Independently verify goldseal@v1 certificates or korg-ledger@v1 sessions in CI —
+  Independently verify korgcert@v1 certificates or korg-ledger@v1 sessions in CI —
   hash chain, causal DAG, re-derived summary, and the Ed25519 issuer seal. Zero
   trust in whoever produced the artifact; no network. Renders a rich report into
-  the job summary and (on pull_request) posts a sticky Gold Seal comment. Fails
+  the job summary and (on pull_request) posts a sticky Certificate comment. Fails
   the job on any tampered or unverifiable file.
 author: "Korg ecosystem maintainers"
 branding:
@@ -19,7 +19,7 @@ inputs:
     required: false
     default: ""
   comment:
-    description: "Post/update a sticky Gold Seal comment on the PR (pull_request events). 'true'/'false'."
+    description: "Post/update a sticky Certificate comment on the PR (pull_request events). 'true'/'false'."
     required: false
     default: "true"
   github-token:

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Mint the frozen cross-implementation goldseal@v1 fixture.
+"""Mint the frozen cross-implementation korgcert@v1 fixture.
 
 Deterministic: a fixed event chain + the fixed Ed25519 seed ``[42]*32`` +
 a fixed ``issued_at`` produce a byte-stable seal. Re-running overwrites the
 fixture identically. The Python-minted seal is then verified — unchanged —
-by the Rust ``korg-verify`` and the JS ``verify.mjs`` goldseal codepaths;
+by the Rust ``korg-verify`` and the JS ``verify.mjs`` korgcert codepaths;
 that three-way agreement is the conformance proof.
 
-Run:  python3 spec/korg-ledger-v1/tools/mint_goldseal_fixture.py
+Run:  python3 spec/korg-ledger-v1/tools/mint_korgcert_fixture.py
 """
 from __future__ import annotations
 
@@ -90,18 +90,18 @@ def main() -> None:
     )
 
     out_dir = REPO / "crates" / "korg-verify" / "tests" / "fixtures"
-    (out_dir / "goldseal-v1.json").write_text(
+    (out_dir / "korgcert-v1.json").write_text(
         json.dumps(seal, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    (out_dir / "goldseal-v1.pubkey").write_text(seal["seal"]["pubkey"] + "\n", encoding="utf-8")
+    (out_dir / "korgcert-v1.pubkey").write_text(seal["seal"]["pubkey"] + "\n", encoding="utf-8")
 
     # Also drop a copy next to the web verifier samples for the seal.html demo.
-    web_sample = REPO / "spec" / "korg-ledger-v1" / "web" / "samples" / "goldseal.json"
+    web_sample = REPO / "spec" / "korg-ledger-v1" / "web" / "samples" / "korgcert.json"
     web_sample.write_text(
         json.dumps(seal, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
 
-    print("minted goldseal@v1 fixture")
+    print("minted korgcert@v1 fixture")
     print(f"  pubkey  {seal['seal']['pubkey']}")
     print(f"  tip     {seal['tip']}")
     print(f"  events  {seal['event_count']}")

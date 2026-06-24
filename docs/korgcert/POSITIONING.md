@@ -1,12 +1,12 @@
-# The Gold Seal — the trust layer for AI-agent work
+# The Certificate — the trust layer for AI-agent work
 
 > **One line:** AI agents now do real work — write code, move money, file tickets,
 > touch production. Nobody can independently verify *what an agent actually did*.
-> The **Gold Seal** is a portable, cryptographically-signed certificate of an agent
+> The **Certificate** is a portable, cryptographically-signed certificate of an agent
 > session that **anyone can re-verify offline, with zero trust in the issuer**.
 
 This document is positioning, not a spec. Every capability it claims is backed by
-working, cross-language-conformant code — see [`GOLDSEAL.md`](../../spec/korg-ledger-v1/GOLDSEAL.md)
+working, cross-language-conformant code — see [`KORGCERT.md`](../../spec/korg-ledger-v1/KORGCERT.md)
 for the normative spec and the "what we do NOT claim" section at the end.
 
 ---
@@ -34,7 +34,7 @@ We do not start by selling a platform. We start by giving away a primitive that 
 *obviously* useful and *impossible to fake*:
 
 ```
-  capture            →   tamper-evident ledger     →   Gold Seal           →   re-verify
+  capture            →   tamper-evident ledger     →   Certificate           →   re-verify
   (zero-config hook)     (hash-chain + causal DAG)     (signed certificate)     (anybody, offline)
 ```
 
@@ -43,10 +43,10 @@ We do not start by selling a platform. We start by giving away a primitive that 
 - **The ledger is tamper-evident by construction.** Hash-chained, HLC-ordered,
   Ed25519-signable. Edit one byte and verification localizes the break to the exact
   step. (Shipped: `korg-ledger@v1`, three conformant implementations.)
-- **The Gold Seal makes it portable and human.** One JSON object: the events, an
+- **The Certificate makes it portable and human.** One JSON object: the events, an
   issuer signature, and a human-legible summary that is **re-derived from the events**
   — so the "files touched / tools used / steps" a person reads literally cannot lie.
-  (Shipped: `goldseal@v1`, this work.)
+  (Shipped: `korgcert@v1`, this work.)
 - **Re-verification needs nothing of ours.** A small dependency-light Rust binary,
   a stdlib Python module, or a single browser tab (Web Crypto) all check a seal
   byte-identically. **Zero trust in the tool that produced it.** That is the whole
@@ -91,7 +91,7 @@ checks against, and the network effects accrue to whoever defines and stewards i
 Honesty is the brand — an earlier internal audit flagged and removed overclaimed
 features, and that discipline is the reason anyone should believe the rest of this.
 
-- A Gold Seal proves a session is a **faithful record**, not that the work is **good**.
+- A Certificate proves a session is a **faithful record**, not that the work is **good**.
 - It proves **authorship by a key**, not **identity** — key↔real-world-org binding is
   pinned by the relying party today; a hosted registry is future work, not a claim.
 - **Time** is proven by an explicit, opt-in network step, not offline. `korg-seal
@@ -101,7 +101,7 @@ features, and that discipline is the reason anyone should believe the rest of th
   guarantee stronger than "this was in public git by then."
 - The hosted layers above (transparency log, registry, dashboards, marketplace) are
   the *business*, and are **not built yet**. What is built and verifiable today is the
-  primitive: capture → ledger → Gold Seal → independent re-verification.
+  primitive: capture → ledger → Certificate → independent re-verification.
 
 The bet: own the open primitive for verifiable agent work, and the trust network is
 the company.

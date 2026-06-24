@@ -21,7 +21,7 @@ Exit code: `0` valid · `1` invalid/tampered · `2` usage/parse error.
 
 It is the third independent implementation of **korg-ledger@v1** — Python (`korgex receipt verify`), JavaScript (the self-verifying HTML report), and now Rust — all checked against the same frozen conformance vectors. That makes "verify a sealed deliverable without trusting the tool that produced it" provable rather than asserted: a single small binary anyone can run, in CI or by hand.
 
-It also verifies a **goldseal@v1** certificate — a public, independently-verifiable Gold Seal of agent work — auto-detecting receipts, journals, and seals from the same binary; korg-verify is one of three conformant Gold Seal verifiers (Rust/Python/JS).
+It also verifies a **korgcert@v1** certificate — a public, independently-verifiable Certificate of agent work — auto-detecting receipts, journals, and seals from the same binary; korg-verify is one of three conformant Certificate verifiers (Rust/Python/JS).
 
 ## Examples
 
