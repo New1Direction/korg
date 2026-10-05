@@ -28,6 +28,12 @@ Set PlaybackSpeed 1
 Hide
 Type "export PATH=$PWD/target/release:$PATH"
 Enter
+# Seed a real capability journal for step 5: run an actual (hermetic,
+# deterministic-provider) swarm campaign on a scratch copy of the fixture repo.
+# This takes ~1 min and is hidden only to keep the GIF short.
+Type "W=$(mktemp -d) && cp -r fixtures/honest-demo-repo/. $W && git -C $W init -q && git -C $W add -A && git -C $W -c user.email=demo@korg -c user.name=demo commit -qm init && (cd $W && korg --goal 'Fix the add function in src/lib.rs so it adds' >/dev/null 2>&1)"
+Enter
+Sleep 120s
 Type "clear"
 Enter
 Show
@@ -66,10 +72,10 @@ Sleep 3s
 Ctrl+L
 
 # ── 5. Real reversible rewind of the capability journal ───────────────────────
-# Operates on this repo's real .korg/execution_journal.jsonl — a real
-# hash-chained truncation + re-seal, not a scripted message.
+# Operates on the real .korg/capability_journal.json the hidden setup's campaign
+# wrote — a real hash-chained truncation + LedgerRewind seal, not a scripted message.
 Sleep 400ms
-Type "korg rewind --seq 1"
+Type "cd $W && korg rewind --seq 4"
 Enter
 Sleep 4s
 Ctrl+L
@@ -83,11 +89,11 @@ Enter
 Sleep 600ms
 Type "echo ''"
 Enter
-Type "echo 'A tamper-evident ledger for AI agent cognition — no trust in the tool.'"
+Type "echo 'A tamper-evident ledger for AI agent cognition. No trust in the tool.'"
 Enter
 Sleep 600ms
 Type "echo ''"
 Enter
-Type "echo 'cargo install korg   →   github.com/New1Direction/korg'"
+Type "echo 'git clone github.com/New1Direction/korg && cargo build --release'"
 Enter
 Sleep 4s

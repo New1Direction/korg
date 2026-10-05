@@ -1,5 +1,7 @@
 # korg Swarm cognitive configuration surface
-default_llm = "ollama"
+# Hermetic by default (no network, no model). Pass `--provider ollama` or set
+# default_llm = "ollama" here to run every persona on a live local model.
+default_llm = "deterministic"
 default_model = "llama3-70b-monochrome"
 
 [ollama]

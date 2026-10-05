@@ -822,6 +822,14 @@ async fn main() -> Result<()> {
         Commands::Rewind { seq } => {
             let mut journal = korg_registry::CapabilityJournal::default_journal();
             let prev_count = journal.events.len();
+            if journal.events.is_empty() {
+                eprintln!(
+                    "\n\x1b[38;2;255;0;180m❌ Nothing to rewind: no events in .korg/capability_journal.json yet.\x1b[0m\n   \
+                     Record some first, e.g. `korg --goal \"<task>\"`, or run `korg demo` for a\n   \
+                     self-contained rewind walkthrough."
+                );
+                std::process::exit(1);
+            }
             match journal.rewind_with_seal(seq, "korg:cli", "operator rewind") {
                 Ok(()) => {
                     let green = "\x1b[38;2;0;255;128m";
@@ -855,7 +863,7 @@ async fn main() -> Result<()> {
                     let pink = "\x1b[38;2;255;0;180m";
                     let reset = "\x1b[0m";
                     eprintln!("\n{}❌ Rewind failed: {}{}", pink, e, reset);
-                    return Err(anyhow::anyhow!("Rewind failed: {}", e));
+                    std::process::exit(1);
                 }
             }
         }
