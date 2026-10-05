@@ -16,6 +16,16 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+---
+
+## [0.2.0] — 2026-10-05
+
+The first runtime release since 0.1.0: korg becomes a verifiable ledger for AI-agent work. Captured sessions can be minted into signed `korgcert@v1` Certificates that anyone re-verifies offline in Rust, Python, JS or the browser, and the swarm now runs an honest pipeline whose ledger attests only work the worktree actually shows.
+
+**Breaking:** the certificate format formerly called `goldseal@v1` is now `korgcert@v1` (schema string, verifier, fixtures and adapters). Seals minted under the old name must be re-minted.
+
 ### Security & correctness (multi-agent adversarial bug hunt — 15 real bugs fixed)
 
 A fan-out review across every component, with each finding refuted-by-default by an independent verifier, surfaced **15 confirmed real bugs** (9 false positives filtered out). All fixed, with regression tests + the differential fuzzer extended to lock them:
@@ -49,6 +59,10 @@ Gate after second pass: 13 Rust test binaries, **232 Python tests**, JS conforma
 Gate after third pass: 14 Rust test binaries, **235 Python tests** (incl. NaN/Inf, Stop-flush, concurrency, receipt-domain regressions), JS conformance, differential fuzz 0 divergences. Three adversarial passes, **32 real bugs fixed** — the iterative fix-audit caught regressions in both prior passes' fixes.
 
 ### Added
+- **Zero-config verifiable Claude Code capture (#8).** `korg-setup` registers a Claude Code hook that writes one verifiable korg-ledger@v1 ledger per session under `~/.korg/sessions/`; `korg-backfill` captures past transcripts retroactively and migrates the legacy flat ledger. Cross-language conformance and adapter suites are gated in CI.
+- **Trust hardening (#9).** Optional Ed25519 per-event signatures and structural git-tip anchors across Rust, Python and JS (`korg-verify --pin-event-pubkey` / `--anchors`), a zero-install in-browser ledger verifier, tamper-evident rewinds routed through `rewind_with_seal`, and proptests over canonicalization and rewind chain invariants.
+- **The Honest Pipeline for the swarm (#11–#14).** Workers apply real patches in git worktrees and the ledger attests the real diff (files changed, paths) instead of synthetic telemetry; synthetic injectors are gated behind `--inject-stress` (default off). Personas pass real data downstream, run under per-persona permissions (read-only personas never mutate), and reuse a pre-warmed shared cargo cache behind `--speculative`.
+- **`korg run-once` (#12, #15).** Drives the honest pipeline visibly on a fixture, and with `--provider ollama --model … --base-url …` on a real local model for arbitrary tasks. Invalid model output is attested as an honest null, never a fabricated count.
 - **Adversarial hardening of the verifiers — fuzzed + differentially tested across all three impls.** Property-based fuzzing of the korgcert verifiers proves two security invariants: they never crash on hostile input, and never accept junk or any single-character hash/seal-signature flip. The fuzzers **found and fixed two real robustness bugs** — the Python and JS verifiers crashed (`AttributeError` / `TypeError`) on a `null`/non-object event; both now degrade gracefully to "invalid" like Rust always did (guards added across `verify_chain`/`verify_dag`/`verify_anchors`/`derive_summary`/`verify_structure`/`verify_seal` and the JS equivalents). Coverage: Python `test_korgcert_properties.py` (Hypothesis, ~1700 examples), Rust `crates/korg-verify/tests/fuzz.rs` (proptest, 5 properties), JS fuzz block in `conformance.mjs`. **Differential fuzzer** `spec/korg-ledger-v1/tools/diff_fuzz.py` runs 24 adversarial mutations of a Certificate through the Rust, Python, and JS verifiers and asserts all three return the **same** verdict (a divergence = a conformance bug) — **0 divergences**; gated in CI (Build & Test job). 211 Python tests.
 - **Time-travel session explorer** ([`spec/korg-ledger-v1/web/explore.html`](spec/korg-ledger-v1/web/explore.html)) — a zero-install, client-side replay of any korg-ledger@v1 session or Certificate. Drop a ledger/seal and scrub the timeline: the **cumulative state** (agents, tools, files touched) is re-derived live over the slice up to the playhead, so you watch what the agent did evolve step by step, while the hash-chain verifies under every frame. A tampered chain lights up red and auto-jumps the playhead to the exact break; a Certificate additionally shows its claim + signer. Play/pause, scrub, click an event for full args/result. Same Web Crypto engine as the verifiers; linked from the landing page (a third card). Verified in a real browser across session / tampered / Certificate inputs.
 - **Trusted *time* — `korg-seal anchor` + `korg-seal resolve` close the provenance triad (what + who + WHEN).** A Certificate proves *what* (re-derived summary) and *who* (Ed25519 seal) offline; it could not prove *when*. The new commands do: `korg-seal anchor <seal> --repo <url> --commit <sha>` binds a `git-tip` time anchor and re-signs (post-hoc flow: mint → publish/commit → anchor); `korg-seal resolve <seal>` performs the one network step — fetches each anchor's public commit (stdlib `urllib`, GitHub API) and confirms it *introduced* the anchored `entry_hash`, yielding a "the chain existed no later than `<commit date>`" bound. A public commit is immutable once mirrored, so an owner who rewrote the chain would have to force-push the witness (detectable). **Demoed live against the real repo:** the committed fixture's tip `bd8389e3…` is genuinely witnessed by public commit `0e566b0` (committed `2026-06-14T06:01:28Z`); `korg-seal resolve` confirms it over the live GitHub API, and the anchored seal still verifies offline. The resolver is injectable-fetcher-based so it's unit-tested hermetically (witnessed / not-witnessed / commit-404 / repo-URL parsing) + the anchor re-bind roundtrip. KORGCERT.md §6/§8 + positioning updated (time is now an explicit opt-in network step, not a gap). +5 korg-seal tests (14 total).
@@ -66,6 +80,12 @@ Gate after third pass: 14 Rust test binaries, **235 Python tests** (incl. NaN/In
 - **Transport-agnostic proof trio complete.** Three adapter PoCs across three architectural extremes (stdio JSONL, WebSocket, NDJSON streaming) all round-trip cleanly through the ledger with spec §2a causal coherence — moving the "universal capability ledger" claim from aspirational to demonstrated.
 
 ### Changed
+- **`goldseal@v1` renamed to `korgcert@v1` (#18, #19)**, with fixtures re-minted and re-signed so Rust, Python and JS conformance stays green. Display name "Gold Seal" is now "Certificate".
+- **Launch-ready README (#21, #22):** one-line pitch, a 30-second quickstart that runs verbatim from a fresh clone, the N=3 cross-vendor validation table, and a tamper GIF. Adds `LICENSE-APACHE` and fixes the dead license links.
+
+### Fixed
+- **Multi-persona campaigns (#16):** worker log lines on stdout corrupted the ACP channel, so every successful worker was recorded as crashed. Tracing now goes to stderr and the campaign reports real results.
+- CI: hanging worker-subprocess tests are gated and every job has a timeout guard (#15).
 - README cleaned up: placeholder crates.io / docs.rs badges dropped (not yet published), install path corrected, test count updated to 175 (162 cargo + 13 pytest).
 - `cargo fmt` cleanup across korg-bridge.
 - `.gitignore` extended for transient `*_report.html` artifacts.
@@ -158,6 +178,8 @@ Gate after third pass: 14 Rust test binaries, **235 Python tests** (incl. NaN/In
 
 See [ROADMAP.md](ROADMAP.md) for planned features.
 
+[Unreleased]: https://github.com/New1Direction/korg/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/New1Direction/korg/releases/tag/v0.2.0
 [0.1.0]: https://github.com/New1Direction/korg/releases/tag/v0.1.0
 [bridge-v0.3.0]: https://github.com/New1Direction/korg/releases/tag/bridge-v0.3.0
 [bridge-v0.3.1]: https://github.com/New1Direction/korg/releases/tag/bridge-v0.3.1

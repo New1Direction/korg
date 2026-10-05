@@ -30,7 +30,7 @@ axum       = { version = "0.7", features = ["macros"] }
 
 [package]
 name = "korg"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "A tamper-evident, verifiable ledger for AI agent cognition: every decision is recorded in a hash-chained, causally-ordered journal that anyone can independently verify — no blockchain, no trust in the tool that produced it."
 license = "MIT OR Apache-2.0"

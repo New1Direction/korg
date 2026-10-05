@@ -1973,7 +1973,7 @@ dependencies = [
 
 [[package]]
 name = "korg"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "korg-auth"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2065,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "korg-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2079,7 +2079,7 @@ dependencies = [
 
 [[package]]
 name = "korg-embeddings"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -2092,7 +2092,7 @@ dependencies = [
 
 [[package]]
 name = "korg-ledger"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -2104,7 +2104,7 @@ dependencies = [
 
 [[package]]
 name = "korg-llm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2126,7 +2126,7 @@ dependencies = [
 
 [[package]]
 name = "korg-registry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "fs2",
@@ -2143,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "korg-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2182,7 +2182,7 @@ dependencies = [
 
 [[package]]
 name = "korg-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2208,7 +2208,7 @@ dependencies = [
 
 [[package]]
 name = "korg-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -2225,7 +2225,7 @@ dependencies = [
 
 [[package]]
 name = "korg-verify"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
