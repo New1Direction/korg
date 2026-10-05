@@ -79,3 +79,31 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-notes:
+    name: Publish Release Notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Notes come from the triggering ref (main on a manual run), so they can be
+      # added or fixed after the tag was cut.
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set release body from .github/release-notes/<tag>.md
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          notes=".github/release-notes/${TAG}.md"
+          if [ ! -f "$notes" ]; then
+            echo "No $notes; leaving the release body unchanged."
+            exit 0
+          fi
+          # A tag push can get here before the build jobs create the release.
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            gh release view "$TAG" >/dev/null 2>&1 && break
+            sleep 30
+          done
+          gh release edit "$TAG" --notes-file "$notes"
