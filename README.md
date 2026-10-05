@@ -1,18 +1,58 @@
 # korg
 
-**A causally-ordered, rewindable event-ledger for autonomous AI agents.**
-*Every step your AI agent takes, recorded in a hash-chained ledger you can independently verify — tamper-evident, zero trust, no blockchain.*
+**A tamper-evident, SHA-256-chained ledger for AI agents.**
+*Every step your agent takes is recorded in a hash chain anyone can verify — edit one event and the chain names it. No trust in the producer, no blockchain.*
 
 [![CI](https://github.com/New1Direction/korg/actions/workflows/ci.yml/badge.svg)](https://github.com/New1Direction/korg/actions/workflows/ci.yml)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg?style=flat-square)](#license)
 [![Rust 2021](https://img.shields.io/badge/rust-2021-93450a.svg?style=flat-square)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-175%20passing-brightgreen.svg?style=flat-square)](https://github.com/New1Direction/korg)
 
 <p align="center">
   <b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a>
 </p>
 
 ---
+
+## 30-second quickstart
+
+Build the standalone verifier (~10s cold — it compiles only the ledger crates), verify a recorded Claude Code session, then rewrite one event and watch the chain catch it:
+
+```bash
+git clone https://github.com/New1Direction/korg && cd korg
+cargo build --release -p korg-verify
+cp spec/korg-ledger-v1/web/samples/session.jsonl /tmp/session.jsonl
+
+./target/release/korg-verify /tmp/session.jsonl
+#  ✓ journal VALID — 6 events, hash-chain + DAG intact
+
+sed -i.bak '4s/return a - b/return a + b/' /tmp/session.jsonl   # rewrite the agent's edit
+
+./target/release/korg-verify /tmp/session.jsonl
+#  ✗ journal INVALID — 1 problem(s):
+#      - seq 4: entry_hash mismatch (content was tampered)     (exit 1)
+```
+
+![korg-verify catching a single rewritten event in an agent ledger](tamper.gif)
+
+No Rust toolchain? Drop the same file into the [in-browser verifier](https://new1direction.github.io/korg/web/index.html) — it runs locally and sends nothing.
+
+---
+
+## Validated across three vendors (N=3)
+
+The same `korg-ledger@v1` format ingests traces from three architecturally different production agents, with causal structure (spec §2a) preserved through the round-trip:
+
+| Agent | Transport | Tool shape | Adapter | Tests |
+|:---|:---|:---|:---|:---:|
+| **Claude Code** | JSONL on disk + live hooks | Anthropic `tool_use` / `tool_result` blocks | [`adapters/claude-code`](adapters/claude-code/) — smoke-tested on a real 3,141-event session, zero dropped | 58 ✓ |
+| **OpenAI Codex CLI** | WebSocket frames | OpenAI `function_call` + freeform `custom_tool_call` | [`adapters/codex-ws`](adapters/codex-ws/) | 11 ✓ |
+| **Grok Heavy** | NDJSON stream | 16-agent parallel fan-out | [`adapters/grok-heavy`](adapters/grok-heavy/) | 14 ✓ |
+
+Because all three land in one format, one verifier checks them all — and it has byte-identical Rust, Python and JS implementations, differentially fuzzed against each other with 0 divergences. Known limits are written down rather than hidden: see the [Grok Heavy limitations](adapters/grok-heavy/README.md#known-limitation-ingest-order-is-not-wall-clock-concurrency) (ingest order vs. wall-clock concurrency, cross-agent chatroom edges).
+
+---
+
+## Full demo: record → verify → rewind
 
 ![korg demo — record, verify, and rewind an AI agent session as a hash-chained ledger](demo.gif)
 
@@ -383,7 +423,7 @@ Korg is in active development, built on a **frozen `korg-ledger@v1` spec with cr
 
 ## License
 
-Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
+Licensed under either of [MIT](LICENSE) or [Apache-2.0](LICENSE-APACHE) at your option.
 
 ---
 
