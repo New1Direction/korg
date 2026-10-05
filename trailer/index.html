@@ -1,0 +1,944 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KORG — Launch Trailer</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  canvas { width: min(100vw, 177.78vh); height: auto; aspect-ratio: 16 / 9; background: #000; }
+  #ui { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  #ui button {
+    font: 600 15px/1 ui-monospace, "DejaVu Sans Mono", monospace; letter-spacing: .22em; color: #e8f6ff;
+    background: rgba(8, 14, 20, .86); border: 1px solid #58e6ff66; border-radius: 4px; padding: 18px 26px; cursor: pointer;
+  }
+  #ui button:hover { border-color: #58e6ff; box-shadow: 0 0 24px #58e6ff44; }
+  #bar { position: fixed; left: 0; bottom: 0; height: 3px; width: 0; background: #58e6ff; opacity: .7; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c" width="1280" height="720"></canvas></div>
+<div id="ui"><button id="play">▶ PLAY TRAILER (SOUND ON)</button></div>
+<div id="bar"></div>
+<audio id="aud" src="out/korg-trailer.wav" preload="auto"></audio>
+<script>
+"use strict";
+/* ============================================================================
+   KORG — launch trailer. One deterministic function: render(t) draws any frame
+   of the 60 s film. `node trailer/render.mjs` steps t and encodes the video;
+   opening this file in a browser plays it live.
+
+   Query: ?t=12.5  static frame      ?captions=0  hide voiceover captions
+          ?capture=1  headless mode (used by render.mjs)
+   Everything on screen that looks like data is real: the six hashes are the
+   entry_hash values of spec/korg-ledger-v1/web/samples/session.jsonl, the
+   code texture is crates/korg-ledger/src/lib.rs, and the story is the real
+   `korg demo` (seq 390-393: wrong edit, failed pytest, rewind to 391, fix).
+   ========================================================================== */
+const Q = new URLSearchParams(location.search);
+const W = 1280, H = 720, DUR = 60;
+const CAPTIONS = Q.get("captions") !== "0";
+const CAPTURE = Q.get("capture") === "1";
+
+const SANS = '"Helvetica Neue",Helvetica,Arial,"Liberation Sans","DejaVu Sans",sans-serif';
+const MONO = '"JetBrains Mono","DejaVu Sans Mono","Liberation Mono",monospace';
+const CY = "#58e6ff", RED = "#ff3d55", GRN = "#46f0a0", VIO = "#a98bff", AMB = "#ffb84d", WHT = "#ffffff";
+
+/* real ledger hashes (entry_hash, seq 1-6 of the sample session) */
+const HASH = [
+  "ef97aa2895f40c9b40253fc69899390aaa4d0e4dc4fb9342f4d8523628eaf0e6",
+  "8e09a6740d27a5c6d99ce58b2864d22e2b2503423a819096b5865633d73824a0",
+  "b1ddfc5d2d6102ceeeea3e4bd62fc2d5378df0516cabf664327b907f4e136359",
+  "0d832ce43ca6e12a6b617422a2ff5e28148f0b7a84c8e846d5ff394009de813f",
+  "b88d55c72b36ac91f1315c765f34bdcd4a8d70c85bbaadea1216ab6b23ec5ac3",
+  "a53eeeb57870e8ec8293128cada369d22a0d853392117ef834d5de5d63f38739",
+];
+/* real verifier source (crates/korg-ledger/src/lib.rs) used as texture */
+const CODE = [
+  "let stored = e.get(\"entry_hash\").and_then(|v| v.as_str());",
+  "let prev = e.get(\"prev_hash\").and_then(|v| v.as_str()).unwrap_or(\"\");",
+  "if prev != expected_prev {",
+  "    errors.push(format!(\"seq {sid}: prev_hash breaks the chain \\",
+  "         (an event was inserted, deleted, or reordered)\"));",
+  "}",
+  "if let Some(msg) = canon_domain_error(e) {",
+  "    errors.push(format!(\"seq {sid}: {msg}\"));",
+  "}",
+  "if chain_hash(e, key) != stored {",
+  "    errors.push(format!(\"seq {sid}: entry_hash mismatch (content was tampered)\"));",
+  "}",
+  "expected_prev = stored.to_string();",
+];
+
+/* ------------------------------------------------------------------ utils */
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+const eOut = (t, p = 3) => 1 - Math.pow(1 - clamp(t), p);
+const eIn = (t, p = 3) => Math.pow(clamp(t), p);
+const eIO = (t) => { t = clamp(t); return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+const hash1 = (n) => { n |= 0; n = Math.imul(n ^ (n >>> 16), 0x45d9f3b); n = Math.imul(n ^ (n >>> 16), 0x45d9f3b); n ^= n >>> 16; return (n >>> 0) / 4294967296; };
+function rng(seed) { let s = seed >>> 0; return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const mk = (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; };
+const hex = (n, len) => { let s = ""; for (let i = 0; i < len; i++) s += "0123456789abcdef"[Math.floor(hash1(n * 131 + i * 7 + 3) * 16)]; return s; };
+const rgba = (hexc, a) => { const n = parseInt(hexc.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+
+function text(c, s, x, y, o = {}) {
+  const { size = 40, weight = 800, color = WHT, align = "center", font = SANS, ls = 0, alpha = 1, base = "middle" } = o;
+  c.save(); c.globalAlpha *= alpha; c.font = `${weight} ${size}px ${font}`; c.letterSpacing = ls + "px";
+  c.textAlign = align; c.textBaseline = base; c.fillStyle = color;
+  c.fillText(s, align === "center" ? x + ls / 2 : x, y); c.restore();
+}
+function rr(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+function chroma(c, s, x, y, o, d) {            // RGB-split text
+  c.save(); c.globalCompositeOperation = "lighter";
+  text(c, s, x - d, y, { ...o, color: "#ff0000" }); text(c, s, x, y, { ...o, color: "#00ff00" }); text(c, s, x + d, y, { ...o, color: "#0000ff" });
+  c.restore();
+}
+function typed(s, t0, cps, t) { return s.slice(0, Math.max(0, Math.min(s.length, Math.floor((t - t0) * cps)))); }
+const fadeIO = (t, a, b, c, d) => sstep(a, b, t) * (1 - sstep(c, d, t));
+
+/* ------------------------------------------------------------- sprites */
+const SPR = {};
+for (const [k, col] of Object.entries({ cy: CY, red: RED, grn: GRN, vio: VIO, amb: AMB, wht: "#cfe9ff", gh: "#5a6a78" })) {
+  const c = mk(64, 64), x = c.getContext("2d"), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, "rgba(255,255,255,1)"); g.addColorStop(.18, rgba(col.length === 7 ? col : CY, .95));
+  g.addColorStop(.45, rgba(col, .28)); g.addColorStop(1, rgba(col, 0));
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64); SPR[k] = c;
+}
+
+/* ---------------------------------------------------- baked overlay layers */
+const VIG = mk(W, H); { const x = VIG.getContext("2d"), g = x.createRadialGradient(W / 2, H / 2, H * .38, W / 2, H / 2, H * .95); g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,.78)"); x.fillStyle = g; x.fillRect(0, 0, W, H); }
+const SCAN = mk(W, H); { const x = SCAN.getContext("2d"); x.fillStyle = "rgba(0,0,0,.18)"; for (let y = 0; y < H; y += 3) x.fillRect(0, y, W, 1); }
+const GRAIN = mk(256, 256); { const x = GRAIN.getContext("2d"), d = x.createImageData(256, 256); for (let i = 0; i < 256 * 256; i++) { const v = hash1(i * 3 + 11) * 255; d.data[i * 4] = d.data[i * 4 + 1] = d.data[i * 4 + 2] = v; d.data[i * 4 + 3] = 255; } x.putImageData(d, 0, 0); }
+const TR = mk(W, H), TB = mk(W, H);
+
+/* ===================================================================== core */
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const SC = mk(W, H), c = SC.getContext("2d");          // scene buffer; every scene draws into `c`
+let FX;
+
+function tintCopy(dst, src, col) { const x = dst.getContext("2d"); x.globalCompositeOperation = "copy"; x.drawImage(src, 0, 0); x.globalCompositeOperation = "multiply"; x.fillStyle = col; x.fillRect(0, 0, W, H); x.globalCompositeOperation = "source-over"; }
+
+function composite(t, fx) {
+  const seed = Math.floor(t * 30);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  if (fx.shake) ctx.translate((hash1(seed * 3) - .5) * fx.shake, (hash1(seed * 5 + 1) - .5) * fx.shake);
+  if (fx.glitch > 0) {
+    ctx.drawImage(SC, 0, 0);
+    let y = 0, k = 0;
+    while (y < H) {
+      const h = 4 + Math.floor(hash1(seed * 17 + k * 3) * 46); k++;
+      if (hash1(seed * 31 + k * 7) < fx.glitch) {
+        const dx = (hash1(seed * 13 + k * 5) - .5) * 260 * fx.glitch;
+        ctx.drawImage(SC, 0, y, W, h, dx, y, W, h);
+      }
+      y += h;
+    }
+  } else ctx.drawImage(SC, 0, 0);
+  if (fx.chroma > 0) {
+    const d = fx.chroma;
+    tintCopy(TR, SC, "#ff0000"); tintCopy(TB, SC, "#0000ff");
+    ctx.globalCompositeOperation = "lighter"; ctx.globalAlpha = .55;
+    ctx.drawImage(TR, -d, 0); ctx.drawImage(TB, d, 0);
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+  }
+  ctx.restore();
+  if (fx.vig !== 0) { ctx.globalAlpha = fx.vig; ctx.drawImage(VIG, 0, 0); ctx.globalAlpha = 1; }
+  ctx.globalAlpha = fx.scan; ctx.drawImage(SCAN, 0, 0); ctx.globalAlpha = 1;
+  if (fx.grain > 0) {
+    ctx.save(); ctx.globalCompositeOperation = "overlay"; ctx.globalAlpha = fx.grain;
+    const ox = Math.floor(hash1(seed * 7) * 256), oy = Math.floor(hash1(seed * 9 + 2) * 256);
+    for (let y = -256 + oy; y < H; y += 256) for (let x = -256 + ox; x < W; x += 256) ctx.drawImage(GRAIN, x, y);
+    ctx.restore();
+  }
+  if (fx.flash > 0.002) { ctx.globalAlpha = clamp(fx.flash); ctx.fillStyle = fx.flashColor; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
+  if (fx.fade < 1) { ctx.globalAlpha = 1 - fx.fade; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
+}
+
+/* ============================================================== 3D field */
+const GN = [], GE = [];
+(function buildGraph() {
+  const rnd = rng(1337), S = 40, SEQ0 = 284, TRUNK_N = 150;
+  const nd = (x, y, z, k, ex = {}) => { const n = { x, y, z, k, i: GN.length, r: 2.6, tb: -1, ...ex }; GN.push(n); return n; };
+  const ed = (a, b, k) => GE.push({ a: a.i, b: b.i, k });
+  const trunk = [];
+  for (let i = 0; i <= TRUNK_N; i++) {
+    const n = nd(Math.sin(i * .31) * 28 + Math.sin(i * .07) * 60, Math.cos(i * .23) * 18, i * S, "trunk", { r: 5, idx: i, seq: i + SEQ0, tb: i });
+    if (i === 107) { n.k = "read"; n.r = 9; } if (i === 108) { n.k = "edit"; n.r = 8; } if (i === 109) { n.k = "exec"; n.r = 8; }
+    if (i === 110) { n.k = "err"; n.r = 12; } if (i === 111) { n.k = "state"; n.r = 8; }
+    trunk.push(n); if (i) ed(trunk[i - 1], n, "trunk");
+  }
+  function grow(from, ang, len, depth, tb, scaleRad, kindTail) {
+    let prev = from, x = from.x, y = from.y, z = from.z, a = ang;
+    for (let k = 1; k <= len; k++) {
+      const rad = (14 + rnd() * 24) * scaleRad;
+      a += (rnd() - .5) * .38; x += Math.cos(a) * rad; y += Math.sin(a) * rad * .8; z += 20 + rnd() * 26;
+      const last = k === len; let kind = "branch";
+      if (last) { const q = rnd(); kind = q < .30 ? "ok" : q < .52 ? "bad" : "branch"; }
+      const n = nd(x, y, z, kind, { tb, depth, r: last && kind !== "branch" ? 4 : 2.4 }); ed(prev, n, "branch"); prev = n;
+      if (depth < 3 && k > 2 && !last && rnd() < .2) grow(n, a + (rnd() < .5 ? -1 : 1) * (.6 + rnd() * .9), Math.max(3, Math.floor(len * .55)), depth + 1, tb, scaleRad, kindTail);
+    }
+  }
+  for (let i = 2; i < TRUNK_N - 2; i++) {
+    if (i >= 104 && i <= 112) continue;
+    const scaleRad = .8 + i / 45, nb = (rnd() < .78 ? 1 : 0) + (rnd() < .3 ? 1 : 0);
+    for (let b = 0; b < nb; b++) grow(trunk[i], rnd() * Math.PI * 2, 5 + Math.floor(rnd() * 14), 1, i, scaleRad);
+  }
+  /* the alternate future: branch off seq 391 (trunk idx 107) */
+  const t0 = trunk[107];
+  const A1 = nd(t0.x + 70, t0.y + 55, t0.z + 40, "new", { r: 8, seq: 392, alt: 1 });
+  const A2 = nd(t0.x + 150, t0.y + 100, t0.z + 88, "new", { r: 8, seq: 393, alt: 2 });
+  const A3 = nd(t0.x + 245, t0.y + 138, t0.z + 138, "pass", { r: 11, seq: 394, alt: 3 });
+  ed(t0, A1, "new"); ed(A1, A2, "new"); ed(A2, A3, "new");
+  let prev = A3, a = .95, x = A3.x, y = A3.y, z = A3.z;
+  const newFuture = [A3];
+  for (let k = 0; k < 26; k++) {
+    a += (rnd() - .5) * .25; x += Math.cos(a) * 36; y += Math.sin(a) * 26; z += 44;
+    const n = nd(x, y, z, "newf", { r: 3.6, alt: 4 + k, seq: 395 + k }); ed(prev, n, "new"); prev = n; newFuture.push(n);
+    if (k % 4 === 2) grow(n, a + (rnd() < .5 ? -1 : 1) * 1.1, 6 + Math.floor(rnd() * 5), 2, -2, 1.1);
+  }
+  GN.trunk = trunk; GN.alt = [A1, A2, A3]; GN.altF = newFuture;
+})();
+
+function lookAt(cam, tx, ty, tz) {
+  const dx = tx - cam.x, dy = ty - cam.y, dz = tz - cam.z;
+  cam.yaw = Math.atan2(dx, dz);
+  const z1 = dx * Math.sin(cam.yaw) + dz * Math.cos(cam.yaw);
+  cam.pitch = Math.atan2(dy, z1);
+  return cam;
+}
+function project(cam, x, y, z, o) {
+  const dx = x - cam.x, dy = y - cam.y, dz = z - cam.z, cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  const x1 = dx * cy - dz * sy, z1 = dx * sy + dz * cy, cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const y1 = dy * cp - z1 * sp, z2 = dy * sp + z1 * cp;
+  if (z2 < 8) return false;
+  const s = cam.f / z2; let px = x1 * s, py = y1 * s;
+  if (cam.roll) { const cr = Math.cos(cam.roll), sr = Math.sin(cam.roll); const rx = px * cr - py * sr, ry = px * sr + py * cr; px = rx; py = ry; }
+  o.x = W / 2 + px; o.y = H / 2 - py; o.s = s; o.d = z2; return true;
+}
+const NCOL = { trunk: "cy", branch: "cy", read: "wht", edit: "cy", exec: "cy", err: "red", state: "amb", ok: "grn", bad: "red", new: "vio", pass: "grn", newf: "vio" };
+const ECOL = { trunk: CY, branch: "#2a86c8", new: VIO, bad: RED };
+const PA = GN.map(() => ({ x: 0, y: 0, s: 0, d: 0, ok: false, a: 1, spr: "cy", r: 3 }));
+
+/* o: { t, vis(n)->alpha, spr(n)->key, fog, nodeScale, edgeAlpha, lineCol(e)->hex } */
+function drawField(cam, o) {
+  const fog = o.fog || 4200, ns = o.nodeScale || 1, ea = o.edgeAlpha == null ? .5 : o.edgeAlpha;
+  for (let i = 0; i < GN.length; i++) {
+    const n = GN[i], p = PA[i];
+    p.ok = project(cam, n.x, n.y, n.z, p);
+    if (!p.ok) { p.a = 0; continue; }
+    p.a = o.vis(n) * Math.pow(clamp(1 - p.d / fog), 1.3) * sstep(70, 320, p.d);
+    p.spr = o.spr ? o.spr(n) : NCOL[n.k]; p.r = n.r * ns;
+  }
+  c.save(); c.globalCompositeOperation = "lighter"; c.lineCap = "round";
+  const buckets = new Map();
+  for (const e of GE) {
+    const pa = PA[e.a], pb = PA[e.b]; if (!pa.ok || !pb.ok) continue;
+    const isNew = e.k === "new", a = Math.min(1, Math.min(pa.a, pb.a) * (isNew ? 1.7 : ea)); if (a < .02) continue;
+    const col = o.lineCol ? o.lineCol(e) : ECOL[e.k], q = Math.round(a * 8) / 8, w = isNew ? (o.newW || 3.2) : (o.lineW || 1.2), key = col + "|" + q + "|" + w;
+    let b = buckets.get(key); if (!b) { b = { col, q, w, segs: [] }; buckets.set(key, b); }
+    b.segs.push(pa.x, pa.y, pb.x, pb.y);
+  }
+  for (const b of buckets.values()) {
+    c.strokeStyle = rgba(b.col, clamp(b.q)); c.lineWidth = b.w; c.beginPath();
+    for (let i = 0; i < b.segs.length; i += 4) { c.moveTo(b.segs[i], b.segs[i + 1]); c.lineTo(b.segs[i + 2], b.segs[i + 3]); }
+    c.stroke();
+  }
+  for (let i = 0; i < GN.length; i++) {
+    const p = PA[i]; if (!p.ok || p.a < .02) continue;
+    const r = clamp(p.r * p.s * 2.6, 2, 90);
+    c.globalAlpha = clamp(p.a); c.drawImage(SPR[p.spr], p.x - r, p.y - r, r * 2, r * 2);
+  }
+  c.restore();
+}
+
+/* ================================================================ scene A  */
+let GP = null, KP = null, TG = null;
+function sampleText(str, size, ls, step) {
+  const m = mk(W, H), x = m.getContext("2d"); x.fillStyle = "#fff"; x.font = `900 ${size}px ${SANS}`; x.letterSpacing = ls + "px";
+  x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(str, W / 2 + ls / 2, H / 2);
+  const d = x.getImageData(0, 0, W, H).data, pts = [];
+  for (let y = 0; y < H; y += step) for (let xx = 0; xx < W; xx += step) if (d[(y * W + xx) * 4 + 3] > 128) pts.push([xx, y]);
+  return pts;
+}
+function initParticles() {
+  GP = sampleText("GRONK", 200, 18, 5); KP = sampleText("KORG", 230, 26, 5);
+  const perm = KP.map((_, i) => i).sort((a, b) => hash1(a * 5 + 1) - hash1(b * 5 + 1));
+  TG = GP.map((_, i) => KP[perm[i % KP.length]]);
+}
+function sceneA(t, fx) {
+  if (!GP) initParticles();
+  const cx = W / 2, cy = H / 2;
+  /* GRONK: the familiar logo, then it breaks */
+  if (t < 3.8) {
+    const so = { size: 200, ls: 18 };
+    const appear = sstep(.45, .9, t);
+    const dist = sstep(1.55, 2.2, t);                    // distortion builds
+    const breakK = sstep(2.2, 2.38, t);
+    if (t < 2.4) {
+      fx.glitch = dist * .55; fx.chroma = dist * 14; fx.shake = dist * 8;
+      c.save(); c.globalAlpha = appear * (1 - breakK);
+      text(c, "GRONK", cx + Math.sin(t * 40) * dist * 5, cy, { ...so, color: "#f2f2f2" });
+      c.restore();
+    }
+    if (t >= 2.1) {
+      const tb = clamp((t - 2.2) / .8), eb = eOut(tb), tc = clamp((t - 3.0) / .7), ec = tc * tc * (3 - 2 * tc);
+      c.save(); c.globalCompositeOperation = "lighter";
+      for (let i = 0; i < GP.length; i++) {
+        const p0 = GP[i], tg = TG[i], r1 = hash1(i * 11 + 1), r2 = hash1(i * 11 + 2), r3 = hash1(i * 11 + 3), ang = r1 * 6.2832, sp = 30 + r2 * 250;
+        let x = p0[0] + Math.cos(ang) * sp * eb * (.6 + .4 * Math.sin(t * 3 + i)) + Math.sin(t * 5 + i) * 8 * eb;
+        let y = p0[1] + Math.sin(ang) * sp * eb * .7 + (r3 - .5) * 80 * eb;
+        x = lerp(x, tg[0], ec); y = lerp(y, tg[1], ec);
+        const mix = Math.max(eb * .85, ec);
+        const a = (.35 + .65 * hash1(i + Math.floor(t * 18))) * (t < 2.2 ? sstep(2.1, 2.2, t) : 1);
+        c.fillStyle = `rgba(${Math.round(lerp(240, 88, mix))},${Math.round(lerp(240, 230, mix))},${Math.round(lerp(240, 255, mix))},${a})`;
+        if (i % 9 === 0 && eb > .3) { c.font = `600 9px ${MONO}`; c.fillText("0123456789abcdef"[Math.floor(hash1(i * 3 + Math.floor(t * 12)) * 16)], x, y); }
+        else c.fillRect(x, y, 3.8, 3.8);
+      }
+      c.restore();
+    }
+    fx.vig = .6;
+  }
+  /* hard black, then KORG hits */
+  if (t >= 4.1) {
+    const k = t - 4.1, sc = 1 + .16 * Math.exp(-k * 9), fadeOut = 1 - sstep(5.25, 6.0, t), zoom = 1 + .05 * sstep(5.25, 6.0, t);
+    const so = { size: 230 * sc * zoom, ls: 26 };
+    c.save(); c.globalAlpha = fadeOut;
+    chroma(c, "KORG", cx, cy, so, 20 * Math.exp(-k * 6));
+    // shockwave + light bar
+    c.strokeStyle = rgba("#ffffff", .5 * Math.exp(-k * 4)); c.lineWidth = 2; c.beginPath(); c.arc(cx, cy, 120 + 1000 * (1 - Math.exp(-k * 3)), 0, 6.2832); c.stroke();
+    c.fillStyle = rgba(CY, .55 * Math.exp(-k * 5)); c.fillRect(0, cy - 1, W, 2);
+    const sub = typed("AI AGENT MEMORY + VERIFICATION", 4.75, 34, t);
+    text(c, sub, cx, cy + 150, { size: 20, weight: 500, font: MONO, ls: 9, color: "#9fb2c4" });
+    c.restore();
+    fx.flash = .5 * Math.exp(-k * 20); fx.shake = k < .6 ? 28 * Math.exp(-k * 7) : 0; fx.vig = .7;
+  }
+}
+
+/* ================================================================ scene B  */
+/* the agent's desktop; every app is a pure function of script time p (seconds) */
+const TL = [  // [start, text, color, y, typeSeconds]
+  [0.0, '$ claude "Fix the subtraction bug in math_utils.py and verify tests pass"', "#e6edf3", 112, 0.9],
+  [1.0, "✻ Thinking…", "#6e7681", 168, 0],
+  [1.15, "● Read(math_utils.py)", "#7ee787", 214, 0],
+  [1.5, "  ⎿  Read 6 lines", "#8b949e", 248, 0],
+  [2.0, "● Edit(math_utils.py)", "#7ee787", 300, 0],
+  [2.4, "  ⎿  Updated subtraction  (+0 -1)", "#8b949e", 334, 0],
+  [3.0, "● Bash(pytest -q)", "#7ee787", 386, 0],
+  [3.4, "  ⎿  running tests…", "#8b949e", 420, 0],
+  [4.9, "  ⎿  FAILED test_math.py::test_subtract - assert 5 == -1", "#ff6b6b", 420, 0],
+  [4.9, "  ⎿  2 failed, 0 passed in 0.04s", "#ff6b6b", 454, 0],
+];
+const FAIL_PT = [330, 437];
+function winBar(x, y, w, title) {
+  c.fillStyle = "#151b24"; c.fillRect(x, y, w, 40);
+  for (let i = 0; i < 3; i++) { c.fillStyle = ["#ff5f56", "#ffbd2e", "#27c93f"][i]; c.beginPath(); c.arc(x + 24 + i * 24, y + 20, 7, 0, 6.2832); c.fill(); }
+  text(c, title, x + w / 2, y + 21, { size: 15, weight: 500, font: MONO, color: "#7d8895" });
+}
+function appTerminal(p) {
+  c.fillStyle = "#0a0e14"; c.fillRect(0, 0, W, H); winBar(0, 0, W, "claude — ~/calc-lib — 120×34");
+  for (const [t0, s, col, y, ty] of TL) {
+    if (p < t0) continue;
+    if (s.startsWith("  ⎿  running") && p >= 4.9) continue;
+    let str = ty ? typed(s, t0, s.length / ty, p) : s;
+    if (s.startsWith("  ⎿  running")) str += ".".repeat(Math.floor(p * 3) % 4);
+    text(c, str, 56, y, { size: 24, weight: 500, font: MONO, align: "left", color: col });
+  }
+  const last = TL.filter(l => p >= l[0]).pop(), ly = last ? last[3] : 112;
+  if (Math.floor(p * 2.5) % 2 === 0) { c.fillStyle = "#e6edf3"; c.fillRect(56 + (p > 1 ? 0 : (typed(TL[0][1], 0, TL[0][1].length / .9, p).length * 14.45)), ly + 38 - (p > 1 ? 0 : 38), 12, 26); }
+}
+function appEditor(p) {
+  c.fillStyle = "#0c1016"; c.fillRect(0, 0, W, H); winBar(0, 0, W, "math_utils.py — calc-lib");
+  c.fillStyle = "#0a0d12"; c.fillRect(0, 40, 250, H - 40);
+  ["math_utils.py", "test_math.py", "README.md", "pyproject.toml"].forEach((f, i) => { text(c, (i === 0 ? "▸ " : "  ") + f, 26, 90 + i * 40, { size: 18, weight: 500, font: MONO, align: "left", color: i === 0 ? "#e6edf3" : "#6e7681" }); });
+  c.fillStyle = "#11161d"; c.fillRect(250, 40, 220, 44); text(c, "math_utils.py", 360, 63, { size: 17, weight: 500, font: MONO, color: "#cdd9e5" });
+  const edited = p >= 2.0;
+  const lines = edited
+    ? ["def add(a, b):", "    return a + b", "", "def subtract(a, b):", "    return a + b"]
+    : ["def add(a, b):", "    return a + b", "", "def subtract(a, b):", "    # Intended bug", "    return a + b"];
+  lines.forEach((s, i) => {
+    const y = 160 + i * 52;
+    c.fillStyle = "#3a4452"; c.font = `500 22px ${MONO}`; c.textAlign = "right"; c.fillText(String(i + 1), 330, y);
+    let col = "#cdd9e5";
+    if (s.startsWith("def")) { text(c, "def", 372, y, { size: 30, weight: 500, font: MONO, align: "left", color: "#ff7b72" }); text(c, s.slice(3), 372 + 3 * 18, y, { size: 30, weight: 500, font: MONO, align: "left", color: col }); return; }
+    if (s.includes("#")) col = "#6e7681"; else if (s.includes("return")) col = "#a5d6ff";
+    text(c, s, 372, y, { size: 30, weight: 500, font: MONO, align: "left", color: col });
+  });
+  if (edited) { const f = 1 - sstep(2.0, 3.0, p); c.fillStyle = rgba("#46f0a0", .22 * f); c.fillRect(360, 160 + 4 * 52 - 24, 700, 48); c.fillStyle = rgba("#ff3d55", .35 * (1 - sstep(2.0, 2.35, p))); c.fillRect(360, 160 + 4 * 52 - 24, 700, 48); }
+  c.fillStyle = "#3a86ff"; c.fillRect(0, H - 28, W, 28); text(c, "Ln 5, Col 17   Spaces: 4   UTF-8   Python", 20, H - 14, { size: 14, weight: 500, font: MONO, align: "left", color: "#fff" });
+}
+function appBrowser(p) {
+  c.fillStyle = "#0e1218"; c.fillRect(0, 0, W, H);
+  c.fillStyle = "#151b24"; c.fillRect(0, 0, W, 44); rr(c, 14, 8, 260, 36, 8); c.fillStyle = "#0e1218"; c.fill();
+  text(c, "operator — Python 3", 144, 27, { size: 15, weight: 500, font: MONO, color: "#9aa7b5" });
+  c.fillStyle = "#1c232e"; c.fillRect(0, 44, W, 46); rr(c, 150, 52, 980, 30, 15); c.fillStyle = "#0e1218"; c.fill();
+  text(c, "https://docs.python.org/3/library/operator.html", 190, 68, { size: 16, weight: 500, font: MONO, align: "left", color: "#9aa7b5" });
+  c.save(); c.beginPath(); c.rect(0, 90, W, H - 90); c.clip(); c.translate(0, -p * 34);
+  text(c, "operator — Standard operators as functions", 120, 170, { size: 40, weight: 800, align: "left", color: "#e6edf3" });
+  for (let i = 0; i < 14; i++) { c.fillStyle = "#1f2733"; c.fillRect(120, 230 + i * 34, 780 + (i % 3) * 90 - (i % 5) * 40, 12); }
+  rr(c, 120, 330, 840, 150, 10); c.fillStyle = "#121923"; c.fill();
+  text(c, "operator.sub(a, b)", 150, 372, { size: 26, weight: 500, font: MONO, align: "left", color: "#79c0ff" });
+  text(c, "# Same as a - b", 150, 412, { size: 22, weight: 500, font: MONO, align: "left", color: "#6e7681" });
+  text(c, "operator.add(a, b)", 150, 452, { size: 26, weight: 500, font: MONO, align: "left", color: "#79c0ff" });
+  for (let i = 0; i < 12; i++) { c.fillStyle = "#1f2733"; c.fillRect(120, 530 + i * 34, 700 + (i % 4) * 70, 12); }
+  c.restore();
+  const wp = [[0, 220, 200], [.9, 520, 360], [1.8, 420, 372], [2.7, 640, 330], [3.6, 700, 450], [4.6, 900, 300]];
+  let k = 0; while (k < wp.length - 2 && p > wp[k + 1][0]) k++;
+  const a = wp[k], b = wp[k + 1], u = sstep(a[0], b[0], clamp(p, a[0], b[0]));
+  const mx = lerp(a[1], b[1], u), my = lerp(a[2], b[2], u);
+  cursor(mx, my);
+  [.9, 2.7].forEach(ct => { const r = p - ct; if (r > 0 && r < .5) { c.strokeStyle = rgba(CY, .8 * (1 - r / .5)); c.lineWidth = 3; c.beginPath(); c.arc(mx, my, 10 + r * 90, 0, 6.2832); c.stroke(); } });
+}
+function cursor(x, y) { c.save(); c.translate(x, y); c.beginPath(); c.moveTo(0, 0); c.lineTo(0, 26); c.lineTo(7, 20); c.lineTo(12, 31); c.lineTo(17, 28); c.lineTo(12, 18); c.lineTo(21, 18); c.closePath(); c.fillStyle = "#fff"; c.fill(); c.lineWidth = 2; c.strokeStyle = "#000"; c.stroke(); c.restore(); }
+
+function monitor(sc, fx2, fy2, p, errK) {
+  /* wide shot of the physical machine; (fx2,fy2) = terminal point held at screen centre */
+  c.save(); c.translate(W / 2, H / 2); c.scale(sc, sc); c.translate(-fx2, -fy2);
+  const bz = 22; c.fillStyle = "#06080b"; rr(c, -bz, -bz, W + 2 * bz, H + 2 * bz, 26); c.fill();
+  c.strokeStyle = "#1a222c"; c.lineWidth = 3; rr(c, -bz, -bz, W + 2 * bz, H + 2 * bz, 26); c.stroke();
+  c.fillStyle = "#0a0d12"; c.fillRect(W / 2 - 60, H + bz, 120, 90); c.fillStyle = "#0d1218"; c.fillRect(W / 2 - 240, H + bz + 90, 480, 14);
+  c.save(); rr(c, 0, 0, W, H, 6); c.clip(); appTerminal(p);
+  if (errK > 0) { c.fillStyle = rgba(RED, .16 * errK); c.fillRect(0, 0, W, H); }
+  c.restore(); c.restore();
+}
+function sceneB(t, fx) {
+  const p = t - 6.0;
+  c.fillStyle = "#05070a"; c.fillRect(0, 0, W, H);
+  const shots = [[6.0, "t", 1.0, 0], [6.62, "e", 1.7, 1], [7.1, "b", 1.0, 2], [7.5, "t", 1.9, 3], [7.85, "e", 1.0, 4], [8.2, "b", 1.9, 5], [8.5, "t", 1.3, 6], [8.78, "e", 2.0, 7], [9.05, "t", 1.0, 8], [9.3, "b", 1.35, 9], [9.55, "e", 1.4, 10], [9.8, "t", 2.2, 11], [10.0, "b", 2.0, 12], [10.2, "t", 1.5, 13]];
+  const WIDE = 10.4;
+  if (t < WIDE) {
+    let s = shots[0]; for (const x of shots) if (t >= x[0]) s = x;
+    const lt = t - s[0], zoom = s[2] * (1 + .06 * lt), seed = s[3];
+    const foc = { t: [[300, 210], [420, 400], [250, 130]], e: [[560, 330], [520, 260], [700, 220]], b: [[640, 400], [560, 360], [900, 300]] }[s[1]][seed % 3];
+    const f = s[2] === 1.0 ? [W / 2, H / 2] : foc;
+    c.save(); c.translate(W / 2, H / 2); c.scale(zoom, zoom); c.translate(-f[0], -f[1]);
+    ({ t: appTerminal, e: appEditor, b: appBrowser })[s[1]](p);
+    c.restore();
+    c.fillStyle = "rgba(0,0,0,.18)"; c.fillRect(0, 0, W, H);
+    // cut flash
+    fx.flash = Math.max(fx.flash, .16 * Math.exp(-lt * 40));
+    // ACTION stack
+    const A = [[6.55, "read_file"], [7.55, "edit"], [8.55, "bash"], [9.55, "browser.click"]];
+    c.save(); const g = c.createLinearGradient(0, H - 330, 0, H); g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,.82)"); c.fillStyle = g; c.fillRect(0, H - 330, W, 330); c.restore();
+    A.forEach(([t0, tag], i) => {
+      if (t < t0) return;
+      const k = t - t0, y = H - 70 - (A.filter(a => a[0] <= t).length - 1 - i) * 62, a = .38 + .62 * (i === A.filter(a => a[0] <= t).length - 1 ? 1 : 0);
+      const fl = Math.exp(-k * 14);
+      chroma(c, "ACTION", 60, y, { size: 52, ls: 10, align: "left", alpha: a }, 5 * fl);
+      text(c, tag, 372, y + 4, { size: 18, weight: 500, font: MONO, align: "left", color: CY, alpha: a * .85, ls: 3 });
+      if (fl > .05) { c.fillStyle = rgba(CY, .25 * fl); c.fillRect(0, y - 30, W, 60); }
+    });
+  } else {
+    /* wide on the machine: pytest fails, everything stops */
+    const ek = sstep(10.9, 10.97, t) , wideK = eOut((t - WIDE) / .5);
+    const sc = lerp(.95, .8, wideK * .8 + (t > 10.9 ? .2 * sstep(10.9, 12, t) : 0));
+    const g = c.createRadialGradient(W / 2, H / 2, 40, W / 2, H / 2, 560);
+    g.addColorStop(0, rgba(t > 10.9 ? RED : CY, .22)); g.addColorStop(1, "rgba(0,0,0,0)"); c.fillStyle = g; c.fillRect(0, 0, W, H);
+    monitor(sc, W / 2, H / 2, Math.min(p, 4.95), ek);
+    if (t >= 10.9) {
+      const k = t - 10.9, o = { size: 150, ls: 22 };
+      c.save(); c.globalAlpha = 1 - sstep(11.75, 12.0, t);
+      c.fillStyle = "rgba(0,0,0,.45)"; c.fillRect(0, H / 2 - 120, W, 240);
+      chroma(c, "ERROR", W / 2, H / 2, { ...o, size: o.size * (1 + .1 * Math.exp(-k * 14)) }, 14 * Math.exp(-k * 8));
+      c.restore();
+      fx.flash = Math.max(fx.flash, .6 * Math.exp(-k * 12)); fx.flashColor = RED;
+      fx.shake = k < .4 ? 22 * Math.exp(-k * 9) : 0;
+    }
+  }
+  fx.vig = .7;
+}
+
+/* ================================================================ scene C  */
+const trunkXY = (i) => [Math.sin(i * .31) * 28 + Math.sin(i * .07) * 60, Math.cos(i * .23) * 18];
+function trunkAt(i) {           // fractional trunk index -> {x,y,z}
+  const a = GN.trunk[clamp(Math.floor(i), 0, 149)], b = GN.trunk[clamp(Math.floor(i) + 1, 0, 150)], f = i - Math.floor(i);
+  return { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f), z: lerp(a.z, b.z, f) };
+}
+function camC(t) {
+  const u = clamp((t - 12.6) / 5.4), red = GN.trunk[110], dist = 110 + 4190 * Math.pow(1 - u, 2.2), z = red.z - dist;
+  const [x, y] = trunkXY(z / 40), cam = { x, y: y + 10, z, f: 900, roll: 0, yaw: 0, pitch: 0 };
+  return lookAt(cam, red.x, red.y, red.z);
+}
+function trailField(camFn, t, o, n, dt) {
+  for (let k = n; k >= 1; k--) { c.save(); c.globalAlpha = .16 / k; drawField(camFn(t - k * dt), { ...o, edgeAlpha: 0 }); c.restore(); }
+  drawField(camFn(t), o);
+}
+const ringAt = (p, r, col, a, w = 2) => { c.strokeStyle = rgba(col, a); c.lineWidth = w; c.beginPath(); c.arc(p.x, p.y, r, 0, 6.2832); c.stroke(); };
+function sceneC(t, fx) {
+  const dive = clamp((t - 12.0) / 1.75);
+  if (t < 13.9) {
+    const sc = .8 * Math.exp(Math.log(38 / .8) * eIn(dive, 1.5)), k = eIO(dive * 1.15);
+    const g = c.createRadialGradient(W / 2, H / 2, 40, W / 2, H / 2, 560); g.addColorStop(0, rgba(RED, .2)); g.addColorStop(1, "rgba(0,0,0,0)"); c.fillStyle = g; c.fillRect(0, 0, W, H);
+    c.save(); c.globalAlpha = 1 - sstep(.5, .95, dive);
+    monitor(sc, lerp(W / 2, FAIL_PT[0], k), lerp(H / 2, FAIL_PT[1], k), 4.95, 1);
+    c.restore();
+    fx.glitch = sstep(.35, .9, dive) * .5; fx.chroma = sstep(.3, 1, dive) * 12;
+  }
+  const o = {
+    vis: (n) => {
+      if (n.alt) return 0;
+      const ap = clamp((t - (12.9 + hash1(n.i) * 1.1)) / .4); if (ap <= 0) return 0;
+      return ap * (n.k === "trunk" || n.k === "err" || n.k === "read" ? 1 : .55) * (n.idx > 111 ? .6 : 1);
+    },
+    spr: (n) => n.k === "err" ? "red" : n.k === "state" ? "amb" : n.k === "read" || n.k === "edit" || n.k === "exec" ? "wht" : "cy",
+    lineCol: (e) => e.k === "trunk" ? CY : "#2a86c8", edgeAlpha: .55, fog: 4600,
+  };
+  if (t >= 12.85) {
+    c.save(); c.globalAlpha = sstep(12.85, 13.5, t);
+    trailField(camC, t, o, t < 15 ? 3 : 0, .04);
+    // the event we are about to inspect
+    const red = GN.trunk[110], p = {}; if (project(camC(t), red.x, red.y, red.z, p)) {
+      const pulse = .5 + .5 * Math.sin(t * 5);
+      ringAt(p, clamp(p.s * 26, 8, 600) * (1 + .15 * pulse), RED, .5 * clamp(1 - p.s / 7));
+      if (t > 15.8) text(c, "seq 394 · ERROR", p.x, p.y - clamp(p.s * 34, 24, 340), { size: 18, weight: 500, font: MONO, ls: 4, color: RED, alpha: sstep(15.8, 16.6, t) * (1 - sstep(17.3, 17.8, t)) });
+    }
+    c.restore();
+  }
+  fx.vig = .75;
+  if (t > 17.6) fx.flash = Math.max(fx.flash, .3 * sstep(17.7, 18.0, t)), fx.flashColor = "#ff8a96";
+}
+
+/* ================================================================ scene D  */
+const CH = [
+  [386, "SESSION START", "claude-code@2.1.0", CY], [387, "LLM INFERENCE", "opus · 1,240 tok", CY], [388, "GLOB", "**/*.py", CY],
+  [389, "SNAPSHOT", "workspace tree", AMB], [390, "PROMPT", "\"Fix subtraction bug\"", CY], [391, "READ FILE", "math_utils.py", WHT],
+  [392, "EDIT", "return a + b", CY], [393, "EXECUTE", "pytest -q", CY], [394, "ERROR", "2 failed", RED],
+  [395, "STATE CHANGE", "workspace Δ", AMB], [396, "LLM INFERENCE", "retry plan", CY], [397, "EDIT", "math_utils.py", CY],
+];
+const CX = (i) => i * 340, CARD_W = 270, CARD_H = 150;
+function drawCard(i, sx, zoom, lit, t) {
+  const [seq, label, sub, col] = CH[i], w = CARD_W, h = CARD_H, y = H / 2 - h / 2, x = sx - w / 2;
+  const key = col === RED ? "red" : col === AMB ? "amb" : col === WHT ? "wht" : "cy";
+  c.save();
+  c.globalAlpha = lit * .55; c.drawImage(SPR[key], sx - w * 1.1, y - h * .8, w * 2.2, h * 2.6);
+  c.globalAlpha = .35 + .65 * lit; rr(c, x, y, w, h, 10); c.fillStyle = "#08101a"; c.fill();
+  c.strokeStyle = rgba(col, .3 + .7 * lit); c.lineWidth = 2; c.stroke();
+  text(c, "seq " + seq, x + 18, y + 24, { size: 14, weight: 500, font: MONO, align: "left", color: rgba(col, 1), alpha: .9 });
+  text(c, label, sx, y + 68, { size: label.length > 11 ? 25 : 31, weight: 800, ls: 3, color: col === RED ? "#ff8a96" : WHT });
+  text(c, sub, sx, y + 100, { size: 16, weight: 500, font: MONO, color: "#8fa3b6" });
+  const hs = HASH[i % 6], n = Math.floor(lit * 16), shown = hs.slice(0, 6) + "…" + hs.slice(-6);
+  let dec = ""; for (let k = 0; k < shown.length; k++) dec += k < n ? shown[k] : "0123456789abcdef"[Math.floor(hash1(i * 91 + k * 7 + Math.floor(t * 20)) * 16)];
+  text(c, dec, sx, y + 130, { size: 13, weight: 500, font: MONO, color: rgba(col, .85), alpha: .85 * lit });
+  c.restore();
+}
+function sceneD(t, fx) {
+  const x8 = CX(8), cxn = t < 18.8 ? x8 : lerp(x8, CX(0.6), eIO((t - 18.8) / 5.5));
+  const endK = eIO((t - 23.8) / 1.6), zoom = lerp(1, .5, endK), camx = lerp(cxn, CX(5.5), endK);
+  const sx = (wx) => W / 2 + (wx - camx) * zoom;
+  const intro = sstep(17.7, 18.5, t);
+  // drifting dust
+  c.save(); c.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 160; i++) { const px = ((hash1(i * 3) * 2600 - camx * .35 * (.4 + hash1(i * 5)) + t * 6) % 1400 + 1400) % 1400 - 60, py = hash1(i * 7 + 1) * H; c.fillStyle = rgba(CY, .22 * hash1(i * 9)); c.fillRect(px, py, 2, 2); }
+  c.restore();
+  const litAll = sstep(23.9, 24.8, t);
+  // connectors, lanes
+  for (let i = 0; i < CH.length; i++) {
+    const x = sx(CX(i)); if (x < -400 || x > W + 400) continue;
+    const lit = Math.max(1 - sstep(260, 1000, Math.abs(CX(i) - camx)), litAll) * (i === 8 ? 1 : 1) * intro;
+    if (i < CH.length - 1) {
+      const x2 = sx(CX(i + 1)); c.strokeStyle = rgba(CY, .15 + .6 * lit); c.lineWidth = 2; c.beginPath(); c.moveTo(x + CARD_W / 2 * zoom, H / 2); c.lineTo(x2 - CARD_W / 2 * zoom, H / 2); c.stroke();
+      const f = ((t * .7 + i * .37) % 1); c.save(); c.globalCompositeOperation = "lighter"; c.globalAlpha = lit; c.drawImage(SPR.cy, lerp(x + CARD_W / 2 * zoom, x2 - CARD_W / 2 * zoom, f) - 14, H / 2 - 14, 28, 28); c.restore();
+    }
+    // upper lane: workspace state chip   lower lane: ledger hash link
+    const cl = CH[i][3];
+    c.strokeStyle = rgba(AMB, .12 + .5 * lit); c.lineWidth = 1.5; c.beginPath(); c.moveTo(x, H / 2 - CARD_H / 2 * zoom); c.lineTo(x, H / 2 - 190 * zoom + 18 * zoom); c.stroke();
+    c.beginPath(); c.moveTo(x, H / 2 + CARD_H / 2 * zoom); c.lineTo(x, H / 2 + 215 * zoom); c.stroke();
+    c.save(); c.scale(1, 1);
+    text(c, "ws " + hex(i + 3, 7), x, H / 2 - 190 * zoom, { size: 15 * zoom + 2, weight: 500, font: MONO, color: AMB, alpha: .25 + .75 * lit, ls: 2 });
+    const ph = HASH[(i + 5) % 6], eh = HASH[i % 6];
+    text(c, "prev " + ph.slice(0, 8) + " ← " + eh.slice(0, 8), x, H / 2 + 225 * zoom, { size: 14 * zoom + 2, weight: 500, font: MONO, color: CY, alpha: .2 + .7 * lit });
+    c.restore();
+    c.save(); const m = c.getTransform(); c.restore();
+    c.save(); c.translate(x, H / 2); c.scale(zoom, zoom); c.translate(-x, -H / 2);
+    const k = i === 8 ? intro * (.3 + .7 * eOut((t - 17.75) / .6)) : intro;
+    if (i === 8 && t < 18.4) { c.translate(x, H / 2); c.scale(.4 + .6 * eOut((t - 17.75) / .6), .4 + .6 * eOut((t - 17.75) / .6)); c.translate(-x, -H / 2); }
+    drawCard(i, x, zoom, lit, t); c.restore();
+  }
+  // playhead on ERROR for the first beat
+  const errx = sx(CX(8)); ringAt({ x: errx, y: H / 2 }, 128 * zoom + 6 * Math.sin(t * 5), RED, .35 * intro * (1 - endK));
+  fx.vig = .7; fx.chroma = 3 * Math.exp(-(t - 18) * 3) * (t > 18 ? 1 : 0);
+  // REMEMBER EVERYTHING.
+  const sa = sstep(24.2, 24.6, t), ls = lerp(40, 14, eOut((t - 24.2) / 1.2));
+  if (sa > 0) {
+    c.save(); c.fillStyle = `rgba(0,0,0,${.55 * sa})`; c.fillRect(0, H / 2 - 90, W, 180); c.restore();
+    chroma(c, "REMEMBER EVERYTHING.", W / 2, H / 2, { size: 68, ls: lerp(24, 12, eOut((t - 24.2) / 1.2)), alpha: sa }, 6 * Math.exp(-(t - 24.2) * 5));
+  }
+  fx.flash = Math.max(fx.flash, .25 * Math.exp(-(t - 24.2) * 12) * (t >= 24.2 ? 1 : 0));
+}
+
+
+/* ---- the timeline strip: the shot that has to read in three seconds ---- */
+const LAB = { 386: "SESSION", 387: "LLM", 388: "GLOB", 389: "SNAPSHOT", 390: "PROMPT", 391: "READ FILE", 392: "EDIT", 393: "EXECUTE", 394: "ERROR", 395: "STATE" };
+const labelFor = (q) => LAB[q] || ["LLM", "EDIT", "BASH", "READ", "STATE"][(q * 7) % 5];
+const ALTL = ["EDIT", "EXECUTE", "PASSED", "LLM", "READ", "EDIT", "BASH", "STATE", "LLM", "EDIT"];
+function stripNode(x, y, r, col, lit, glow) {
+  if (glow && lit > .02) { c.save(); c.globalCompositeOperation = "lighter"; c.globalAlpha = lit * .9; c.drawImage(SPR[glow], x - r * 3, y - r * 3, r * 6, r * 6); c.restore(); }
+  c.beginPath(); c.arc(x, y, r, 0, 6.2832); c.fillStyle = lit > .5 ? col : "#0a1118"; c.fill();
+  c.lineWidth = 2.5; c.strokeStyle = lit > .5 ? "#fff" : col; c.globalAlpha *= lit > .5 ? 1 : .8; c.stroke();
+}
+function drawStrip(o) {
+  const { seqf, speed = 0, fork = 0, altLit = () => 0, alpha = 1, oldLit = seqf, onAlt = false } = o, PX = 124, cx = W / 2 - 120, yB = 300;
+  const xs = (q) => cx + (q - seqf) * PX, yOld = (q) => yB + (q > 391 ? 100 * fork * sstep(391, 393, q) : 0), yAlt = (q) => yB - 78 * fork * sstep(391, 393, q);
+  const q0 = Math.max(384, Math.floor(seqf - 9)), q1 = Math.min(436, Math.ceil(seqf + 10)), GH = "#3a4a58";
+  c.save(); c.globalAlpha = alpha;
+  // backing band
+  const bg = c.createLinearGradient(0, yB - 190, 0, yB + 190); bg.addColorStop(0, "rgba(2,6,10,0)"); bg.addColorStop(.5, "rgba(2,6,10,.72)"); bg.addColorStop(1, "rgba(2,6,10,0)"); c.fillStyle = bg; c.fillRect(0, yB - 190, W, 380);
+  const colFor = (q) => q === 394 ? RED : q > 394 ? "#ff9a5c" : q === 391 ? "#ffffff" : CY;
+  const blur = clamp((speed - 5) / 20) * 230;
+  for (let q = q0; q < q1; q++) {                       // old lane
+    const lit = q + 1 <= oldLit + .001, a = { x: xs(q), y: yOld(q) }, b = { x: xs(q + 1), y: yOld(q + 1) };
+    c.strokeStyle = lit ? rgba(colFor(q + 1), .85) : GH; c.lineWidth = lit ? 3 : 2; c.globalAlpha = alpha * (lit ? 1 : .6); c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+  }
+  c.globalAlpha = alpha;
+  for (let q = q0; q <= q1; q++) {
+    const x = xs(q), y = yOld(q), lit = q <= oldLit + .001 ? 1 : 0, col = lit ? colFor(q) : GH, r = q === 391 ? 19 : q === 394 ? 17 : 13;
+    if (blur > 4 && lit) { c.strokeStyle = rgba(col, .45); c.lineWidth = r; c.lineCap = "round"; c.beginPath(); c.moveTo(x, y); c.lineTo(x - blur * (.4 + hash1(q) * .6), y); c.stroke(); }
+    stripNode(x, y, r, col, lit, lit ? (q === 394 ? "red" : q === 391 ? "wht" : q > 394 ? "amb" : "cy") : null);
+    const la = (1 - sstep(4, 9, speed)) * (lit ? 1 : .55), below = fork > .5 && q > 391;
+    if (la > .02) text(c, labelFor(q), x, below ? y + 40 : y - 38, { size: q === 391 || q === 394 ? 17 : 14, weight: 600, font: MONO, color: lit ? (q === 394 ? "#ff8a96" : "#d6ecff") : "#566676", alpha: la, ls: 2 });
+    if (la > .02 && q >= 389 && q <= 397) text(c, "" + q, x, below ? y + 60 : y + 40, { size: 12, weight: 500, font: MONO, color: "#6b8296", alpha: la * .8 });
+  }
+  if (fork > 0.01) {                                      // the other future
+    c.lineCap = "round";
+    for (let k = 0; k < 10; k++) {
+      const qa = 391 + k, qb = qa + 1, l = altLit(k), la = k === 0 ? 1 : altLit(k - 1);
+      const pa = { x: xs(qa), y: yAlt(qa) }, pb = { x: xs(qb), y: yAlt(qb) }; if (k === 0) pa.y = yB;
+      c.strokeStyle = rgba(k >= 2 && ALTL[k - 1] === "PASSED" ? GRN : VIO, .25 + .75 * Math.min(l, fork)); c.lineWidth = 3 + 2 * l; c.globalAlpha = alpha * Math.min(1, fork * 1.5);
+      c.beginPath(); c.moveTo(pa.x, pa.y); c.lineTo(pb.x, pb.y); c.stroke();
+    }
+    for (let k = 0; k < 10; k++) {
+      const q = 392 + k, x = xs(q), y = yAlt(q), l = altLit(k), pass = ALTL[k] === "PASSED";
+      c.globalAlpha = alpha * Math.min(1, fork * 1.5);
+      stripNode(x, y, pass ? 19 : 14, pass ? GRN : VIO, l, pass ? "grn" : "vio");
+      text(c, ALTL[k], x, y - 38, { size: pass ? 17 : 14, weight: 600, font: MONO, color: l > .5 ? (pass ? "#9bffd0" : "#d9ccff") : "#6a5f8f", ls: 2, alpha: (1 - sstep(4, 9, speed)) * (l > .5 ? 1 : .7) });
+    }
+  }
+  // playhead
+  const hy = onAlt ? yAlt(seqf) : yOld(seqf);
+  c.globalAlpha = alpha; c.strokeStyle = rgba(CY, .9); c.lineWidth = 2; c.beginPath(); c.moveTo(cx, hy - 100); c.lineTo(cx, hy + 100); c.stroke();
+  c.fillStyle = CY; c.beginPath(); c.moveTo(cx - 9, hy - 106); c.lineTo(cx + 9, hy - 106); c.lineTo(cx, hy - 92); c.closePath(); c.fill();
+  c.restore();
+}
+
+/* ================================================================ scene E  */
+const phE = (t) => lerp(150, 107, 1 - Math.pow(1 - clamp((t - 26.35) / 4.0), 2.4));
+function camE(t, zoomK = 1, tgt) {
+  const ph = tgt ?? phE(t), p = trunkAt(ph), sp = clamp(1 - (t - 26.35) / 4.0) , roll = t > 26.3 && t < 30.4 ? .05 * Math.sin(t * 11) * Math.pow(sp, 1.2) : 0;
+  const cam = { x: p.x + 640 * zoomK, y: p.y + 250 * zoomK, z: p.z + 230 * zoomK, f: 820, roll, yaw: 0, pitch: 0 };
+  return lookAt(cam, p.x, p.y, p.z + 230);
+}
+const ghostN = (n, ph) => (n.k === "trunk" || n.k === "read" || n.k === "edit" || n.k === "exec" || n.k === "err" || n.k === "state") ? n.idx > ph + .001 : (n.tb >= 0 && n.tb > ph + .001);
+function workspacePanel(seqf, x0, y0, o = {}) {
+  const w = 440, h = 210, gl = o.glitch || 0;
+  c.save(); c.translate(x0, y0); c.globalAlpha = o.alpha ?? 1;
+  rr(c, 0, 0, w, h, 8); c.fillStyle = "rgba(6,12,18,.88)"; c.fill(); c.strokeStyle = rgba(CY, .4); c.lineWidth = 1.5; c.stroke();
+  text(c, "WORKSPACE · math_utils.py", 18, 24, { size: 13, weight: 600, font: MONO, align: "left", color: CY, ls: 2 });
+  const alt = o.alt || 0;               // 0 = original timeline, 1 = branch (edit fixed)
+  const L = [["def subtract(a, b):", "#cdd9e5"]];
+  const commentA = 1 - sstep(391.5, 392.5, seqf) * (1 - alt);          // comment removed once the edit lands
+  const gx = gl ? (hash1(Math.floor(seqf * 4)) - .5) * 14 * gl : 0;
+  text(c, "def subtract(a, b):", 24 + gx, 62, { size: 20, weight: 500, font: MONO, align: "left", color: "#cdd9e5" });
+  if (!alt) text(c, "    # Intended bug", 24 + gx, 94, { size: 20, weight: 500, font: MONO, align: "left", color: "#6e7681", alpha: commentA });
+  const ret = alt ? "    return a - b" : "    return a + b";
+  text(c, ret, 24 - gx, alt ? 94 : 126 - 32 * (1 - commentA), { size: 20, weight: 500, font: MONO, align: "left", color: alt ? GRN : "#a5d6ff" });
+  if (alt) { c.fillStyle = rgba(GRN, .16 * (o.altK ?? 1)); c.fillRect(8, 78, w - 16, 30); }
+  c.fillStyle = rgba(CY, .15); c.fillRect(18, 150, w - 36, 1);
+  let tr, col;
+  if (alt) { tr = o.altRes || "pytest -q   —"; col = o.altCol || "#8b949e"; }
+  else if (seqf >= 394) { tr = "pytest -q   ✗ 2 failed"; col = RED; } else if (seqf >= 393) { tr = "pytest -q   running…"; col = "#8b949e"; } else { tr = "pytest -q   —"; col = "#4a5663"; }
+  text(c, tr, 24, 176, { size: 19, weight: 600, font: MONO, align: "left", color: col });
+  c.restore();
+}
+function sceneE(t, fx) {
+  const ph = t < 26.35 ? 150 : t > 30.35 ? 107 : phE(t), seqf = ph + 284, spd = t > 26.35 && t < 30.4 ? Math.pow(clamp(1 - (t - 26.35) / 4.0), 1.4) : 0;
+  const zoomK = 1 + .12 * sstep(30.6, 33.8, t), dolly = t >= 30.35;
+  const camFn = (tt) => camE(tt, zoomK, ph);
+  const altA = (n) => n.alt === 1 ? sstep(31.5, 32.4, t) : n.alt === 2 ? .3 * sstep(32.0, 33.2, t) : 0;
+  const o = {
+    vis: (n) => { if (n.alt) return altA(n); const g = ghostN(n, ph); return (g ? .22 : 1) * (n.k === "trunk" || n.k === "err" || n.k === "read" || n.k === "state" || n.k === "edit" || n.k === "exec" ? 1 : .8); },
+    spr: (n) => { if (n.alt) return "vio"; if (ghostN(n, ph)) return "gh"; return n.k === "err" ? "red" : n.k === "state" ? "amb" : n.k === "ok" ? "grn" : n.k === "bad" ? "red" : n.k === "read" ? "wht" : "cy"; },
+    lineCol: (e) => { const a = GN[e.a], b = GN[e.b]; if (e.k === "new") return VIO; return (ghostN(a, ph) || ghostN(b, ph)) ? "#35505f" : (e.k === "trunk" ? CY : "#2a86c8"); },
+    edgeAlpha: .75, fog: 7000, lineW: 1.5, nodeScale: 1.4, newW: 3.6,
+  };
+  c.save(); c.globalAlpha = t < 26.0 ? 0 : 1;
+  const rewinding = t > 26.35 && t < 30.4;
+  const tcam = rewinding ? 2 : 0;
+  if (tcam) trailField((tt) => camE(tt, zoomK, phE(tt)), t, o, 3, .03); else drawField(camFn(t), o);
+  c.restore();
+  const fork = sstep(31.5, 33.6, t);
+  drawStrip({ seqf, speed: spd * 25.8, fork, altLit: (k) => k === 0 ? sstep(31.7, 32.5, t) : k === 1 ? .35 * sstep(32.3, 33.2, t) : 0, alpha: sstep(26.1, 26.5, t), oldLit: seqf });
+  // violent reversal grade
+  fx.chroma = spd * 16 + (t > 26.0 && t < 26.6 ? 14 * (1 - sstep(26.0, 26.6, t)) : 0); fx.glitch = spd * .35; fx.shake = spd * 10; fx.vig = .75;
+  // REWIND slam
+  if (t >= 26.0 && t < 27.4) {
+    const k = t - 26.0, a = 1 - sstep(26.9, 27.4, t);
+    c.save(); c.globalAlpha = a; c.fillStyle = "rgba(0,0,0,.5)"; c.fillRect(0, H / 2 - 110, W, 220);
+    chroma(c, "◀◀  REWIND", W / 2, H / 2, { size: 150 * (1 + .08 * Math.exp(-k * 12)), ls: 14 }, 16 * Math.exp(-k * 5) + 3); c.restore();
+    fx.flash = Math.max(fx.flash, .7 * Math.exp(-k * 14)); fx.flashColor = "#ffffff";
+  }
+  // HUD
+  const hudA = sstep(26.8, 27.3, t);
+  c.save(); c.globalAlpha = hudA;
+  text(c, "KORG · LEDGER", 40, 40, { size: 14, weight: 700, font: MONO, align: "left", color: "#8fa3b6", ls: 5 });
+  const rw = rewinding ? (Math.floor(t * 4) % 2 ? 1 : .55) : 0;
+  text(c, rewinding ? "◀◀ REWINDING" : "■ STATE RESTORED", W / 2, 42, { size: 17, weight: 700, font: MONO, color: rewinding ? RED : GRN, ls: 8, alpha: rewinding ? rw : 1 });
+  text(c, "SEQ " + String(Math.round(seqf)).padStart(4, "0"), W - 40, 40, { size: 30, weight: 800, font: MONO, align: "right", color: WHT, ls: 4 });
+  workspacePanel(seqf, 40, H - 310, { glitch: spd });
+  const hh = rewinding ? hex(Math.floor(t * 25), 16) : HASH[2].slice(0, 16);
+  text(c, "entry_hash  " + hh + "…", W - 40, H - 64, { size: 15, weight: 500, font: MONO, align: "right", color: CY, alpha: .85 });
+  text(c, "prev_hash   " + (rewinding ? hex(Math.floor(t * 25) + 1, 16) : HASH[1].slice(0, 16)) + "…", W - 40, H - 40, { size: 15, weight: 500, font: MONO, align: "right", color: "#6b8296", alpha: .85 });
+  c.restore();
+  if (t > 30.6) text(c, typed("restored to the moment before the mistake", 30.7, 40, t), W / 2, 150, { size: 18, weight: 500, font: MONO, color: "#cfe9ff", ls: 3, alpha: 1 - sstep(33.2, 33.6, t) });
+  // BRANCH
+  if (t >= 32.35) {
+    const k = t - 32.35, by = H - 175;
+    c.save(); c.fillStyle = "rgba(0,0,0,.5)"; c.fillRect(0, by - 80, W, 160);
+    chroma(c, "BRANCH", W / 2 + 215, by, { size: 128 * (1 + .09 * Math.exp(-k * 12)), ls: 26 }, 14 * Math.exp(-k * 6)); c.restore();
+    fx.flash = Math.max(fx.flash, .4 * Math.exp(-k * 14)); fx.flashColor = VIO;
+  }
+}
+
+/* ================================================================ scene F  */
+function camF(t) {
+  const lead = clamp((t - 34.0) / 2.2), idx = lerp(0, 3, eIO(lead));      // follows the head along 391 -> A1 -> A2 -> A3
+  const pts = [GN.trunk[107], ...GN.alt, ...GN.altF], i0 = Math.min(Math.floor(idx), 3), f = idx - i0;
+  const a = pts[i0], b = pts[Math.min(i0 + 1, pts.length - 1)];
+  let p = { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f), z: lerp(a.z, b.z, f) };
+  const stream = clamp((t - 36.6) / 3.1); if (stream > 0) { const i1 = 3 + stream * 26, ia = pts[Math.min(Math.floor(i1), pts.length - 1)], ib = pts[Math.min(Math.floor(i1) + 1, pts.length - 1)], ff = i1 - Math.floor(i1); p = { x: lerp(ia.x, ib.x, ff), y: lerp(ia.y, ib.y, ff), z: lerp(ia.z, ib.z, ff) }; }
+  const pull = eIO(sstep(37.4, 43, t)), k = 1.4 + 6.4 * pull;
+  const ctr = { x: 0, y: 0, z: 3300 }, tg = { x: lerp(p.x, ctr.x, pull), y: lerp(p.y, ctr.y, pull), z: lerp(p.z, ctr.z, pull) };
+  const yaw = .95 * pull;                                                    // slow orbit as it pulls back
+  const cam = { x: tg.x + Math.cos(yaw) * 640 * k, y: tg.y + 250 * k + 900 * pull, z: tg.z + 230 * k + Math.sin(yaw) * 640 * k, f: 900, roll: 0, yaw: 0, pitch: 0 };
+  return lookAt(cam, tg.x, tg.y, tg.z);
+}
+function sceneF(t, fx) {
+  const pull = eIO(sstep(37.4, 43, t)), treeVis = lerp(.45, 1, pull);
+  const altT = (n) => n.alt === 1 ? 34.2 : n.alt === 2 ? 35.2 : n.alt === 3 ? 36.2 : 36.6 + (n.alt - 4) * .11;
+  const ghostA = lerp(.18, .5, pull);
+  const o = {
+    vis: (n) => {
+      if (n.alt) return sstep(altT(n), altT(n) + .35, t);
+      const g = ghostN(n, 107); return (g ? ghostA : 1) * (n.k === "trunk" || n.k === "err" || n.k === "read" || n.k === "state" || n.k === "edit" || n.k === "exec" ? 1 : treeVis);
+    },
+    spr: (n) => { if (n.alt) return n.k === "pass" ? "grn" : "vio"; if (ghostN(n, 107)) return n.k === "err" ? "red" : "gh"; return n.k === "ok" ? "grn" : n.k === "bad" ? "red" : n.k === "read" ? "wht" : n.k === "state" ? "amb" : "cy"; },
+    lineCol: (e) => { if (e.k === "new") return e.b === GN.alt[2].i ? GRN : VIO; const a = GN[e.a], b = GN[e.b]; if (ghostN(a, 107) || ghostN(b, 107)) return e.k === "trunk" ? "#8a2a3c" : "#2c4254"; return e.k === "trunk" ? CY : "#2a86c8"; },
+    edgeAlpha: lerp(.6, .75, pull), fog: lerp(3800, 20000, pull), nodeScale: lerp(1.25, 5.6, pull), lineW: lerp(1.5, 1.3, pull), newW: lerp(3.6, 2.6, pull),
+  };
+  drawField(camF(t), o);
+  fx.vig = .72; fx.flash = Math.max(fx.flash, .3 * Math.exp(-(t - 34) * 12), .35 * Math.exp(-(t - 34.2) * 12) * (t > 34.2 ? 1 : 0), .5 * Math.exp(-(t - 36.2) * 10) * (t > 36.2 ? 1 : 0)); fx.flashColor = t > 36.1 ? GRN : VIO;
+  const hudA = 1 - sstep(38.0, 39.4, t);
+  if (hudA > 0) {
+    const kt = [34.0, 34.2, 35.2, 36.2, 36.6], ks = [391, 392, 393, 394, 395];
+    let head = 395 + Math.max(0, (t - 36.6) / .11);
+    for (let i = 0; i < 4; i++) if (t < kt[i + 1]) { head = lerp(ks[i], ks[i + 1], eIO((t - kt[i]) / (kt[i + 1] - kt[i]))); break; }
+    head = clamp(head, 391, 425); if (t < 34.0) head = 391;
+    const seqNow = Math.floor(head + .001), altT0 = (k) => k === 0 ? 34.2 : k === 1 ? 35.2 : k === 2 ? 36.2 : 36.6 + (k - 3) * .11;
+    drawStrip({ seqf: head, fork: 1, onAlt: true, oldLit: 391, altLit: (k) => sstep(altT0(k), altT0(k) + .3, t), alpha: hudA });
+    c.save(); c.globalAlpha = hudA;
+    text(c, "KORG · LEDGER", 40, 40, { size: 14, weight: 700, font: MONO, align: "left", color: "#8fa3b6", ls: 5 });
+    text(c, "▶ BRANCH  fix-subtraction", W / 2, 42, { size: 17, weight: 700, font: MONO, color: VIO, ls: 6 });
+    text(c, "SEQ " + String(seqNow).padStart(4, "0"), W - 40, 40, { size: 30, weight: 800, font: MONO, align: "right", color: WHT, ls: 4 });
+    const res = t >= 36.2 ? "pytest -q   ✓ 2 passed" : t >= 35.2 ? "pytest -q   running…" : "pytest -q   —";
+    workspacePanel(seqNow, 40, H - 310, { alt: t >= 34.2 ? 1 : 0, altRes: res, altCol: t >= 36.2 ? GRN : "#8b949e", altK: 1 - sstep(34.2, 35.6, t) * .6 });
+    c.restore();
+  }
+  if (t > 36.2 && t < 38.2) { const k = t - 36.2; text(c, "✓ PASSED", W / 2 + 160, H / 2 + 120, { size: 90, ls: 16, color: GRN, alpha: (1 - sstep(37.4, 38.2, t)) * eOut(k * 5) }); }
+}
+
+/* ================================================================ scene G  */
+function codeTexture(t, alpha, hot) {
+  c.save(); c.globalAlpha = alpha;
+  for (let col = 0; col < 3; col++) for (let r = 0; r < 26; r++) {
+    const line = CODE[(r * 3 + col * 5 + Math.floor(t * 6)) % CODE.length], y = 30 + r * 28 + ((t * 40) % 28);
+    text(c, line, 24 + col * 430, y, { size: 15, weight: 500, font: MONO, align: "left", color: hot && (r + col) % 7 === 0 ? CY : "#2d4a5e" });
+  }
+  c.restore();
+}
+function superWord(s, x, y, t0, t, col = WHT) {
+  const k = t - t0; if (k < 0) return;
+  chroma(c, s, x, y, { size: 120, ls: 16, align: "left", alpha: 1 }, 8 * Math.exp(-k * 9));
+  c.fillStyle = rgba(col, .0);
+}
+const EV = [["user_prompt", "Fix subtraction bug"], ["llm_inference", "opus · 1,240 tok"], ["Read", "math_utils.py"], ["Edit", "return a - b"], ["Bash", "pytest -q → 2 passed"], ["llm_inference", "opus · 1,410 tok"]];
+function sceneG(t, fx) {
+  const cut = Math.min(5, Math.floor(t - 43)), lt = t - 43 - cut;
+  fx.flash = Math.max(fx.flash, .22 * Math.exp(-lt * 38)); fx.glitch = Math.max(fx.glitch, lt < .09 ? .5 : 0); fx.vig = .75; fx.chroma = lt < .12 ? 7 : 0;
+  const g = c.createLinearGradient(0, H - 260, 0, H); g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,.85)");
+  if (cut === 0) {                       // event graph
+    const idx = 40 + lt * 14 + cut, p = trunkAt(idx), cam = { x: p.x + 90 * Math.cos(lt * 2), y: p.y + 60, z: p.z - 160, f: 760, roll: .08 * Math.sin(lt * 3), yaw: 0, pitch: 0 };
+    lookAt(cam, trunkAt(idx + 6).x, trunkAt(idx + 6).y, trunkAt(idx + 6).z);
+    drawField(cam, { vis: (n) => n.alt ? 0 : 1, spr: (n) => n.k === "ok" ? "grn" : n.k === "bad" ? "red" : "cy", edgeAlpha: .7, fog: 3000, nodeScale: 1.4 });
+    codeTexture(t, .35, true);
+    text(c, "EVENT GRAPH", 60, H - 60, { size: 22, weight: 600, font: MONO, align: "left", color: CY, ls: 8 });
+  } else if (cut === 1) {                // replay
+    codeTexture(t, .28, false);
+    rr(c, 60, 70, 520, 420, 8); c.fillStyle = "rgba(6,12,18,.9)"; c.fill(); c.strokeStyle = rgba(CY, .35); c.stroke();
+    const sc = Math.floor(lt * 14);
+    for (let r = 0; r < 9; r++) {
+      const i = sc + r, e = EV[i % 6], y = 112 + r * 42, hot = r === 4;
+      if (hot) { c.fillStyle = rgba(CY, .16); c.fillRect(64, y - 18, 512, 38); }
+      text(c, "seq " + (385 + i), 84, y, { size: 16, weight: 500, font: MONO, align: "left", color: hot ? WHT : "#6b8296" });
+      text(c, e[0], 190, y, { size: 16, weight: 600, font: MONO, align: "left", color: hot ? CY : "#4f6a80" });
+      text(c, HASH[i % 6].slice(0, 10), 400, y, { size: 15, weight: 500, font: MONO, align: "left", color: hot ? "#cfe9ff" : "#3d566b" });
+    }
+    rr(c, 620, 70, 600, 420, 8); c.fillStyle = "rgba(6,12,18,.9)"; c.fill(); c.strokeStyle = rgba(CY, .35); c.stroke();
+    text(c, "$ korg replay --to seq " + (385 + sc + 4), 644, 110, { size: 17, weight: 600, font: MONO, align: "left", color: GRN });
+    ["def subtract(a, b):", "    return a - b"].forEach((l, i) => text(c, typed(l, 43 + cut + .1 + i * .3, 60, t), 644, 170 + i * 36, { size: 22, weight: 500, font: MONO, align: "left", color: "#cdd9e5" }));
+    text(c, "state @ seq " + (385 + sc + 4) + "  ·  tree " + hex(sc, 8), 644, 450, { size: 15, weight: 500, font: MONO, align: "left", color: AMB });
+    c.fillStyle = "#13202c"; c.fillRect(60, 540, W - 120, 6); c.fillStyle = CY; c.fillRect(60, 540, (W - 120) * lt, 6); c.beginPath(); c.arc(60 + (W - 120) * lt, 543, 11, 0, 6.2832); c.fill();
+    c.fillStyle = g; c.fillRect(0, H - 260, W, 260); superWord("REPLAY", 60, H - 90, 44, t);
+  } else if (cut === 2) {                // verify
+    codeTexture(t, .5, true);
+    const bw = 170, gap = 38, x0 = (W - (6 * bw + 5 * gap)) / 2;
+    for (let i = 0; i < 6; i++) {
+      const x = x0 + i * (bw + gap), okT = .12 + i * .1, ok = lt > okT, kk = eOut((lt - okT) * 6);
+      rr(c, x, 230, bw, 150, 8); c.fillStyle = "rgba(6,12,18,.92)"; c.fill(); c.strokeStyle = rgba(ok ? GRN : CY, ok ? .9 : .35); c.lineWidth = 2; c.stroke();
+      text(c, "seq " + (i + 1), x + 14, 252, { size: 14, weight: 600, font: MONO, align: "left", color: CY });
+      text(c, ["prompt", "llm", "Read", "Edit", "Bash", "llm"][i], x + 14, 282, { size: 20, weight: 700, font: MONO, align: "left", color: WHT });
+      text(c, HASH[i].slice(0, 12), x + 14, 322, { size: 13, weight: 500, font: MONO, align: "left", color: "#7f98ad" });
+      text(c, HASH[(i + 5) % 6].slice(0, 12), x + 14, 346, { size: 13, weight: 500, font: MONO, align: "left", color: "#46606f" });
+      if (ok) text(c, "✓", x + bw - 26, 254, { size: 26, weight: 800, color: GRN, alpha: kk });
+      if (i < 5) { c.strokeStyle = rgba(ok ? GRN : CY, .8); c.lineWidth = 3; c.beginPath(); c.moveTo(x + bw, 305); c.lineTo(x + bw + gap, 305); c.stroke(); }
+    }
+    text(c, typed("✓ journal VALID — 6 events, hash-chain + DAG intact", 45.55, 60, t), W / 2, 450, { size: 24, weight: 700, font: MONO, color: GRN });
+    c.fillStyle = g; c.fillRect(0, H - 260, W, 260); superWord("VERIFY", 60, H - 90, 45, t);
+  } else if (cut === 3) {                // agent session — three vendors, one format
+    codeTexture(t, .2, false);
+    const lanes = [["agent:claude-code", CY], ["codex-cli · websocket", AMB], ["grok-heavy · ×16", VIO]];
+    lanes.forEach(([nm, col], l) => {
+      const y = 190 + l * 130; text(c, nm, 60, y - 34, { size: 15, weight: 600, font: MONO, align: "left", color: col, ls: 3 });
+      c.strokeStyle = rgba(col, .25); c.lineWidth = 2; c.beginPath(); c.moveTo(60, y); c.lineTo(W - 340, y); c.stroke();
+      for (let k = 0; k < 14; k++) { const f = ((lt * .9 + k / 14 + l * .13) % 1), x = 60 + f * (W - 400), ty = lerp(y, 355, sstep(.55, 1, f)); c.fillStyle = rgba(col, .9); c.fillRect(x, ty - 6, 22, 12); }
+    });
+    rr(c, W - 330, 300, 270, 110, 8); c.fillStyle = "rgba(6,12,18,.92)"; c.fill(); c.strokeStyle = rgba(GRN, .7); c.lineWidth = 2; c.stroke();
+    text(c, "korg-ledger@v1", W - 195, 340, { size: 22, weight: 700, font: MONO, color: GRN }); text(c, "one verifier", W - 195, 376, { size: 16, weight: 500, font: MONO, color: "#8fa3b6", ls: 4 });
+    text(c, "AGENT SESSION", 60, H - 60, { size: 22, weight: 600, font: MONO, align: "left", color: CY, ls: 8 });
+  } else if (cut === 4) {                // state reconstruction / rewind
+    codeTexture(t, .25, false);
+    const sq = Math.round(lerp(393, 391, eOut(lt * 1.4)));
+    text(c, typed("[korg] Restoring workspace snapshot via git read-tree (O(1))…", 47.05, 50, t), 60, 80, { size: 20, weight: 500, font: MONO, align: "left", color: "#9fb2c4" });
+    text(c, "SEQ " + sq, W - 60, 80, { size: 42, weight: 800, font: MONO, align: "right", color: WHT });
+    rr(c, 60, 130, 760, 320, 8); c.fillStyle = "rgba(6,12,18,.92)"; c.fill(); c.strokeStyle = rgba(CY, .35); c.stroke();
+    ["def add(a, b):", "    return a + b", "", "def subtract(a, b):", "    # Intended bug", "    return a + b"].forEach((l, i) => text(c, typed(l, 47.1 + i * .1, 70, t), 90, 175 + i * 44, { size: 26, weight: 500, font: MONO, align: "left", color: i === 4 ? "#6e7681" : "#cdd9e5" }));
+    for (let i = 0; i < 3; i++) { const y = 150 + i * 120; rr(c, 870, y, 350, 90, 8); c.fillStyle = "rgba(6,12,18,.9)"; c.fill(); c.strokeStyle = rgba(i === 2 ? GRN : CY, .5); c.stroke(); text(c, ["seq 393 ✗ undone", "seq 392 ✗ undone", "seq 391 ✓ restored"][i], 890, y + 34, { size: 18, weight: 600, font: MONO, align: "left", color: [RED, RED, GRN][i], alpha: lt > .2 + i * .22 ? 1 : .25 }); text(c, hex(i + 70, 14), 890, y + 64, { size: 13, weight: 500, font: MONO, align: "left", color: "#46606f" }); }
+    c.fillStyle = g; c.fillRect(0, H - 260, W, 260); superWord("REWIND", 60, H - 90, 47, t);
+  } else {                               // branching timeline
+    codeTexture(t, .2, false);
+    const y0 = 360, gx = (f) => 80 + f * (W - 160), grow = eOut(lt * 1.3);
+    c.strokeStyle = rgba(CY, .9); c.lineWidth = 3; c.beginPath(); c.moveTo(gx(0), y0); c.lineTo(gx(.5 * Math.min(1, grow * 2)), y0); c.stroke();
+    const forks = [[.2, -1, GRN, "b1"], [.34, 1, RED, "b2 ✗"], [.5, -1, VIO, "b3"], [.5, 1, GRN, "b4"], [.62, -1, GRN, "b5"], [.72, 1, VIO, "b6"]];
+    forks.forEach(([f, dir, col, nm], i) => {
+      const a = clamp((grow - i * .1) * 2.2); if (a <= 0) return;
+      const x1 = gx(f), x2 = gx(f + .24 * a), y2 = y0 + dir * (90 + (i % 3) * 36) * a;
+      c.strokeStyle = rgba(col, .9); c.lineWidth = 3; c.beginPath(); c.moveTo(x1, y0); c.bezierCurveTo(x1 + 60, y0, x1 + 60, y2, x2, y2); c.stroke();
+      c.drawImage(SPR[col === RED ? "red" : col === GRN ? "grn" : "vio"], x2 - 20, y2 - 20, 40, 40);
+      text(c, nm, x2 + 14, y2 + (dir < 0 ? -22 : 24), { size: 16, weight: 600, font: MONO, align: "left", color: col, alpha: a });
+    });
+    c.drawImage(SPR.cy, gx(0) - 16, y0 - 16, 32, 32);
+    c.fillStyle = g; c.fillRect(0, H - 260, W, 260); superWord("BRANCH", 60, H - 90, 48, t);
+  }
+  if (t >= 49.0) {                       // the four verbs
+    c.fillStyle = "#000"; c.fillRect(0, 0, W, H);
+    const words = ["REPLAY", "VERIFY", "REWIND", "BRANCH"], cols = [CY, GRN, AMB, VIO];
+    words.forEach((w, i) => {
+      const k = t - (49.0 + i * .2); if (k < 0) return;
+      const y = 150 + i * 135;
+      chroma(c, w, W / 2, y, { size: 108, ls: 34, alpha: 1 }, 9 * Math.exp(-k * 10));
+      c.fillStyle = rgba(cols[i], .85); c.fillRect(W / 2 - 330, y + 66, 660 * eOut(k * 4), 3);
+    });
+    fx.flash = Math.max(fx.flash, .07 * Math.exp(-((t - 49) % .2) * 30)); fx.chroma = 0; fx.glitch = 0;
+  }
+}
+
+/* ================================================================ scene H  */
+function fit(s, size, ls, maxW) { c.font = `800 ${size}px ${SANS}`; c.letterSpacing = ls + "px"; const w = c.measureText(s).width; return w > maxW ? size * maxW / w : size; }
+function sceneH(t, fx) {
+  fx.vig = .5; fx.grain = .04;
+  const l1 = fadeIO(t, 50.65, 51.2, 52.15, 52.45);
+  if (l1 > 0) { const k = eOut((t - 50.65) / 1.4), ls = lerp(30, 9, k), sz = fit("AI CAN MAKE MISTAKES.", 74, 9, 1120); text(c, "AI CAN MAKE MISTAKES.", W / 2, H / 2, { size: sz, ls, alpha: l1 }); }
+  const l2 = sstep(53.0, 53.6, t) * (1 - sstep(55.7, 56.0, t));
+  if (l2 > 0) {
+    const k = eOut((t - 53.0) / 1.5), ls = lerp(24, 8, k), sz = fit("AI DOESN'T HAVE TO", 82, 9, 1000);
+    text(c, "AI DOESN'T HAVE TO", W / 2, H / 2 - 62, { size: sz, ls, alpha: l2 });
+    const f = sstep(54.0, 54.6, t);
+    c.save(); c.globalAlpha = l2 * sstep(53.5, 54.0, t);
+    text(c, "FORGET THEM.", W / 2, H / 2 + 62, { size: sz, ls, color: f > 0 ? "#bff4ff" : WHT });
+    if (f > 0) { c.globalAlpha = l2 * f * .35; c.drawImage(SPR.cy, W / 2 - 330, H / 2 - 40, 660, 200); }
+    c.restore();
+  }
+}
+
+/* ================================================================ scene I  */
+function sceneI(t, fx) {
+  fx.vig = .55; fx.grain = .035;
+  const k = t - 56.0, cx = W / 2, cy = H / 2 - 50;
+  if (t < 58.4) {
+    const a = sstep(56.0, 57.6, t), ls = lerp(70, 26, eOut(k / 2.4)), so = { size: 200, ls, alpha: a };
+    c.save(); c.globalAlpha = 1; text(c, "KORG", cx, cy, so);
+    c.globalAlpha = a * .22; c.drawImage(SPR.cy, cx - 420, cy - 150, 840, 300); c.restore();
+    text(c, typed("A MEMORY AND VERIFICATION LAYER FOR AI AGENTS.", 57.0, 24, t), cx, cy + 150, { size: 20, weight: 500, font: MONO, ls: 7, color: "#9fb2c4" });
+    if (t > 58.1) { c.fillStyle = "#000"; c.globalAlpha = sstep(58.1, 58.4, t); c.fillRect(0, 0, W, H); c.globalAlpha = 1; }
+  } else if (t < 59.72) {
+    const f = t - 58.4;
+    chroma(c, "REPO.ING", cx, cy, { size: 150, ls: 22, alpha: sstep(58.4, 58.55, t) }, 10 * Math.exp(-f * 10));
+    text(c, typed("DON'T JUST STAR IT. BACK IT.", 58.6, 28, t), cx, cy + 130, { size: 32, weight: 600, font: MONO, ls: 8, color: "#cfe9ff" });
+    fx.flash = Math.max(fx.flash, .3 * Math.exp(-f * 14));
+  }
+  if (t >= 59.72) { c.fillStyle = "#000"; c.fillRect(0, 0, W, H); }
+}
+
+/* ============================================================== captions  */
+const CAPS = [
+  [13.0, 15.1, "AI agents are going to make mistakes."], [15.65, 16.55, "The problem is…"], [16.95, 18.0, "…what happens next?"],
+  [19.2, 22.8, "What if you could see exactly what happened?"],
+  [36.7, 38.7, "Don't just know what an agent did."], [39.3, 40.9, "Know why it happened."], [41.45, 43.0, "And change what happens next."],
+];
+function captions(t) {
+  if (!CAPTIONS) return;
+  for (const [a, b, s] of CAPS) {
+    const al = fadeIO(t, a, a + .22, b - .2, b); if (al <= 0) continue;
+    ctx.save(); ctx.globalAlpha = al; ctx.font = `500 30px ${SANS}`; ctx.letterSpacing = "1px"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(0,0,0,.9)"; ctx.shadowBlur = 14; ctx.fillStyle = "#e9f3fb"; ctx.fillText(s, W / 2, H - 78); ctx.restore();
+  }
+}
+
+/* ================================================================= render  */
+function render(t) {
+  t = clamp(t, 0, DUR - .001);
+  c.setTransform(1, 0, 0, 1, 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = "source-over"; c.letterSpacing = "0px";
+  c.fillStyle = "#000"; c.fillRect(0, 0, W, H);
+  const fx = { glitch: 0, chroma: 0, shake: 0, flash: 0, flashColor: "#fff", fade: 1, vig: .7, scan: .35, grain: .07 };
+  if (t < 6) sceneA(t, fx);
+  else if (t < 12) sceneB(t, fx);
+  else if (t < 18) sceneC(t, fx);
+  else if (t < 26) sceneD(t, fx);
+  else if (t < 34) sceneE(t, fx);
+  else if (t < 43) sceneF(t, fx);
+  else if (t < 50) sceneG(t, fx);
+  else if (t < 56) sceneH(t, fx);
+  else sceneI(t, fx);
+  if (t >= 11.0 && t < 12.0) fx.grain = .03;
+  composite(t, fx);
+  captions(t);
+}
+window.renderAt = (t) => { render(t); return true; };
+window.DUR = DUR;
+
+/* ============================================================== playback   */
+const $ = (id) => document.getElementById(id);
+if (Q.has("t")) { render(parseFloat(Q.get("t"))); $("ui").style.display = "none"; }
+else if (CAPTURE) { $("ui").style.display = "none"; render(0); }
+else {
+  render(0);
+  const a = $("aud"); let t0 = 0, playing = false;
+  const tick = () => { if (!playing) return; const t = a.readyState > 2 && !a.paused ? a.currentTime : (performance.now() - t0) / 1000; render(t); $("bar").style.width = (t / DUR * 100) + "%"; if (t < DUR) requestAnimationFrame(tick); else { playing = false; $("ui").style.display = "flex"; $("play").textContent = "↻ REPLAY TRAILER"; } };
+  $("play").onclick = () => { $("ui").style.display = "none"; playing = true; t0 = performance.now(); a.currentTime = 0; a.play().catch(() => {}); requestAnimationFrame(tick); };
+}
+</script>
+</body>
+</html>

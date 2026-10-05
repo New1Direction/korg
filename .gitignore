@@ -83,3 +83,8 @@ package-lock.json
 **/proptest-regressions/
 
 .playwright-mcp/
+
+# Trailer scratch output (the .mp4 deliverables are tracked)
+trailer/out/*.wav
+trailer/out/preview*.mp4
+trailer/out/render.log
