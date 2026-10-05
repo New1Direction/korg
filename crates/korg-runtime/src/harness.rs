@@ -243,6 +243,16 @@ impl SingleWorkerHarness {
         }
 
         let branch_name = format!("korg-branch-{}", routing_id);
+
+        // A previous run that was interrupted (Ctrl-C, timeout) leaves its
+        // worktree registered in git even though the directory was removed
+        // above; `worktree add -B` then refuses to reset the branch it still
+        // holds. Pruning drops registrations whose directories are gone.
+        let _ = tokio::process::Command::new("git")
+            .args(&["worktree", "prune"])
+            .output()
+            .await;
+
         eprintln!(
             "[Harness] Spinning up physical worktree at {:?} from commit {} (branch: {})",
             worktree_path, snapshot_ref, branch_name

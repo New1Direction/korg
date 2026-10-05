@@ -216,7 +216,9 @@ korg campaign --tui --prompt "Refactor the auth layer to use JWTs"
 # Web cockpit at localhost:8080
 korg campaign --web --prompt "Optimize the database connection pool"
 
-# Pure autonomous goal mode (--goal is a top-level flag)
+# Pure autonomous goal mode (--goal is a top-level flag). Each persona works in
+# its own git worktree and runs a real `cargo check`, so on a large repo a cold
+# run takes minutes; `--speculative` pre-warms a shared target dir.
 korg --goal "Write and validate a full test suite for src/parser.rs"
 
 # Run the full multi-persona swarm on a REAL local model — every persona
@@ -232,7 +234,10 @@ korg --preview "Refactor the main event loop"
 ### Rewind & Verify
 
 ```bash
-# Rewind the capability journal to a specific ledger sequence point
+# Rewind the capability journal (.korg/capability_journal.json) to a prior
+# sequence point. It is populated by campaigns (`korg --goal`, `korg campaign`);
+# on a fresh checkout there is nothing to rewind yet — `korg demo` shows the
+# full rewind flow in a self-contained sandbox.
 korg rewind --seq 4
 
 # Drive the honest pipeline on a fixture and emit a verifiable ledger
