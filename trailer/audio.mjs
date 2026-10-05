@@ -65,7 +65,7 @@ function impact(t, g = 1, o = {}) {
 const riser = (t, dur, g = .3, f1 = 6000) => { noise({ t, dur, g, lp0: 300, lp1: f1, swell: 2.2, w: .4 }); tone({ t, dur, f0: 80, f1: 880, g: g * .35, swell: 2.2, w: .4 }); };
 
 /* ---------------------------------------------------------------- the cues */
-// 0:00 GRONK — mechanical hum, glitch, fragmentation
+// 0:00 grok — mechanical hum, glitch, fragmentation
 tone({ t: 0, dur: 3.8, f0: 55, g: .3, a: 1.2, d: .15, w: .2 }); tone({ t: 0, dur: 3.8, f0: 110.4, g: .12, a: 1.5, d: .1, w: .2 });
 tone({ t: 0.3, dur: 3.4, f0: 100, g: .06, wave: "saw", lp: 260, a: 1, d: .1, w: .1 });
 for (let i = 0; i < 70; i++) { const tt = 1.55 + Math.pow(i / 70, .8) * 1.0; noise({ t: tt, dur: .018 + rnd() * .03, g: .12 + rnd() * .12, lp0: 3000 + rnd() * 9000, d: 40, w: .1, pan: rnd() - .5 }); }
@@ -75,7 +75,7 @@ for (let i = 0; i < 160; i++) { const tt = 2.2 + rnd() * 1.6; tone({ t: tt, dur:
 tone({ t: 3.0, dur: .78, f0: 200, f1: 1500, g: .1, swell: 1.4, w: .4 });
 // 0:04 KORG — impact
 impact(4.1, 1.0); tone({ t: 4.1, dur: .5, f0: 50, f1: 50, g: .22, wave: "square", lp: 220, d: 5, w: .1 });
-for (let i = 0; i < 30; i++) tick(4.75 + i / 34, .035, 2400);
+for (let i = 0; i < 17; i++) tick(4.5 + i / 36, .035, 2400);
 tone({ t: 4.2, dur: 1.9, f0: 55, g: .22, d: 1.1, a: .02 });
 // 0:06 the agent works — tension build, rhythmic cuts
 const cuts = [6.0, 6.62, 7.1, 7.5, 7.85, 8.2, 8.5, 8.78, 9.05, 9.3, 9.55, 9.8, 10.0, 10.2];
@@ -142,13 +142,12 @@ tone({ t: 52.15, dur: .25, f0: 400, f1: 80, g: .12, d: 12, w: .5 });
 pad(53.0, 3.3, [45, 52, 57, 64], .09, .8); riser(53.4, 2.4, .22, 7000);
 ping(54.0, 81, .09, .8); ping(54.3, 88, .06, .8);
 // 0:56 KORG
-impact(56.0, .6, { dark: true }); pad(56.0, 3.8, [45, 52, 57, 61, 69], .1, .8);
-for (let i = 0; i < 40; i++) tick(57.0 + i / 24, .03, 2200);
-impact(58.4, .85, { bell: true }); for (let i = 0; i < 27; i++) tick(58.6 + i / 28, .035, 2600);
-ping(58.5, 69, .1, .8); ping(58.5, 76, .08, .8);
+impact(56.0, .6, { dark: true }); pad(56.0, 4.0, [45, 52, 57, 61, 69], .1, .8);
+for (let i = 0; i < 17; i++) tick(57.0 + i / 20, .03, 2200);
+ping(57.7, 69, .08, .8); ping(57.7, 76, .06, .8);
 
 /* ------------------------------------------------------------------ master */
-const gates = [[3.78, 4.1], [11.02, 12.0], [30.4, 31.25], [50.0, 50.6], [59.72, 60.5]];
+const gates = [[3.78, 4.1], [11.02, 12.0], [30.4, 31.25], [50.0, 50.6]];
 const gate = (t) => { let g = 1; for (const [a, b] of gates) { g *= 1 - (sstep(a - .012, a, t) - sstep(b - .012, b, t)); } return g; };
 const sustained = (t) => 1;                                                         // (hook for per-section trims)
 // Schroeder-style hall on the wet bus, decorrelated L/R
@@ -169,7 +168,7 @@ const outL = new Float32Array(N), outR = new Float32Array(N);
 let peak = 0;
 for (let i = 0; i < N; i++) {
   const t = i / SR, g = gate(t);
-  const fadeIn = sstep(0, .08, t), fadeOut = 1 - sstep(59.9, 60, t);
+  const fadeIn = sstep(0, .08, t), fadeOut = 1 - sstep(58.6, 60, t);
   outL[i] = Math.tanh((dryL[i] + rvL[i] * .55) * 1.1) * g * fadeIn * fadeOut; outR[i] = Math.tanh((dryR[i] + rvR[i] * .55) * 1.1) * g * fadeIn * fadeOut;
   peak = Math.max(peak, Math.abs(outL[i]), Math.abs(outR[i]));
 }

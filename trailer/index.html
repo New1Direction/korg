@@ -267,23 +267,23 @@ function sampleText(str, size, ls, step) {
   return pts;
 }
 function initParticles() {
-  GP = sampleText("GRONK", 200, 18, 5); KP = sampleText("KORG", 230, 26, 5);
+  GP = sampleText("grok", 250, 16, 5); KP = sampleText("korg", 250, 24, 5);
   const perm = KP.map((_, i) => i).sort((a, b) => hash1(a * 5 + 1) - hash1(b * 5 + 1));
   TG = GP.map((_, i) => KP[perm[i % KP.length]]);
 }
 function sceneA(t, fx) {
   if (!GP) initParticles();
   const cx = W / 2, cy = H / 2;
-  /* GRONK: the familiar logo, then it breaks */
+  /* grok: the familiar logo, then it breaks */
   if (t < 3.8) {
-    const so = { size: 200, ls: 18 };
+    const so = { size: 250, ls: 16 };
     const appear = sstep(.45, .9, t);
     const dist = sstep(1.55, 2.2, t);                    // distortion builds
     const breakK = sstep(2.2, 2.38, t);
     if (t < 2.4) {
       fx.glitch = dist * .55; fx.chroma = dist * 14; fx.shake = dist * 8;
       c.save(); c.globalAlpha = appear * (1 - breakK);
-      text(c, "GRONK", cx + Math.sin(t * 40) * dist * 5, cy, { ...so, color: "#f2f2f2" });
+      text(c, "grok", cx + Math.sin(t * 40) * dist * 5, cy, { ...so, color: "#f2f2f2" });
       c.restore();
     }
     if (t >= 2.1) {
@@ -306,15 +306,15 @@ function sceneA(t, fx) {
   }
   /* hard black, then KORG hits */
   if (t >= 4.1) {
-    const k = t - 4.1, sc = 1 + .16 * Math.exp(-k * 9), fadeOut = 1 - sstep(5.25, 6.0, t), zoom = 1 + .05 * sstep(5.25, 6.0, t);
-    const so = { size: 230 * sc * zoom, ls: 26 };
+    const k = t - 4.1, sc = 1 + .16 * Math.exp(-k * 9), fadeOut = 1 - sstep(5.05, 6.0, t), zoom = 1 + .05 * sstep(5.05, 6.0, t);
+    const so = { size: 250 * sc * zoom, ls: 24 };
     c.save(); c.globalAlpha = fadeOut;
-    chroma(c, "KORG", cx, cy, so, 20 * Math.exp(-k * 6));
+    chroma(c, "korg", cx, cy, so, 20 * Math.exp(-k * 6));
     // shockwave + light bar
     c.strokeStyle = rgba("#ffffff", .5 * Math.exp(-k * 4)); c.lineWidth = 2; c.beginPath(); c.arc(cx, cy, 120 + 1000 * (1 - Math.exp(-k * 3)), 0, 6.2832); c.stroke();
     c.fillStyle = rgba(CY, .55 * Math.exp(-k * 5)); c.fillRect(0, cy - 1, W, 2);
-    const sub = typed("AI AGENT MEMORY + VERIFICATION", 4.75, 34, t);
-    text(c, sub, cx, cy + 150, { size: 20, weight: 500, font: MONO, ls: 9, color: "#9fb2c4" });
+    const sub = typed("git for cognition", 4.5, 36, t);
+    text(c, sub, cx, cy + 160, { size: 24, weight: 500, font: MONO, ls: 10, color: "#9fb2c4" });
     c.restore();
     fx.flash = .5 * Math.exp(-k * 20); fx.shake = k < .6 ? 28 * Math.exp(-k * 7) : 0; fx.vig = .7;
   }
@@ -684,7 +684,7 @@ function sceneE(t, fx) {
   // HUD
   const hudA = sstep(26.8, 27.3, t);
   c.save(); c.globalAlpha = hudA;
-  text(c, "KORG · LEDGER", 40, 40, { size: 14, weight: 700, font: MONO, align: "left", color: "#8fa3b6", ls: 5 });
+  text(c, "korg · ledger", 40, 40, { size: 14, weight: 700, font: MONO, align: "left", color: "#8fa3b6", ls: 5 });
   const rw = rewinding ? (Math.floor(t * 4) % 2 ? 1 : .55) : 0;
   text(c, rewinding ? "◀◀ REWINDING" : "■ STATE RESTORED", W / 2, 42, { size: 17, weight: 700, font: MONO, color: rewinding ? RED : GRN, ls: 8, alpha: rewinding ? rw : 1 });
   text(c, "SEQ " + String(Math.round(seqf)).padStart(4, "0"), W - 40, 40, { size: 30, weight: 800, font: MONO, align: "right", color: WHT, ls: 4 });
@@ -740,7 +740,7 @@ function sceneF(t, fx) {
     const seqNow = Math.floor(head + .001), altT0 = (k) => k === 0 ? 34.2 : k === 1 ? 35.2 : k === 2 ? 36.2 : 36.6 + (k - 3) * .11;
     drawStrip({ seqf: head, fork: 1, onAlt: true, oldLit: 391, altLit: (k) => sstep(altT0(k), altT0(k) + .3, t), alpha: hudA });
     c.save(); c.globalAlpha = hudA;
-    text(c, "KORG · LEDGER", 40, 40, { size: 14, weight: 700, font: MONO, align: "left", color: "#8fa3b6", ls: 5 });
+    text(c, "korg · ledger", 40, 40, { size: 14, weight: 700, font: MONO, align: "left", color: "#8fa3b6", ls: 5 });
     text(c, "▶ BRANCH  fix-subtraction", W / 2, 42, { size: 17, weight: 700, font: MONO, color: VIO, ls: 6 });
     text(c, "SEQ " + String(seqNow).padStart(4, "0"), W - 40, 40, { size: 30, weight: 800, font: MONO, align: "right", color: WHT, ls: 4 });
     const res = t >= 36.2 ? "pytest -q   ✓ 2 passed" : t >= 35.2 ? "pytest -q   running…" : "pytest -q   —";
@@ -876,20 +876,14 @@ function sceneH(t, fx) {
 /* ================================================================ scene I  */
 function sceneI(t, fx) {
   fx.vig = .55; fx.grain = .035;
-  const k = t - 56.0, cx = W / 2, cy = H / 2 - 50;
-  if (t < 58.4) {
-    const a = sstep(56.0, 57.6, t), ls = lerp(70, 26, eOut(k / 2.4)), so = { size: 200, ls, alpha: a };
-    c.save(); c.globalAlpha = 1; text(c, "KORG", cx, cy, so);
-    c.globalAlpha = a * .22; c.drawImage(SPR.cy, cx - 420, cy - 150, 840, 300); c.restore();
-    text(c, typed("A MEMORY AND VERIFICATION LAYER FOR AI AGENTS.", 57.0, 24, t), cx, cy + 150, { size: 20, weight: 500, font: MONO, ls: 7, color: "#9fb2c4" });
-    if (t > 58.1) { c.fillStyle = "#000"; c.globalAlpha = sstep(58.1, 58.4, t); c.fillRect(0, 0, W, H); c.globalAlpha = 1; }
-  } else if (t < 59.72) {
-    const f = t - 58.4;
-    chroma(c, "REPO.ING", cx, cy, { size: 150, ls: 22, alpha: sstep(58.4, 58.55, t) }, 10 * Math.exp(-f * 10));
-    text(c, typed("DON'T JUST STAR IT. BACK IT.", 58.6, 28, t), cx, cy + 130, { size: 32, weight: 600, font: MONO, ls: 8, color: "#cfe9ff" });
-    fx.flash = Math.max(fx.flash, .3 * Math.exp(-f * 14));
-  }
-  if (t >= 59.72) { c.fillStyle = "#000"; c.fillRect(0, 0, W, H); }
+  const k = t - 56.0, cx = W / 2, cy = H / 2 - 40;
+  // emerge slowly, hold, then one long smooth fade to black (no end card)
+  const a = sstep(56.0, 57.7, t) * (1 - sstep(58.7, 60.0, t));
+  const ls = lerp(70, 24, eOut(k / 2.6));
+  c.save(); c.globalAlpha = 1;
+  text(c, "korg", cx, cy, { size: 250, ls, alpha: a });
+  c.globalAlpha = a * .22; c.drawImage(SPR.cy, cx - 460, cy - 170, 920, 340); c.restore();
+  text(c, typed("git for cognition", 57.0, 20, t), cx, cy + 160, { size: 24, weight: 500, font: MONO, ls: 10, color: "#9fb2c4", alpha: 1 - sstep(58.7, 59.7, t) });
 }
 
 /* ============================================================== captions  */

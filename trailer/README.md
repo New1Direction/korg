@@ -37,8 +37,8 @@ The trailer tells the story of the actual `korg demo` (README → "Try the Time-
 
 | Time | Beat |
 |---|---|
-| 0:00 | GRONK wordmark → distortion → fragments into hex data |
-| 0:03 | Fragments converge on KORG, hard black, impact, `AI AGENT MEMORY + VERIFICATION` |
+| 0:00 | `grok` wordmark → distortion → fragments into hex data |
+| 0:03 | Fragments converge on `korg`, hard black, impact, `git for cognition` |
 | 0:06 | The agent at work: terminal / editor / browser cuts, `ACTION` ×4, then `ERROR`, then silence |
 | 0:12 | Dive into the failing line → the agent's history as a 3D event graph |
 | 0:18 | The error event opens into the hash-linked chain; `REMEMBER EVERYTHING.` |
@@ -47,7 +47,7 @@ The trailer tells the story of the actual `korg demo` (README → "Try the Time-
 | 0:34 | Branch executes, `✓ PASSED`, camera pulls back to reveal the whole branching history |
 | 0:43 | Machinery cuts: event graph · REPLAY · VERIFY · agent session · REWIND · BRANCH |
 | 0:50 | `AI CAN MAKE MISTAKES.` / `AI DOESN'T HAVE TO FORGET THEM.` |
-| 0:56 | KORG, `A MEMORY AND VERIFICATION LAYER FOR AI AGENTS.`, then `REPO.ING` |
+| 0:56 | `korg` / `git for cognition`, held, then a long fade to black |
 
 ## Voiceover
 
@@ -58,4 +58,4 @@ these lines against the timestamps and mix over `out/korg-trailer.wav`, then ren
 - 0:19 "What if you could see exactly what happened?"
 - 0:36.7 "Don't just know what an agent did." · 0:39.3 "Know why it happened." · 0:41.5 "And change what happens next."
 
-The GRONK wordmark is plain type, not any company's logo.
+The `grok` wordmark in the opening is plain type, not any company's logo.
