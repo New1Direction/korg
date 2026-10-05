@@ -1,6 +1,6 @@
 [package]
 name = "korg-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Foundational types and traits for the korg cognitive runtime"
 license = "MIT OR Apache-2.0"
