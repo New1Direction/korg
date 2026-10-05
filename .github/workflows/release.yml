@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  # Re-run packaging for an existing release tag (e.g. after a build fix lands on main).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to build and attach binaries to (e.g. v0.2.0)'
+        required: true
 
 permissions:
   contents: write
@@ -17,8 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # glibc, not musl: reqwest's default TLS pulls in openssl-sys, which
+          # has no musl OpenSSL to link against on the runner.
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
             suffix: ""
             bin_name: korg-linux-x86_64
           - os: macos-latest
@@ -37,19 +45,19 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install musl-tools (Linux Only)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-
       - name: Build Binary (Release Mode)
+        env:
+          # esaxx-rs (via tokenizers) always builds with the static CRT (/MT);
+          # link everything statically so mimalloc's /MD objects don't clash (LNK2038).
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
         run: |
           cargo build --release --target ${{ matrix.target }}
 
@@ -68,5 +76,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.bin_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
