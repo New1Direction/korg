@@ -3,6 +3,7 @@
     python -m korg_ledger envelope okto-session SESSION.json --source-version 0.1.0 > env.json
     python -m korg_ledger envelope okto-genome genome.jsonl --source-version 0.1.0 > env.json
     python -m korg_ledger envelope dazai-log daemon.log --source-version 0.1.0 > env.json
+    python -m korg_ledger envelope ningen-sink lifecycle.jsonl > env.json   # dazai/motokano --korg-sink
     python -m korg_ledger import env.json --ledger .korg/ledger.jsonl [--triggered-by N]
     python -m korg_ledger lint .korg/ledger.jsonl        # chain + causal DAG + redaction
     python -m korg_ledger rechain-redacted old.jsonl new.jsonl   # migration: redacted copy, new chain
@@ -23,6 +24,7 @@ from .imports import (
     ImportRejected,
     dazai_log_to_envelope,
     import_envelope,
+    ningen_sink_to_envelope,
     okto_mutation_record,
     okto_session_to_envelope,
 )
@@ -44,7 +46,16 @@ def _json_objects(text: str) -> list:
 
 def _cmd_envelope(a) -> int:
     text = Path(a.file).read_text(encoding="utf-8")
-    if a.source == "okto-session":
+    if a.source_version is None and a.source != "ningen-sink":
+        print(f"--source-version is required for {a.source}", file=sys.stderr)
+        return 2
+    if a.source == "ningen-sink":
+        try:
+            env = ningen_sink_to_envelope(text.splitlines(), version=a.source_version)
+        except ValueError as ex:
+            print(f"error: {ex} (--source-version)", file=sys.stderr)
+            return 2
+    elif a.source == "okto-session":
         objs = _json_objects(text)
         if len(objs) != 1 or not isinstance(objs[0], dict):
             print("expected exactly one Okto Session object", file=sys.stderr)
@@ -57,7 +68,7 @@ def _cmd_envelope(a) -> int:
             "source": {"name": "okto", "version": a.source_version},
             "records": [okto_mutation_record(m) for m in _json_objects(text) if isinstance(m, dict)],
         }
-    else:
+    elif a.source == "dazai-log":
         env = dazai_log_to_envelope(text.splitlines(), version=a.source_version)
     json.dump(env, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
@@ -116,9 +127,12 @@ def main(argv=None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     e = sub.add_parser("envelope", help="build a korg-import@v1 envelope from a sibling tool's native output")
-    e.add_argument("source", choices=["okto-session", "okto-genome", "dazai-log"])
+    e.add_argument("source", choices=["okto-session", "okto-genome", "dazai-log", "ningen-sink"])
     e.add_argument("file")
-    e.add_argument("--source-version", required=True, help="version of the tool that produced FILE")
+    e.add_argument(
+        "--source-version",
+        help="version of the tool that produced FILE (required, except ningen-sink records carry it)",
+    )
     e.set_defaults(fn=_cmd_envelope)
 
     i = sub.add_parser("import", help="validate an envelope and append it to a ledger (atomic on rejection)")

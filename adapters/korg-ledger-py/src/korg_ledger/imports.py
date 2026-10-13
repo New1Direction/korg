@@ -1,6 +1,6 @@
 """korg-import@v1 — import envelopes for evidence korg did not observe itself.
 
-Normative text: spec/korg-ledger-v1/IMPORT.md. Two profiles ship:
+Normative text: spec/korg-ledger-v1/IMPORT.md. Three profiles ship:
 
 * ``okto.diagnostics@v1`` — sanitized diagnostics from the Okto agent-traffic
   proxy (session/turn/anomaly/mutation/replay *metadata*; never headers, bodies,
@@ -8,6 +8,10 @@ Normative text: spec/korg-ledger-v1/IMPORT.md. Two profiles ship:
 * ``ningen-shikkaku.lifecycle@v1`` — lifecycle metadata from the
   ningen-shikkaku dead-man's switch (armed/trigger/panic/wipe/pid events; never a
   secret value, tool spec, argv, or free-text message).
+* ``ningen-shikkaku.lifecycle@v2`` — the structured ``--korg-sink`` records
+  (``ningen-korg-lifecycle@1``) written by ``dazai daemon`` and ``motokano``:
+  session/arm/read/wipe/kill steps keyed by a random per-run session id; no
+  PIDs, tool names, values, lengths or digests.
 
 Safety is by **allowlist**, not by scrubbing: every record kind declares the only
 fields it may carry and their types; anything else rejects the WHOLE envelope
@@ -16,7 +20,7 @@ to identifiers and enums — there is no free-text field in either profile — a
 the korg-redact@v1 scanner runs over every record as a second gate.
 
 The converters (``okto_session_to_envelope``, ``okto_mutation_record``,
-``dazai_log_to_envelope``) build envelopes by *projection*: they read only the
+``dazai_log_to_envelope``, ``ningen_sink_to_envelope``) build envelopes by *projection*: they read only the
 allowlisted fields from the source's native output, so secret-bearing fields are
 never even copied.
 """
@@ -107,6 +111,17 @@ _OKTO_ANOMALY = _enum(
 
 OKTO_PROFILE = "okto.diagnostics@v1"
 NINGEN_PROFILE = "ningen-shikkaku.lifecycle@v1"
+NINGEN_SINK_PROFILE = "ningen-shikkaku.lifecycle@v2"
+
+# ningen-shikkaku.lifecycle@v2: every record names its emitting process and the
+# random per-run session id from the producer's sink; the vocabularies mirror
+# ningen-korg-lifecycle@1 (kiroku) exactly.
+_NINGEN_SINK_COMMON = {"component": _enum("dazai", "motokano"), "session": _id}
+_NINGEN_SINK_REASON = _enum(
+    "heartbeat_lost", "ping_timeout", "panic_signal", "hard_panic_signal", "shutdown",
+    "client_quit", "calls_exhausted", "client_disconnect", "daemon_lost",
+)
+_U32 = _int_range(0, 2**32 - 1)
 
 _AT = {"at_ms": _nonneg_int}
 
@@ -190,6 +205,33 @@ PROFILES: dict[str, dict[str, Any]] = {
             "value", "secret", "secret_value", "plaintext", "data", "bytes", "cmd", "command", "spec",
             "tool_spec", "stdout", "stderr", "output", "argv", "args", "env", "message", "reply",
             "buffer_address", "address",
+        ),
+    },
+    NINGEN_SINK_PROFILE: {
+        "source": "ningen-shikkaku",
+        "kinds": {
+            "session_start": ({**_NINGEN_SINK_COMMON, "armed": _bool}, dict(_AT)),
+            "arm": ({**_NINGEN_SINK_COMMON, "via": _enum("startup", "control")}, dict(_AT)),
+            "read": (
+                {**_NINGEN_SINK_COMMON, "tool": _U32, "tool_kind": _enum("static", "exec"),
+                 "served": _bool},
+                dict(_AT),
+            ),
+            "wipe": ({**_NINGEN_SINK_COMMON, "reason": _NINGEN_SINK_REASON, "buffers": _U32}, dict(_AT)),
+            "kill": (
+                {**_NINGEN_SINK_COMMON, "reason": _NINGEN_SINK_REASON,
+                 "target": _enum("registered", "self"), "count": _U32, "executed": _bool},
+                dict(_AT),
+            ),
+            "session_end": ({**_NINGEN_SINK_COMMON, "reason": _NINGEN_SINK_REASON}, dict(_AT)),
+        },
+        # v1's list, plus what v2 deliberately leaves behind: process ids, tool
+        # names, paths, and any length or digest of a secret (a guessing oracle).
+        "forbidden": (
+            "value", "secret", "secret_value", "plaintext", "data", "bytes", "cmd", "command", "spec",
+            "tool_spec", "stdout", "stderr", "output", "argv", "args", "env", "message", "reply",
+            "buffer_address", "address", "pid", "pids", "name", "tool_name", "path", "socket",
+            "length", "len", "size", "hash", "sha256", "digest",
         ),
     },
 }
@@ -490,6 +532,85 @@ def dazai_log_to_envelope(lines: Iterable[str], *, version: str) -> dict:
         else:
             dropped += 1
     env = {"schema": SCHEMA, "profile": NINGEN_PROFILE,
+           "source": {"name": "ningen-shikkaku", "version": version}, "records": records}
+    if dropped:
+        env["dropped"] = dropped
+    return env
+
+
+NINGEN_SINK_CONTRACT = "ningen-korg-lifecycle@1"
+
+# sink tool_name → (v2 kind, [(v2 field, "args"|"result", sink field)]).
+# Projection reads ONLY these fields; component/session/at_ms are added for all.
+_NINGEN_SINK_STEPS: dict[str, tuple[str, list[tuple[str, str, str]]]] = {
+    "ningen.session_start": ("session_start", [("armed", "args", "armed")]),
+    "ningen.arm": ("arm", [("via", "args", "via")]),
+    "ningen.read": ("read", [("tool", "args", "tool"), ("tool_kind", "args", "kind"),
+                             ("served", "result", "served")]),
+    "ningen.wipe": ("wipe", [("reason", "args", "reason"), ("buffers", "args", "buffers")]),
+    "ningen.kill": ("kill", [("reason", "args", "reason"), ("target", "args", "target"),
+                             ("count", "args", "count"), ("executed", "result", "executed")]),
+    "ningen.session_end": ("session_end", [("reason", "args", "reason")]),
+}
+
+
+def ningen_sink_to_envelope(lines: Iterable[str], *, version: str | None = None) -> dict:
+    """Project a ningen-shikkaku ``--korg-sink`` file (``ningen-korg-lifecycle@1``
+    JSONL from ``dazai daemon`` / ``motokano``) onto
+    ``ningen-shikkaku.lifecycle@v2``.
+
+    Each line is read only through the fixed field map above; any other field a
+    line carries is never copied. Lines that are not JSON objects of that
+    contract (a torn final line after a crash, foreign records) are dropped and
+    counted in ``dropped``. Values are not coerced: a projected value outside the
+    profile's vocabulary makes the import reject the whole envelope.
+
+    ``version`` defaults to the producer version stamped in every record
+    (``args.producer = "ningen-shikkaku@<version>"``); a sink spanning several
+    producer versions needs an explicit ``version``."""
+    records: list[dict] = []
+    producers: set[Any] = set()
+    dropped = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            dropped += 1
+            continue
+        args = obj.get("args") if isinstance(obj, dict) else None
+        result = obj.get("result") if isinstance(obj, dict) else None
+        step = _NINGEN_SINK_STEPS.get(obj.get("tool_name")) if isinstance(obj, dict) else None
+        if (
+            step is None
+            or not isinstance(args, dict)
+            or not isinstance(result, dict)
+            or args.get("contract") != NINGEN_SINK_CONTRACT
+        ):
+            dropped += 1
+            continue
+        kind, fields = step
+        rec: dict[str, Any] = {"kind": kind}
+        # An absent source field stays absent, so the import names it missing.
+        for dst, where, src in [("component", "args", "component"), ("session", "args", "session"), *fields]:
+            source = args if where == "args" else result
+            if src in source:
+                rec[dst] = source[src]
+        at = args.get("observed_unix_ms")
+        if _nonneg_int(at, None):
+            rec["at_ms"] = at
+        records.append(rec)
+        producers.add(args.get("producer"))
+    if version is None:
+        prefix = "ningen-shikkaku@"
+        found = sorted(p[len(prefix):] for p in producers if isinstance(p, str) and p.startswith(prefix))
+        if len(found) != 1 or len(producers) != 1:
+            raise ValueError(
+                "sink records do not name exactly one ningen-shikkaku producer version; pass version explicitly"
+            )
+        version = found[0]
+    env = {"schema": SCHEMA, "profile": NINGEN_SINK_PROFILE,
            "source": {"name": "ningen-shikkaku", "version": version}, "records": records}
     if dropped:
         env["dropped"] = dropped

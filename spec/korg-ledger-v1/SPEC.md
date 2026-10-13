@@ -282,8 +282,9 @@ hash rules — a redacted journal is an ordinary v1 chain over redacted bytes.
 
 Evidence korg did not observe itself (Okto proxy diagnostics, ningen-shikkaku
 lifecycle events) enters a ledger only through a **`korg-import@v1`** envelope
-with a registered profile — `okto.diagnostics@v1` or
-`ningen-shikkaku.lifecycle@v1`. Profiles are strict allowlists with no free-text
+with a registered profile — `okto.diagnostics@v1`,
+`ningen-shikkaku.lifecycle@v1` (daemon log), or `ningen-shikkaku.lifecycle@v2`
+(the structured `--korg-sink`). Profiles are strict allowlists with no free-text
 fields; secret-bearing source fields are named and rejected; validation is
 atomic. Imported events carry `source_agent = "import:<source>@<version>"`, hang
 off one `korg.import` batch event that records the envelope's SHA-256, and pass

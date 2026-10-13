@@ -11,6 +11,7 @@ from korg_ledger.imports import (
     dazai_log_to_envelope,
     envelope_digest,
     import_envelope,
+    ningen_sink_to_envelope,
     okto_mutation_record,
     okto_session_to_envelope,
     validate_envelope,
@@ -28,7 +29,14 @@ def _events(path):
     return [json.loads(l) for l in Path(path).read_text().splitlines() if l.strip()]
 
 
-@pytest.mark.parametrize("name", ["okto-diagnostics.example.json", "ningen-shikkaku-lifecycle.example.json"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "okto-diagnostics.example.json",
+        "ningen-shikkaku-lifecycle.example.json",
+        "ningen-shikkaku-lifecycle-v2.example.json",
+    ],
+)
 def test_spec_examples_import_into_a_verifiable_ledger(tmp_path, name):
     env = _load(name)
     assert validate_envelope(env) == []
@@ -59,6 +67,11 @@ def test_spec_examples_import_into_a_verifiable_ledger(tmp_path, name):
         ("ningen-shikkaku-lifecycle.rejected.json", [
             "records[0]: forbidden field 'value' (may carry secrets or raw traffic)",
             "records[1]: field 'reason' has an invalid value",
+        ]),
+        ("ningen-shikkaku-lifecycle-v2.rejected.json", [
+            "records[0]: forbidden field 'name' (may carry secrets or raw traffic)",
+            "records[1]: field 'reason' has an invalid value",
+            "records[1]: forbidden field 'pid' (may carry secrets or raw traffic)",
         ]),
     ],
 )
@@ -215,3 +228,103 @@ def test_cli_round_trip(tmp_path, capsys):
     before = led.read_text()
     assert cli(["import", str(bad), "--ledger", str(led)]) == 1
     assert led.read_text() == before
+
+
+# ── ningen-shikkaku.lifecycle@v2: the structured --korg-sink ─────────────────
+
+SINK_LINES = (IMPORTS / "ningen-shikkaku-sink.example.jsonl").read_text(encoding="utf-8").splitlines()
+
+
+def test_ningen_sink_projection_reproduces_the_spec_example():
+    # The sink example is real output of `dazai daemon` + `motokano` 0.1.0.
+    env = ningen_sink_to_envelope(SINK_LINES)
+    assert env == _load("ningen-shikkaku-lifecycle-v2.example.json")
+    assert [r["kind"] for r in env["records"]] == [
+        "session_start", "arm", "kill", "wipe", "kill",
+        "session_start", "read", "read", "read", "wipe", "session_end",
+    ]
+    assert "dropped" not in env
+
+
+def test_ningen_sink_projection_never_copies_unlisted_fields_and_drops_junk(tmp_path):
+    # A drifted or hostile producer: extra secret-bearing fields on otherwise
+    # valid lines, a torn final line, a foreign record, a different contract.
+    tainted = []
+    for line in SINK_LINES:
+        rec = json.loads(line)
+        rec["secret"] = SECRET
+        rec["args"].update(value=SECRET, name="get_key", pid=4242, cmd=f"echo {SECRET}")
+        rec["result"].update(stdout=SECRET, len=len(SECRET))
+        tainted.append(json.dumps(rec))
+    foreign = json.loads(SINK_LINES[0])
+    foreign["args"]["contract"] = "something-else@1"
+    lines = tainted + [
+        json.dumps(foreign),
+        json.dumps({"tool_name": "Bash", "args": {"command": f"export TOKEN={SECRET}"}, "result": {}}),
+        "[dazai] error: not json",
+        SINK_LINES[0][:40],  # torn by a crash mid-write
+    ]
+    env = ningen_sink_to_envelope(lines)
+    blob = json.dumps(env)
+    for leaked in (SECRET, "get_key", "4242", "echo", "stdout"):
+        assert leaked not in blob
+    assert env["dropped"] == 4
+    assert env["records"] == _load("ningen-shikkaku-lifecycle-v2.example.json")["records"]
+    led = tmp_path / "l.jsonl"
+    import_envelope(LedgerWriter(led), env)
+    assert SECRET not in led.read_text() and verify_redaction(_events(led)) == []
+
+
+@pytest.mark.parametrize(
+    "mutate, needle",
+    [
+        (lambda a, r: a.update(reason="heartbeat connection dropped"), "'reason' has an invalid value"),
+        (lambda a, r: a.update(component="rei"), "'component' has an invalid value"),
+        (lambda a, r: a.update(session="has spaces"), "'session' has an invalid value"),
+        (lambda a, r: a.pop("session"), "missing required field 'session'"),
+        (lambda a, r: a.update(count=-1), "'count' has an invalid value"),
+        (lambda a, r: a.update(count=2**32), "'count' has an invalid value"),
+        (lambda a, r: r.update(executed="yes"), "'executed' has an invalid value"),
+    ],
+)
+def test_ningen_sink_values_outside_the_vocabulary_reject_the_whole_envelope(tmp_path, mutate, needle):
+    kill = json.loads(SINK_LINES[2])
+    assert kill["tool_name"] == "ningen.kill"
+    mutate(kill["args"], kill["result"])
+    env = ningen_sink_to_envelope(SINK_LINES[:2] + [json.dumps(kill)] + SINK_LINES[3:])
+    errors = validate_envelope(env)
+    assert any(e.startswith("records[2]: ") and needle in e for e in errors), errors
+    led = tmp_path / "l.jsonl"
+    with pytest.raises(ImportRejected):
+        import_envelope(LedgerWriter(led), env)
+    assert led.read_text() == ""
+
+
+def test_ningen_sink_version_comes_from_the_producer_unless_ambiguous():
+    assert ningen_sink_to_envelope(SINK_LINES)["source"]["version"] == "0.1.0"
+    assert ningen_sink_to_envelope(SINK_LINES, version="9.9.9")["source"]["version"] == "9.9.9"
+    newer = json.loads(SINK_LINES[0])
+    newer["args"]["producer"] = "ningen-shikkaku@0.2.0"
+    with pytest.raises(ValueError, match="pass version explicitly"):
+        ningen_sink_to_envelope(SINK_LINES + [json.dumps(newer)])
+    assert ningen_sink_to_envelope(SINK_LINES + [json.dumps(newer)], version="0.2.0")["records"]
+
+
+def test_ningen_sink_cli_round_trip(tmp_path, capsys):
+    sink = tmp_path / "lifecycle.jsonl"
+    sink.write_text("\n".join(SINK_LINES) + "\n")
+    assert cli(["envelope", "ningen-sink", str(sink)]) == 0
+    env_path = tmp_path / "env.json"
+    env_path.write_text(capsys.readouterr().out)
+    led = tmp_path / "ledger.jsonl"
+    assert cli(["import", str(env_path), "--ledger", str(led)]) == 0
+    assert cli(["lint", str(led)]) == 0
+    events = _events(led)
+    assert [e["event"]["tool_name"] for e in events[:3]] == [
+        "korg.import", "ningen-shikkaku.session_start", "ningen-shikkaku.arm",
+    ]
+    assert {e["event"]["source_agent"] for e in events} == {"import:ningen-shikkaku@0.1.0"}
+    # Other sources still need an explicit version.
+    log = tmp_path / "daemon.log"
+    log.write_text(DAZAI_LOG)
+    assert cli(["envelope", "dazai-log", str(log)]) == 2

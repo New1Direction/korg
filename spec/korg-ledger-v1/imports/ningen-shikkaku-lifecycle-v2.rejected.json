@@ -1,0 +1,9 @@
+{
+  "schema": "korg-import@v1",
+  "profile": "ningen-shikkaku.lifecycle@v2",
+  "source": {"name": "ningen-shikkaku", "version": "0.1.0"},
+  "records": [
+    {"kind": "read", "component": "motokano", "session": "aeb35853c4e7bb33458a5032f03df9c7", "tool": 0, "tool_kind": "static", "served": true, "name": "get_key"},
+    {"kind": "kill", "component": "dazai", "session": "aeb35853c4e7bb33458a5032f03df9c7", "reason": "heartbeat_dropped", "target": "registered", "count": 1, "executed": true, "pid": 4300}
+  ]
+}

@@ -13,6 +13,7 @@ or written (opt out only with `redaction=None`).
     python -m korg_ledger lint ledger.jsonl                 # chain + causal DAG (flat & nested) + redaction
     python -m korg_ledger envelope okto-session S.json --source-version 0.1.0 > env.json
     python -m korg_ledger envelope dazai-log daemon.log --source-version 0.1.0 > env.json
+    python -m korg_ledger envelope ningen-sink lifecycle.jsonl > env.json    # dazai/motokano --korg-sink
     python -m korg_ledger import env.json --ledger ledger.jsonl   # korg-import@v1, atomic on rejection
     python -m korg_ledger rechain-redacted old.jsonl new.jsonl    # migrate a journal that leaked a secret
 
