@@ -1,0 +1,18 @@
+{
+  "schema": "korg-import@v1",
+  "profile": "ningen-shikkaku.lifecycle@v2",
+  "source": {"name": "ningen-shikkaku", "version": "0.1.0"},
+  "records": [
+    {"kind": "session_start", "component": "dazai", "session": "aeb35853c4e7bb33458a5032f03df9c7", "at_ms": 1791906178753, "armed": false},
+    {"kind": "arm", "component": "dazai", "session": "aeb35853c4e7bb33458a5032f03df9c7", "at_ms": 1791906179271, "via": "control"},
+    {"kind": "kill", "component": "dazai", "session": "aeb35853c4e7bb33458a5032f03df9c7", "at_ms": 1791906179492, "reason": "hard_panic_signal", "target": "registered", "count": 1, "executed": true},
+    {"kind": "wipe", "component": "dazai", "session": "aeb35853c4e7bb33458a5032f03df9c7", "at_ms": 1791906179492, "reason": "hard_panic_signal", "buffers": 2},
+    {"kind": "kill", "component": "dazai", "session": "aeb35853c4e7bb33458a5032f03df9c7", "at_ms": 1791906179492, "reason": "hard_panic_signal", "target": "self", "count": 1, "executed": true},
+    {"kind": "session_start", "component": "motokano", "session": "9a28eee68042c98d4b604eec3294daca", "at_ms": 1791906180020, "armed": false},
+    {"kind": "read", "component": "motokano", "session": "9a28eee68042c98d4b604eec3294daca", "at_ms": 1791906180022, "tool": 0, "tool_kind": "static", "served": true},
+    {"kind": "read", "component": "motokano", "session": "9a28eee68042c98d4b604eec3294daca", "at_ms": 1791906180024, "tool": 1, "tool_kind": "exec", "served": true},
+    {"kind": "read", "component": "motokano", "session": "9a28eee68042c98d4b604eec3294daca", "at_ms": 1791906180025, "tool": 0, "tool_kind": "static", "served": false},
+    {"kind": "wipe", "component": "motokano", "session": "9a28eee68042c98d4b604eec3294daca", "at_ms": 1791906181176, "reason": "calls_exhausted", "buffers": 1},
+    {"kind": "session_end", "component": "motokano", "session": "9a28eee68042c98d4b604eec3294daca", "at_ms": 1791906181176, "reason": "calls_exhausted"}
+  ]
+}

@@ -145,7 +145,54 @@ enum parts, and **drops every other line** — including `error: …` and
 `dropped`. CLI: `python -m korg_ledger envelope dazai-log FILE --source-version
 0.1.0`.
 
-## 6. Adding a profile
+## 6. Profile `ningen-shikkaku.lifecycle@v2`
+
+Source: the same project, but its **structured** lifecycle sink instead of its
+log. ningen-shikkaku's `dazai daemon` and `motokano` accept
+`--korg-sink PATH` (or `/dev/fd/N`) and append one
+[`ningen-korg-lifecycle@1`](https://github.com/New1Direction/ningen-shikkaku/blob/main/docs/src/reference/korg.md)
+JSON line per lifecycle step. The producer builds those lines from closed enums
+and counters only. v2 imports them without scraping log text, covers `motokano`
+reads, and drops what v1 still carries: PIDs. Prefer v2. v1 remains for
+daemons without the flag and for the Python reference.
+
+Every record carries `component` (`dazai` \| `motokano`) and `session` (id: the
+producer's random per-run session id, 32 lowercase hex). It may also carry
+`at_ms` (the producer's wall clock; korg's HLC still orders the ledger).
+
+| kind | required (besides `component`, `session`) |
+|---|---|
+| `session_start` | `armed` bool |
+| `arm` | `via` (`startup` \| `control`) |
+| `read` | `tool` (0-based index into motokano's `--tool` list, ≤ 2³²−1), `tool_kind` (`static` \| `exec`), `served` bool |
+| `wipe` | `reason`⁶, `buffers` (a count, ≤ 2³²−1) |
+| `kill` | `reason`⁶, `target` (`registered` \| `self`), `count` (≤ 2³²−1), `executed` bool (`false` = dry-run "would kill") |
+| `session_end` | `reason`⁶ |
+
+⁶ `heartbeat_lost ping_timeout panic_signal hard_panic_signal shutdown
+client_quit calls_exhausted client_disconnect daemon_lost`
+
+**Forbidden (named):** v1's list plus `pid pids name tool_name path socket
+length len size hash sha256 digest`. A tool name can describe the secret it
+serves, and a length or digest of a secret is a guessing oracle.
+
+**Exporter:** `ningen_sink_to_envelope(lines)` reads each line only through a
+fixed field map (`args.component`, `args.session`, `args.observed_unix_ms` →
+`at_ms`, plus the step's own enum and count fields and `result.served` or
+`result.executed`). Any other field on the line is never copied. Lines that are
+not JSON objects with `args.contract = "ningen-korg-lifecycle@1"` and a known
+`tool_name` are dropped and counted in `dropped`, for example a line torn by a
+crash. Values are not coerced: a value outside the vocabulary rejects the whole
+envelope. `source.version` comes from the records' `args.producer`
+(`ningen-shikkaku@<version>`). CLI: `python -m korg_ledger envelope ningen-sink
+lifecycle.jsonl`. Envelope a sink once its processes have exited, and give each
+run its own file (or rotate files), so a later import doesn't repeat records.
+[`imports/ningen-shikkaku-sink.example.jsonl`](./imports/ningen-shikkaku-sink.example.jsonl)
+is real 0.1.0 output: an armed dazai hard panic, then a motokano run with a
+refused re-read. It projects exactly to
+[`imports/ningen-shikkaku-lifecycle-v2.example.json`](./imports/ningen-shikkaku-lifecycle-v2.example.json).
+
+## 7. Adding a profile
 
 A new profile is a spec change: add its table here, its allowlist to
 `korg_ledger.imports.PROFILES`, a valid and a rejected example under

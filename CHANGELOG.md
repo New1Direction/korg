@@ -46,6 +46,14 @@ ningen-shikkaku lifecycle metadata (`ningen-shikkaku.lifecycle@v1`), with
 projection-only exporters from Okto session/genome files and `[dazai]` daemon
 logs. Imported events use the new `import:<source>@<version>` actor prefix.
 
+**Added — `ningen-shikkaku.lifecycle@v2` import profile.** Imports the
+structured `--korg-sink` records (`ningen-korg-lifecycle@1`) that `dazai daemon`
+and `motokano` write, instead of scraping `[dazai]` log lines. It covers motokano
+reads and carries no PIDs, tool names, lengths or digests. Exporter
+`ningen_sink_to_envelope` and CLI `python -m korg_ledger envelope ningen-sink
+FILE`, which takes the source version from the records. Spec examples include
+real 0.1.0 sink output.
+
 **Changed.** `POST /api/agent/tool-call` answers **422** for a `triggered_by`
 that is not an existing, strictly-earlier `seq_id` (it used to persist it).
 `LedgerWriter` rejects non-`int` `triggered_by`. The duplicate vector set in
