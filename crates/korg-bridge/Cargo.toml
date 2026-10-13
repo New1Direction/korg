@@ -22,6 +22,7 @@ extension-module = ["pyo3/extension-module"]
 [dependencies]
 korg-core     = { path = "../korg-core" }
 korg-registry = { path = "../korg-registry" }
+korg-ledger   = { path = "../korg-ledger", features = ["redact"] }
 serde         = { workspace = true }
 serde_json    = { workspace = true }
 chrono        = { workspace = true }

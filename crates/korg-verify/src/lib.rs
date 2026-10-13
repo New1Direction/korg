@@ -15,6 +15,7 @@
 //! that the key maps to a real-world identity (the relying party pins that — see
 //! `--pubkey`).
 
+pub use korg_ledger::redact::verify_redaction;
 use korg_ledger::{verify_chain, verify_dag};
 use serde_json::Value;
 
@@ -48,6 +49,9 @@ pub struct Verdict {
     /// `None` for receipts/journals; `Some(true/false)` for a korgcert@v1 — whether
     /// the embedded summary byte-matches the summary re-derived from the events.
     pub summary_ok: Option<bool>,
+    /// `None` unless the redaction lint was requested (`--require-redacted`);
+    /// `Some(true/false)` = every event is clean under korg-redact@v1.
+    pub redaction_ok: Option<bool>,
     pub errors: Vec<String>,
 }
 
@@ -115,6 +119,7 @@ pub fn verify_journal(events: &[Value], key: Option<&[u8]>) -> Verdict {
         event_sigs_ok: None,
         anchors_ok: None,
         summary_ok: None,
+        redaction_ok: None,
         errors,
     }
 }
@@ -167,6 +172,21 @@ pub fn verify_journal_extended(
         if !ok {
             v.valid = false;
         }
+    }
+    v
+}
+
+/// Apply the korg-redact@v1 cleanliness lint (spec `REDACTION.md`) to an
+/// existing verdict: every persisted event must already be redacted. A finding
+/// means a secret reached the ledger in plaintext — a producer contract breach
+/// that no later edit can repair without breaking the chain.
+pub fn require_redacted(mut v: Verdict, events: &[Value]) -> Verdict {
+    let errs = verify_redaction(events);
+    let ok = errs.is_empty();
+    v.redaction_ok = Some(ok);
+    v.errors.extend(errs);
+    if !ok {
+        v.valid = false;
     }
     v
 }
@@ -267,6 +287,7 @@ pub fn verify_receipt(receipt: &Value, key: Option<&[u8]>, pin_pubkey: Option<&s
         event_sigs_ok: None,
         anchors_ok: None,
         summary_ok: None,
+        redaction_ok: None,
         errors,
     }
 }
@@ -474,6 +495,7 @@ pub fn verify_korgcert(envelope: &Value, pin_pubkey: Option<&str>) -> Verdict {
         event_sigs_ok: None,
         anchors_ok,
         summary_ok: Some(summary_ok),
+        redaction_ok: None,
         errors,
     }
 }

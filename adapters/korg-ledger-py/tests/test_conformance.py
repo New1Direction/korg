@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from korg_ledger import chain_hash, verify_chain
+from korg_ledger import chain_hash, verify_chain, verify_dag
 
 # tests/ -> korg-ledger-py -> adapters -> <repo root>
 SPEC = Path(__file__).resolve().parents[3] / "spec" / "korg-ledger-v1"
@@ -16,7 +16,7 @@ def _vectors():
 
 
 def _read(name):
-    text = (SPEC / "vectors" / name).read_text()
+    text = (SPEC / "vectors" / name).read_text(encoding="utf-8")
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
@@ -48,3 +48,10 @@ def test_detects_tampering():
         errors = verify_chain(events, key)
         assert errors, f"{v['file']} should report tampering"
         assert any(v["error_contains"] in e for e in errors), errors
+
+
+@pytest.mark.skipif(not SPEC.exists(), reason="spec vectors not present")
+def test_dag_errors_match_the_manifest_exactly():
+    for v in _vectors():
+        want = v.get("dag_errors", []) if v.get("dag") == "broken" else []
+        assert verify_dag(_read(v["file"])) == want, v["file"]

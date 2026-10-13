@@ -1,0 +1,15 @@
+{
+  "schema": "korg-import@v1",
+  "profile": "ningen-shikkaku.lifecycle@v1",
+  "source": {"name": "ningen-shikkaku", "version": "0.1.0"},
+  "records": [
+    {"kind": "daemon_start", "mode": "armed", "pid": 4242, "grace_ms": 5000, "ping_timeout_ms": 3000, "seccomp": true},
+    {"kind": "buffers", "allocated": 2, "locked": 2},
+    {"kind": "pid_registered", "pid": 4300, "total": 1},
+    {"kind": "status", "alive": true, "armed": true, "grace_seconds": 5, "registered_pids": 1},
+    {"kind": "trigger", "reason": "heartbeat_dropped", "mode": "armed", "severity": "graceful"},
+    {"kind": "panic", "reason": "grace_expired"},
+    {"kind": "pid_killed", "pid": 4300, "outcome": "sent"},
+    {"kind": "wiped", "buffers": 2}
+  ]
+}

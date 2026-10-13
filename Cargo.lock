@@ -2055,6 +2055,7 @@ version = "0.3.3"
 dependencies = [
  "chrono",
  "korg-core",
+ "korg-ledger",
  "korg-registry",
  "pyo3",
  "pythonize",
@@ -2098,6 +2099,7 @@ dependencies = [
  "hex",
  "hmac",
  "proptest",
+ "regex",
  "serde_json",
  "sha2",
 ]
@@ -2192,6 +2194,7 @@ dependencies = [
  "korg-auth",
  "korg-core",
  "korg-embeddings",
+ "korg-ledger",
  "korg-llm",
  "korg-registry",
  "korg-runtime",

@@ -121,27 +121,84 @@ def verify_chain(events: list, key: bytes | None = None) -> list:
     return errors
 
 
+def json_int(value):
+    """The integer a JSON value denotes, or None (korg-ledger@v1 §9.2).
+
+    A ledger integer is a JSON number with an integral value within ±(2^53-1).
+    Booleans are NOT integers (Python's ``bool`` subclasses ``int``; Rust and JS
+    treat ``true`` as a boolean), and an integral float such as ``2.0`` IS the
+    integer 2 (JS cannot tell ``2.0`` from ``2`` after parsing, so all three
+    verifiers must accept it to agree)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if abs(value) <= _SAFE_INT_MAX else None
+    if isinstance(value, float) and value.is_integer() and abs(value) <= _SAFE_INT_MAX:
+        return int(value)
+    return None
+
+
+def _seq_label(e: dict) -> str:
+    sid = json_int(e.get("seq_id"))
+    return "?" if sid is None else str(sid)
+
+
+def causal_parent(event: dict):
+    """Resolve an event's causal parent across the flat and nested shapes (§9.3).
+
+    Returns ``(parent, error)``: ``parent`` is the parent seq_id (int) or None
+    for a root; ``error`` is a message (without the ``seq N:`` prefix) when the
+    link is malformed. A flat record carries ``triggered_by`` at the top level, a
+    nested JournalEvent under ``metadata``; ``null`` and absence both mean root.
+    When both are present they must name the same parent."""
+    raw = []
+    if event.get("triggered_by") is not None:
+        raw.append(("top-level", event["triggered_by"]))
+    md = event.get("metadata")
+    if isinstance(md, dict) and md.get("triggered_by") is not None:
+        raw.append(("metadata", md["triggered_by"]))
+    if not raw:
+        return None, None
+    parsed = []
+    for _where, v in raw:
+        n = json_int(v)
+        if n is None:
+            return None, "triggered_by is not an integer"
+        parsed.append(n)
+    if len(parsed) == 2 and parsed[0] != parsed[1]:
+        return None, f"conflicting triggered_by (top-level {parsed[0]} vs metadata {parsed[1]})"
+    return parsed[0], None
+
+
 def verify_dag(events: list) -> list:
-    """Check the causal DAG: unique seq_ids and strictly-earlier triggered_by
-    links. Byte-for-byte equivalent to the JS ``verifyDag`` and the Rust
-    ``verify_dag``; ``triggered_by`` is read at the top level, so nested
-    JournalEvent records (which carry it under ``metadata``) get the
-    uniqueness check only — matching the other two implementations."""
+    """Check the causal DAG (korg-ledger@v1 §5 + §9): unique integer seq_ids, and
+    every causal parent — top-level ``triggered_by`` (flat) or
+    ``metadata.triggered_by`` (nested JournalEvent) — is a well-formed integer
+    that references an existing, strictly-earlier seq_id.
+
+    Error strings are byte-identical to the Rust ``verify_dag`` and the JS
+    ``verifyDag``; the conformance manifest pins them."""
     errors: list[str] = []
     if not isinstance(events, list):
         return ["events is not a list"]
     dicts = [e for e in events if isinstance(e, dict)]
-    seqs = [e.get("seq_id") for e in dicts if isinstance(e.get("seq_id"), int)]
+    seqs = [n for n in (json_int(e.get("seq_id")) for e in dicts) if n is not None]
     seqset = set(seqs)
     if len(seqset) != len(seqs):
         errors.append("duplicate seq_id present")
     for e in dicts:
-        tb = e.get("triggered_by")
-        if not isinstance(tb, int):
+        label = _seq_label(e)
+        tb, err = causal_parent(e)
+        if err is not None:
+            errors.append(f"seq {label}: {err}")
             continue
-        sid = e.get("seq_id")
+        if tb is None:
+            continue
+        sid = json_int(e.get("seq_id"))
         if tb not in seqset:
-            errors.append(f"seq {sid}: triggered_by {tb} does not exist")
-        elif isinstance(sid, int) and tb >= sid:
-            errors.append(f"seq {sid}: triggered_by {tb} is not strictly earlier")
+            errors.append(f"seq {label}: triggered_by {tb} does not exist")
+        elif sid is None:
+            errors.append(f"seq ?: triggered_by {tb} cannot be ordered (seq_id is not an integer)")
+        elif tb >= sid:
+            errors.append(f"seq {label}: triggered_by {tb} is not strictly earlier")
     return errors

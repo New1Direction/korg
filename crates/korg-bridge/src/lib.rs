@@ -414,6 +414,10 @@ impl Bridge {
             }
         }
 
+        // Redaction at persistence (spec/korg-ledger-v1/REDACTION.md) — the
+        // same gate as the HTTP handler: redact before the journal sees it.
+        let (args, _) = korg_ledger::redact::redact(&args);
+        let (result, _) = korg_ledger::redact::redact(&result);
         let event = CapabilityEvent::AgentToolCall {
             source_agent: source_agent.to_string(),
             tool_name: tool_name.to_string(),
@@ -460,7 +464,10 @@ impl Bridge {
             retry_count: 0,
             tier: EventTier::Telemetry,
             span_id: None,
-            tags: std::collections::BTreeMap::new(),
+            tags: std::collections::BTreeMap::from([(
+                korg_ledger::redact::TAG.to_string(),
+                korg_ledger::redact::POLICY.to_string(),
+            )]),
             triggered_by,
         };
 

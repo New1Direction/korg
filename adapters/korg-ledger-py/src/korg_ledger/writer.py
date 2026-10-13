@@ -22,12 +22,21 @@ except ImportError:  # pragma: no cover - Windows
 from ._events import NIL_UUID
 from ._hash import GENESIS, chain_hash
 from ._hlc import Hlc
+from .redaction import POLICY as REDACTION_POLICY
+from .redaction import TAG as REDACTION_TAG
+from .redaction import redact, scan
 
 SCHEMA_VERSION = "1.0"
 
 
 class CausalityError(ValueError):
     """Raised when triggered_by does not reference a strictly-earlier seq_id."""
+
+
+class RedactionError(ValueError):
+    """Raised (fail closed) when a record is still not redaction-clean after the
+    policy ran. Unreachable while the policy is idempotent; kept as the gate that
+    guarantees nothing unclean is ever hashed or written."""
 
 
 class LedgerWriter:
@@ -37,6 +46,7 @@ class LedgerWriter:
         hmac_key: bytes | None = None,
         hlc_actor_id: int = 1,
         signing_key: bytes | None = None,
+        redaction: str | None = REDACTION_POLICY,
     ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -47,6 +57,13 @@ class LedgerWriter:
         # signed (requires the `signing` extra / `cryptography`). Default None
         # keeps the writer stdlib-only.
         self._signing_key = signing_key
+        # Redaction at persistence (spec REDACTION.md): every record is redacted
+        # BEFORE it is hashed, signed, or written. ``None`` opts out explicitly
+        # (e.g. replaying a fixture byte-for-byte); the record then carries no
+        # redaction tag, so a reader can tell it was never redacted.
+        if redaction not in (REDACTION_POLICY, None):
+            raise ValueError(f"unsupported redaction policy {redaction!r} (want {REDACTION_POLICY!r} or None)")
+        self._redaction = redaction
         with self.path.open("r") as f:
             self._last_seq, self._last_hash, self._last_hlc = self._read_tip(f)
 
@@ -101,6 +118,10 @@ class LedgerWriter:
             try:
                 last_seq, last_hash, last_hlc = self._read_tip(f)
                 seq_id = last_seq + 1
+                if triggered_by is not None and (
+                    isinstance(triggered_by, bool) or not isinstance(triggered_by, int)
+                ):
+                    raise CausalityError(f"triggered_by must be an integer seq_id, got {triggered_by!r}")
                 if triggered_by is not None and (triggered_by < 1 or triggered_by >= seq_id):
                     raise CausalityError(
                         f"triggered_by {triggered_by} is not a strictly-earlier seq_id (< {seq_id})"
@@ -127,8 +148,13 @@ class LedgerWriter:
                     "seq_id": seq_id,
                     "metadata": metadata,
                     "event": event,
-                    "prev_hash": last_hash,
                 }
+                if self._redaction is not None:
+                    metadata["tags"] = {**metadata["tags"], REDACTION_TAG: self._redaction}
+                    record, _findings = redact(record)
+                    if scan(record):
+                        raise RedactionError(f"seq {seq_id}: record is not redaction-clean after {self._redaction}")
+                record["prev_hash"] = last_hash
                 record["entry_hash"] = chain_hash(record, self._key)
                 if self._signing_key is not None:
                     from . import signing  # lazy: keeps the stdlib path import-clean

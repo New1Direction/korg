@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Differential fuzzer — prove the three independent korgcert@v1 verifiers AGREE.
+"""Differential fuzzer — prove the three independent verifiers AGREE.
+
+Covers korgcert@v1 verdicts, the §9 causal-parent rules (flat vs nested,
+integer domain, conflicts) and — Python vs Rust — the korg-redact@v1 lint.
 
 For each adversarially-mutated Certificate, run the Python, Rust, and JS verifiers
 and assert they return the same validity. Three independent codepaths written
@@ -44,6 +47,14 @@ def _cli_valid(cmd: list[str]) -> object:
     out = subprocess.run(cmd, capture_output=True, text=True)
     try:
         return json.loads(out.stdout).get("valid")
+    except Exception:
+        return f"ERR({out.returncode}):{(out.stdout or out.stderr)[:60]!r}"
+
+
+def _cli_field(cmd: list[str], field: str) -> object:
+    out = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        return json.loads(out.stdout).get(field)
     except Exception:
         return f"ERR({out.returncode}):{(out.stdout or out.stderr)[:60]!r}"
 
@@ -186,6 +197,90 @@ def main() -> None:
     if not agree:
         diverged += 1
     print(f"  [{'ok' if agree else 'DIVERGE':>7}] {'neg-seq bound anchor':16} py={py} rust={rust} js={js}")
+
+    # ── §9 causal parent: flat vs nested, integer domain, conflicts ──────────
+    # Each candidate is a correctly RE-CHAINED journal, so only the DAG verdict
+    # is under test. dag_ok must agree across Python, Rust and JS.
+    from korg_ledger import verify_dag
+
+    def nested_ev(seq, tb):
+        return {"schema_version": "1.0", "seq_id": seq,
+                "metadata": {"event_id": f"e{seq}", "tags": {}, "triggered_by": tb},
+                "event": {"event_type": "AgentToolCall", "tool_name": "t", "args": {}, "result": {}}}
+
+    def rechain(evs):
+        prev = "0" * 64
+        for e in evs:
+            e.pop("entry_hash", None)
+            e["prev_hash"] = prev
+            try:
+                e["entry_hash"] = chain_hash(e)
+            except ValueError:  # out-of-domain value (2**60): chain verdict is not under test here
+                e["entry_hash"] = "f" * 64
+            prev = e["entry_hash"]
+        return evs
+
+    tb_values = [None, 1, 2, 1.0, 2.0, 1.5, True, False, "1", 2**60, -1, 0, 3, 99, [1], {"seq": 1}]
+    dag_cases = []
+    for v in tb_values:
+        dag_cases.append((f"nested tb={v!r}", [nested_ev(1, None), nested_ev(2, 1), nested_ev(3, v)]))
+        flat3 = [{"seq_id": 1}, {"seq_id": 2, "triggered_by": 1}, {"seq_id": 3, "triggered_by": v}]
+        dag_cases.append((f"flat tb={v!r}", flat3))
+    dag_cases.append(("conflict 1 vs 2", [nested_ev(1, None), nested_ev(2, 1), {**nested_ev(3, 2), "triggered_by": 1}]))
+    dag_cases.append(("agree 2 == 2.0", [nested_ev(1, None), nested_ev(2, 1), {**nested_ev(3, 2), "triggered_by": 2.0}]))
+    dag_cases.append(("bool seq_id dup", [{"seq_id": 1}, {"seq_id": True}, {"seq_id": 2, "triggered_by": 1}]))
+    dag_cases.append(("float seq_id", [{"seq_id": 1}, {"seq_id": 2.5, "triggered_by": 1}]))
+    for label, evs in dag_cases:
+        total += 1
+        evs = rechain(copy.deepcopy(evs))
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write("".join(json.dumps(e) + "\n" for e in evs))
+            path = f.name
+        try:
+            py = verify_dag(json.loads(json.dumps(evs))) == []
+            rust = _cli_field([str(RUST_BIN), path, "--json"], "dag_ok")
+            js = _cli_field(["node", str(VERIFY_MJS), path, "--json"], "dag_ok")
+        finally:
+            os.unlink(path)
+        agree = py == rust == js
+        if not agree:
+            diverged += 1
+        print(f"  [{'ok' if agree else 'DIVERGE':>7}] dag {label:28} py={py} rust={rust} js={js}")
+
+    # ── korg-redact@v1: Python and Rust must flag exactly the same findings ──
+    import random
+
+    from korg_ledger import verify_redaction
+
+    frags = ["sk-", "abcdefghijklmnopqrstuvwxyz", "Bearer ", "API_KEY", "TOKEN", "=", ":", " ", "\n", "'", '"',
+             "https://", "u:p@", "@", "/", "[", "]", "AKIA", "IOSFODNN7EXAMPLE", "-----BEGIN RSA PRIVATE KEY-----",
+             "-----END RSA PRIVATE KEY-----", "eyJ", "abcdefgh.", '"password": ', "\\", "[REDACTED:jwt]", "é",
+             "中", "ghp_", "0123456789", "xoxb-", "AIza", "_", "-", "github_pat_", "\u001c", "\u00a0", "ſ"]
+    keys = ["cmd", "apiKey", "X-Api-Key", "max_tokens", "client-secret", "Authorization", "note", "OAuth2Token"]
+    rnd = random.Random(20261013)
+    evs = []
+    for i in range(1, 401):
+        args = {rnd.choice(keys): "".join(rnd.choice(frags) for _ in range(rnd.randint(1, 14))) for _ in range(2)}
+        evs.append({"seq_id": i, "args": args})
+    evs = rechain(evs)
+    total += 1
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as f:
+        f.write("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in evs))
+        path = f.name
+    try:
+        py = verify_redaction(evs)
+        out = subprocess.run([str(RUST_BIN), path, "--require-redacted", "--json"], capture_output=True, text=True)
+        rust = [e for e in json.loads(out.stdout)["errors"] if ": unredacted " in e]
+    finally:
+        os.unlink(path)
+    agree = py == rust and len(py) > 0
+    if not agree:
+        diverged += 1
+        for a, b in zip(py, rust):
+            if a != b:
+                print(f"      first difference: py={a!r} rust={b!r}")
+                break
+    print(f"  [{'ok' if agree else 'DIVERGE':>7}] redaction lint, 400 random events: py={len(py)} rust={len(rust)} findings")
 
     print(f"\ndifferential fuzz: {total} candidates · {diverged} divergence(s)")
     sys.exit(1 if diverged else 0)

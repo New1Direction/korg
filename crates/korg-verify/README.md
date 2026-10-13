@@ -3,7 +3,7 @@
 A standalone, dependency-light **verifier** for korg receipts and journals — no network, no Python.
 
 ```
-korg-verify <receipt.json | journal.jsonl | seal.json> [--key <str>] [--pubkey <hex>] [--pin-event-pubkey <hex>] [--anchors <file>] [--json]
+korg-verify <receipt.json | journal.jsonl | seal.json> [--key <str>] [--pubkey <hex>] [--pin-event-pubkey <hex>] [--anchors <file>] [--require-redacted] [--json]
 ```
 
 Exit code: `0` valid · `1` invalid/tampered · `2` usage/parse error.
@@ -42,4 +42,4 @@ cargo build --release -p korg-verify   # → target/release/korg-verify
 
 ## Tests
 
-`cargo test -p korg-verify` runs against the shared `crates/korg-registry/tests/conformance` vectors (intact, HMAC-keyed, non-BMP unicode, and tampered cases) plus a real receipt minted by `korgex receipt --sign` — cross-implementation proof that Rust re-derives the chain and verifies the Python-produced Ed25519 signature.
+`cargo test -p korg-verify` runs against the canonical `spec/korg-ledger-v1` vectors (intact, HMAC-keyed, non-BMP unicode, tampered, flat + nested causal-DAG cases with exact errors, and the korg-redact@v1 cases) plus a real receipt minted by `korgex receipt --sign` — cross-implementation proof that Rust re-derives the chain and verifies the Python-produced Ed25519 signature.

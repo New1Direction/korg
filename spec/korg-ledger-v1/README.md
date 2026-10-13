@@ -1,6 +1,6 @@
 # korg-ledger@v1 — an open standard for tamper-evident agent ledgers
 
-**Status:** FROZEN · **Canonical home:** this directory (`korg/spec/korg-ledger-v1/`) is the normative source; all implementations conform to it.
+**Status:** AUTHORITATIVE · revision 1.1 · **Canonical home:** this directory (`korg/spec/korg-ledger-v1/`) is the normative source for korg as an agent flight recorder; all implementations, and every other korg document, conform to it. Upgrading? Read [`MIGRATION.md`](./MIGRATION.md).
 
 > **Try it live (zero install, sends nothing):** **[Certificate verifier](https://new1direction.github.io/korg/web/seal.html)** · **[ledger verifier](https://new1direction.github.io/korg/web/index.html)** · **[time-travel explorer](https://new1direction.github.io/korg/web/explore.html)** · **[home](https://new1direction.github.io/korg/)**
 
@@ -19,9 +19,13 @@ the key), not merely tamper-evident.
 
 | File | Role |
 |---|---|
-| [`SPEC.md`](./SPEC.md) | the normative specification (canonicalization, preimage, chaining, HMAC, verify + DAG algorithms) |
+| [`SPEC.md`](./SPEC.md) | the normative specification (canonicalization, preimage, chaining, HMAC, verify + DAG algorithms, flat vs nested journal shapes and `triggered_by` resolution §9) |
+| [`REDACTION.md`](./REDACTION.md) | **`korg-redact@v1`** — redaction at persistence: secrets are removed *before* an event is hashed, plus the verifier lint (`korg-verify --require-redacted`) |
+| [`IMPORT.md`](./IMPORT.md) + [`imports/`](./imports/) | **`korg-import@v1`** — allowlisted envelopes for sanitized Okto diagnostics and ningen-shikkaku lifecycle metadata (never secret values) |
+| [`MIGRATION.md`](./MIGRATION.md) | what revision 1.1 changes for verifiers, producers, and vector consumers |
 | [`KORGCERT.md`](./KORGCERT.md) | **`korgcert@v1`** — the normative spec for the public, independently-verifiable *certificate*: a receipt superset that binds a re-derived (un-spoofable) human summary + an issuer Ed25519 seal. |
-| [`vectors/`](./vectors/) + [`conformance.json`](./conformance.json) | the golden conformance vectors with **frozen tip hashes** — the cross-language oracle |
+| [`vectors/`](./vectors/) + [`conformance.json`](./conformance.json) | the **only** copy of the golden conformance vectors: frozen tip hashes, exact causal-DAG errors, redaction lint results, and the shared redaction cases — the cross-language oracle |
+| [`tools/generate_vectors.py`](./tools/generate_vectors.py) | deterministic generator for every vector + the manifest; `--check` (CI) fails on drift and asserts the frozen v1.0 tips |
 | [`conformance.py`](./conformance.py) | a dependency-free Python reference verifier (the executable oracle) |
 | [`js/`](./js/) | a dependency-free JavaScript verifier (`verify.mjs`) + its conformance harness, for Node and the browser |
 | [`web/`](./web/) | **two zero-install in-browser verifiers** (Web Crypto, send nothing): [`index.html`](./web/index.html) checks a raw `ledger.jsonl`; [`seal.html`](./web/seal.html) checks a **Certificate** — re-deriving the summary live so you can watch it match (or, when tampered, fail). Host on GitHub Pages and anyone verifies a shared session or seal in a tab. |
@@ -34,7 +38,12 @@ An implementation in any language is **conformant** iff, given the vectors in
 1. reports the intact chains as intact, **and** reproduces each frozen
    `tip_entry_hash` byte-for-byte (basic = `7418b910…`, HMAC = `1b371102…`);
 2. flags each tampered vector at the named `seq`;
-3. fails an HMAC vector verified without the key.
+3. fails an HMAC vector verified without the key;
+4. reproduces each vector's causal-DAG verdict, and for `dag: "broken"` the
+   exact `dag_errors` (flat **and** nested shapes, SPEC §9).
+
+Implementations that ship redaction also reproduce the shared cases in
+`vectors/redaction/korg-redact-v1.json` and each vector's `redaction_errors`.
 
 Run a reference — each is one command, exit 0 = conformant:
 

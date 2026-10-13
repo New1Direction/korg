@@ -1,0 +1,21 @@
+{
+  "schema": "korg-import@v1",
+  "profile": "okto.diagnostics@v1",
+  "source": {"name": "okto", "version": "0.1.0"},
+  "exported_at_ms": 1781395260000,
+  "records": [
+    {"kind": "session", "session_id": "3f2b9c1e-7a44-4d1b-9a0e-5c6d7e8f9a01", "client": "claude",
+     "at_ms": 1781395200000, "tls_established": true, "provider_vendor": "anthropic",
+     "provider_product": "messages-api", "turn_count": 1, "anomaly_count": 1, "mutation_count": 1},
+    {"kind": "turn", "session_id": "3f2b9c1e-7a44-4d1b-9a0e-5c6d7e8f9a01", "turn_index": 0,
+     "status_code": 200, "duration_ms": 1840, "chunk_count": 42, "anomaly_count": 1, "mutations_applied": 1,
+     "token_usage": {"input_tokens": 1240, "output_tokens": 310}},
+    {"kind": "anomaly", "session_id": "3f2b9c1e-7a44-4d1b-9a0e-5c6d7e8f9a01", "turn_index": 0,
+     "chunk_index": 17, "anomaly_type": "malformed_json_in_sse_frame", "repaired": true},
+    {"kind": "mutation", "mutation_id": "9d8c7b6a-5e4f-4a3b-8c2d-1e0f9a8b7c6d", "scope": "stream_chunk",
+     "patch_type": "json_patch", "session_id": "3f2b9c1e-7a44-4d1b-9a0e-5c6d7e8f9a01", "client": "claude",
+     "confidence_bp": 9200, "reinforcement_count": 3, "at_ms": 1781395201840},
+    {"kind": "replay", "session_id": "3f2b9c1e-7a44-4d1b-9a0e-5c6d7e8f9a01", "resolved": true,
+     "total_anomalies": 1, "total_mutations_applied": 1}
+  ]
+}

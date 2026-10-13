@@ -8,11 +8,12 @@
 //
 //     node conformance.mjs        # exit 0 = this JS impl reproduces the vectors
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import {
   canonicalize,
   chainHash,
   verifyChain,
+  verifyDag,
   verifyEventSig,
   verifyAnchors,
   verifyKorgCert,
@@ -83,7 +84,35 @@ async function run() {
         detail = `errors ${JSON.stringify(errors)} missing ${JSON.stringify(v.error_contains)}`;
       }
     }
-    console.log(`  [${ok ? "PASS" : "FAIL"}] ${v.file.padEnd(26)} ${v.verify.padEnd(8)} ${detail}`);
+    // §9 causal DAG — exact error strings are part of the oracle.
+    const dag = verifyDag(events);
+    const wantDag = v.dag === "broken" ? v.dag_errors || [] : [];
+    if (ok && JSON.stringify(dag) !== JSON.stringify(wantDag)) {
+      ok = false;
+      detail = `dag errors ${JSON.stringify(dag)} != expected ${JSON.stringify(wantDag)}`;
+    }
+    console.log(`  [${ok ? "PASS" : "FAIL"}] ${v.file.padEnd(26)} ${v.verify.padEnd(8)} dag=${(v.dag || "-").padEnd(7)} ${detail}`);
+    if (!ok) failures++;
+  }
+  {
+    const listed = new Set(manifest.vectors.map((v) => v.file));
+    const onDisk = readdirSync(here("../vectors/")).filter((n) => n.endsWith(".jsonl"));
+    const ok = onDisk.length === listed.size && onDisk.every((n) => listed.has(n));
+    console.log(`  [${ok ? "PASS" : "FAIL"}] manifest lists every vector on disk`);
+    if (!ok) failures++;
+  }
+  // §9.2 integer domain for causal links: JS parses 2.0 as 2, so every impl
+  // accepts integral floats; booleans and fractions are never integers.
+  {
+    const mk = (tb) => [{ seq_id: 1 }, { seq_id: 2, triggered_by: tb }];
+    const ok =
+      verifyDag(mk(1.0)).length === 0 &&
+      verifyDag(mk(1.5))[0] === "seq 2: triggered_by is not an integer" &&
+      verifyDag(mk(true))[0] === "seq 2: triggered_by is not an integer" &&
+      verifyDag(mk(2 ** 60))[0] === "seq 2: triggered_by is not an integer" &&
+      verifyDag([{ seq_id: 1 }, { seq_id: 2, metadata: { triggered_by: 3 } }])[0] ===
+        "seq 2: triggered_by 3 does not exist";
+    console.log(`  [${ok ? "PASS" : "FAIL"}] causal-parent integer domain + nested lookup`);
     if (!ok) failures++;
   }
 

@@ -1,0 +1,9 @@
+{
+  "schema": "korg-import@v1",
+  "profile": "ningen-shikkaku.lifecycle@v1",
+  "source": {"name": "ningen-shikkaku", "version": "0.1.0"},
+  "records": [
+    {"kind": "exit_condition_fired", "counter_mode": "calls", "calls": 1, "value": "synthetic-key-material"},
+    {"kind": "trigger", "reason": "heartbeat connection dropped", "mode": "armed"}
+  ]
+}

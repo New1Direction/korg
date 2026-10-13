@@ -32,12 +32,30 @@ contract.
 
 ## Canonicality rule
 
-When this spec disagrees with what Korg emits on the wire, **the wire
-is canonical** and the spec gets a PR. This applies to string-level
-details (e.g., `schema_version` value), field placement (append shape
-vs journal shape per §1.2), and any structural shape choice. If you
-find a disagreement: file the spec PR, point reviewers at the Rust
-source location, and don't change Korg's behavior to match this doc.
+**The ledger contract is [`spec/korg-ledger-v1/`](spec/korg-ledger-v1/SPEC.md),
+and it is authoritative.** This document is the *application profile* for the
+HTTP/MCP write path (event semantics, actor naming, rewind, MCP resources). Where
+the two overlap — chain fields, journal shapes, where `triggered_by` lives and how
+it is validated, redaction, imported evidence — `SPEC.md` (§9–§11), its vectors,
+`REDACTION.md`, and `IMPORT.md` win, and a disagreement here or in code is a bug
+to fix *toward the spec*.
+
+Within this profile's own scope, when it disagrees with what Korg emits on the
+wire, file a spec PR that points reviewers at the Rust source location.
+
+Known corrections against the canonical spec (revision 1.1):
+
+- The chain fields are top-level `prev_hash` / `entry_hash` (+ optional
+  `event_sig`), not `metadata.ledger_hash` / `metadata.parent_hash` as §1.2.3
+  below describes.
+- The append endpoint is `POST /api/agent/tool-call`. Since revision 1.1 it
+  redacts `args`/`result` under `korg-redact@v1` before persisting, and answers
+  **422** when `triggered_by` does not name an existing, strictly-earlier
+  `seq_id` (SPEC §9.5).
+- Verifiers read the causal parent from top-level `triggered_by` (flat) or
+  `metadata.triggered_by` (nested) — SPEC §9.3.
+- A fifth actor prefix, `import:<source>@<version>`, marks evidence imported
+  through a `korg-import@v1` envelope (IMPORT.md §3).
 
 ---
 
@@ -83,7 +101,7 @@ There are two distinct representations of an AgentToolCall event.
 
 #### §1.2.1 — Append shape (POST body)
 
-The flat body sent by a client to `POST /api/agent_tool_call`:
+The flat body sent by a client to `POST /api/agent/tool-call`:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -213,6 +231,7 @@ ignores them if present.
 | `human:<identifier>` | Human override | `human:dusk` |
 | `korg:<component>` | Korg internal event | `korg:replay` |
 | `mcp:<server-name>` | MCP server client | `mcp:github` |
+| `import:<source>@<version>` | Evidence imported via a `korg-import@v1` envelope (canonical spec IMPORT.md) — attested by the importer, not observed by korg | `import:okto@0.1.0` |
 
 Sub-agents use distinct identities; see §2b for the convention under
 the cross-agent spine.
