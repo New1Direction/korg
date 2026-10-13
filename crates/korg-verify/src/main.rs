@@ -7,7 +7,7 @@ const HELP: &str = "\
 korg-verify — verify a korg receipt or journal (hash chain + causal DAG + Ed25519)
 
 USAGE:
-    korg-verify <file> [--key <str>] [--pubkey <hex>] [--pin-event-pubkey <hex>] [--anchors <file>] [--json]
+    korg-verify <file> [--key <str>] [--pubkey <hex>] [--pin-event-pubkey <hex>] [--anchors <file>] [--require-redacted] [--json]
 
 ARGS:
     <file>          a Certificate (korgcert@v1), a korg receipt (.json), or a journal (.jsonl / JSON array)
@@ -17,6 +17,7 @@ OPTIONS:
     --pubkey <hex>             pin the expected signer — the receipt-tip signer or the Certificate issuer
     --pin-event-pubkey <hex>   require every event's per-event Ed25519 event_sig to verify under this key
     --anchors <file>           verify an anchors.jsonl sidecar (structural: entry_hash ↔ chain)
+    --require-redacted         fail if any event holds a secret korg-redact@v1 would have redacted
     --json                     machine-readable verdict
     -h, --help                 show this help
 
@@ -31,6 +32,7 @@ fn main() -> ExitCode {
     let mut pin_event_pubkey: Option<String> = None;
     let mut anchors_path: Option<String> = None;
     let mut json_out = false;
+    let mut require_redacted = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -53,6 +55,10 @@ fn main() -> ExitCode {
             }
             "--json" => {
                 json_out = true;
+                i += 1;
+            }
+            "--require-redacted" => {
+                require_redacted = true;
                 i += 1;
             }
             "-h" | "--help" => {
@@ -123,6 +129,20 @@ fn main() -> ExitCode {
         }
     };
 
+    // The redaction lint runs over whatever events the artifact embeds (journal
+    // lines, or a receipt's / Certificate's `events`).
+    let verdict = if require_redacted {
+        let events = match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(v) if v.get("events").is_some_and(|e| e.is_array()) => {
+                v["events"].as_array().cloned().unwrap_or_default()
+            }
+            _ => korg_verify::load_events(&text).unwrap_or_default(),
+        };
+        korg_verify::require_redacted(verdict, &events)
+    } else {
+        verdict
+    };
+
     if json_out {
         let out = serde_json::json!({
             "valid": verdict.valid,
@@ -136,6 +156,7 @@ fn main() -> ExitCode {
             "event_sigs_ok": verdict.event_sigs_ok,
             "anchors_ok": verdict.anchors_ok,
             "summary_ok": verdict.summary_ok,
+            "redaction_ok": verdict.redaction_ok,
             "errors": verdict.errors,
         });
         println!("{out}");

@@ -199,22 +199,69 @@ export async function verifyChain(events, keyBytes = null) {
   return errors;
 }
 
-/** Check the causal DAG: unique seq_ids and strictly-earlier triggered_by links. */
+/**
+ * The integer a JSON value denotes, or null (korg-ledger@v1 §9.2): a number with
+ * an integral value within ±(2^53-1). Booleans are not integers; `2.0` parses to
+ * 2 here, which is why Python and Rust also accept integral floats.
+ */
+export function jsonInt(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value + 0 : null;
+}
+
+function seqLabel(e) {
+  const n = jsonInt(e.seq_id);
+  return n === null ? "?" : String(n);
+}
+
+/**
+ * Resolve an event's causal parent across the flat and nested journal shapes
+ * (§9.3): top-level `triggered_by` (flat) or `metadata.triggered_by` (nested
+ * JournalEvent); null and absence both mean root; when both are present they must
+ * agree. Returns `{ parent, error }`.
+ */
+export function causalParent(event) {
+  const raw = [];
+  if (event.triggered_by !== undefined && event.triggered_by !== null) raw.push(event.triggered_by);
+  const md = event.metadata;
+  if (md !== null && typeof md === "object" && !Array.isArray(md) && md.triggered_by !== undefined && md.triggered_by !== null) {
+    raw.push(md.triggered_by);
+  }
+  const parsed = [];
+  for (const v of raw) {
+    const n = jsonInt(v);
+    if (n === null) return { parent: null, error: "triggered_by is not an integer" };
+    parsed.push(n);
+  }
+  if (parsed.length === 2 && parsed[0] !== parsed[1]) {
+    return { parent: null, error: `conflicting triggered_by (top-level ${parsed[0]} vs metadata ${parsed[1]})` };
+  }
+  return { parent: parsed.length ? parsed[0] : null, error: null };
+}
+
+/**
+ * Check the causal DAG (§5 + §9): unique integer seq_ids, and every causal parent
+ * (flat or nested) is a well-formed integer referencing an existing,
+ * strictly-earlier seq_id. Error strings are byte-identical to Rust and Python.
+ */
 export function verifyDag(events) {
   const errors = [];
   if (!Array.isArray(events)) return ["events is not a list"];
   const dicts = events.filter((e) => e !== null && typeof e === "object" && !Array.isArray(e));
-  const seqs = dicts.map((e) => e.seq_id).filter((s) => typeof s === "number");
+  const seqs = dicts.map((e) => jsonInt(e.seq_id)).filter((s) => s !== null);
   const seqset = new Set(seqs);
   if (seqset.size !== seqs.length) errors.push("duplicate seq_id present");
   for (const e of dicts) {
-    const tb = e.triggered_by;
-    if (typeof tb !== "number") continue;
-    const sid = e.seq_id;
-    if (!seqset.has(tb)) errors.push(`seq ${sid}: triggered_by ${tb} does not exist`);
-    else if (typeof sid === "number" && tb >= sid) {
-      errors.push(`seq ${sid}: triggered_by ${tb} is not strictly earlier`);
+    const label = seqLabel(e);
+    const { parent: tb, error } = causalParent(e);
+    if (error) {
+      errors.push(`seq ${label}: ${error}`);
+      continue;
     }
+    if (tb === null) continue;
+    const sid = jsonInt(e.seq_id);
+    if (!seqset.has(tb)) errors.push(`seq ${label}: triggered_by ${tb} does not exist`);
+    else if (sid === null) errors.push(`seq ?: triggered_by ${tb} cannot be ordered (seq_id is not an integer)`);
+    else if (tb >= sid) errors.push(`seq ${label}: triggered_by ${tb} is not strictly earlier`);
   }
   return errors;
 }

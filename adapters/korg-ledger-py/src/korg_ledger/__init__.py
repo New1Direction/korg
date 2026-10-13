@@ -11,13 +11,17 @@ from ._hash import (
     GENESIS,
     HASH_FIELDS,
     canonicalize,
+    causal_parent,
     chain_hash,
+    json_int,
     verify_anchors,
     verify_chain,
     verify_dag,
 )
 from ._hlc import Hlc
-from .writer import CausalityError, LedgerWriter
+from .redaction import POLICY as REDACTION_POLICY
+from .redaction import redact, scan, verify_redaction
+from .writer import CausalityError, LedgerWriter, RedactionError
 
 __all__ = [
     "GENESIS",
@@ -26,6 +30,13 @@ __all__ = [
     "Hlc",
     "LedgerWriter",
     "CausalityError",
+    "RedactionError",
+    "REDACTION_POLICY",
+    "redact",
+    "scan",
+    "verify_redaction",
+    "causal_parent",
+    "json_int",
     "canonicalize",
     "chain_hash",
     "verify_chain",

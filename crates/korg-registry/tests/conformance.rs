@@ -1,7 +1,9 @@
 //! korg-ledger@v1 cross-language conformance.
 //!
-//! The Python reference (korgex) froze the chain definition and a set of golden
-//! vectors with FROZEN tip hashes (tests/conformance/conformance.json). This
+//! The Python reference froze the chain definition and a set of golden vectors
+//! with FROZEN tip hashes. They live in exactly one place — the canonical spec
+//! directory `spec/korg-ledger-v1/` (conformance.json + vectors/) — and every
+//! implementation reads them from there, so no copy can drift. This
 //! test proves the Rust implementation reproduces those exact hashes — i.e. that
 //! `korg-ledger@v1` is genuinely a multi-language standard, not a Python detail.
 //! If Rust's canonicalization or hashing diverged by a single byte, the frozen
@@ -13,11 +15,14 @@ use std::fs;
 use std::path::PathBuf;
 
 fn cdir() -> PathBuf {
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/conformance"))
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../spec/korg-ledger-v1"
+    ))
 }
 
 fn read_jsonl(name: &str) -> Vec<Value> {
-    fs::read_to_string(cdir().join(name))
+    fs::read_to_string(cdir().join("vectors").join(name))
         .unwrap()
         .lines()
         .filter(|l| !l.trim().is_empty())

@@ -12,6 +12,9 @@
 //! the chain and is localized to a `seq_id`. With an HMAC key the chain is
 //! tamper-PROOF (unforgeable without the key), not merely tamper-evident.
 
+#[cfg(feature = "redact")]
+pub mod redact;
+
 use hmac::{Hmac, Mac};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -255,32 +258,107 @@ pub fn verify_chain(events: &[Value], key: Option<&[u8]>) -> Vec<String> {
     errors
 }
 
-/// Check the causal DAG is well-formed (korg-ledger@v1 §5): unique `seq_id`s,
-/// and every `triggered_by` references an existing, strictly-earlier `seq_id`.
+/// The integer a JSON value denotes, or `None` (korg-ledger@v1 §9.2).
+///
+/// A ledger integer is a JSON number with an integral value within ±(2^53-1).
+/// Booleans are not integers, and an integral float such as `2.0` IS the integer
+/// 2 — JS cannot tell `2.0` from `2` after parsing, so all three verifiers accept
+/// it in order to agree.
+pub fn json_int(value: &Value) -> Option<i64> {
+    let n = value.as_number()?;
+    if let Some(i) = n.as_i64() {
+        return ((i as i128).abs() <= SAFE_INT_MAX).then_some(i);
+    }
+    if n.as_u64().is_some() {
+        return None; // > i64::MAX, far outside the safe range
+    }
+    let f = n.as_f64()?;
+    (f.fract() == 0.0 && f.abs() <= SAFE_INT_MAX as f64).then_some(f as i64)
+}
+
+fn seq_label(e: &Value) -> String {
+    e.get("seq_id")
+        .and_then(json_int)
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "?".to_string())
+}
+
+/// Resolve an event's causal parent across the flat and nested journal shapes
+/// (korg-ledger@v1 §9.3). A flat record carries `triggered_by` at the top level;
+/// a nested JournalEvent carries it under `metadata`. `null` and absence both
+/// mean "root". When both are present they must name the same parent.
+///
+/// `Ok(None)` = root, `Ok(Some(p))` = parent seq_id, `Err(msg)` = malformed link
+/// (message without the `seq N:` prefix).
+pub fn causal_parent(event: &Value) -> Result<Option<i64>, String> {
+    let mut raw: Vec<&Value> = Vec::new();
+    if let Some(v) = event.get("triggered_by").filter(|v| !v.is_null()) {
+        raw.push(v);
+    }
+    if let Some(v) = event
+        .get("metadata")
+        .filter(|m| m.is_object())
+        .and_then(|m| m.get("triggered_by"))
+        .filter(|v| !v.is_null())
+    {
+        raw.push(v);
+    }
+    let mut parsed = Vec::with_capacity(2);
+    for v in raw {
+        match json_int(v) {
+            Some(n) => parsed.push(n),
+            None => return Err("triggered_by is not an integer".to_string()),
+        }
+    }
+    match parsed.as_slice() {
+        [] => Ok(None),
+        [a, b] if a != b => Err(format!(
+            "conflicting triggered_by (top-level {a} vs metadata {b})"
+        )),
+        [a, ..] => Ok(Some(*a)),
+    }
+}
+
+/// Check the causal DAG is well-formed (korg-ledger@v1 §5 + §9): unique integer
+/// `seq_id`s, and every causal parent — top-level `triggered_by` (flat) or
+/// `metadata.triggered_by` (nested JournalEvent) — is a well-formed integer that
+/// references an existing, strictly-earlier `seq_id`. Error strings are
+/// byte-identical to the Python and JS verifiers (pinned by the conformance
+/// manifest).
 pub fn verify_dag(events: &[Value]) -> Vec<String> {
     let mut errors = Vec::new();
-    let seqs: Vec<i64> = events
+    let objs: Vec<&Value> = events.iter().filter(|e| e.is_object()).collect();
+    let seqs: Vec<i64> = objs
         .iter()
-        .filter_map(|e| e.get("seq_id").and_then(|v| v.as_i64()))
+        .filter_map(|e| e.get("seq_id").and_then(json_int))
         .collect();
     let seqset: std::collections::HashSet<i64> = seqs.iter().copied().collect();
     if seqset.len() != seqs.len() {
         errors.push("duplicate seq_id present".to_string());
     }
-    for e in events {
-        let tb = match e.get("triggered_by").and_then(|v| v.as_i64()) {
-            Some(tb) => tb,
-            None => continue,
+    for e in objs {
+        let label = seq_label(e);
+        let tb = match causal_parent(e) {
+            Ok(Some(tb)) => tb,
+            Ok(None) => continue,
+            Err(msg) => {
+                errors.push(format!("seq {label}: {msg}"));
+                continue;
+            }
         };
-        let sid = e.get("seq_id").and_then(|v| v.as_i64());
+        let sid = e.get("seq_id").and_then(json_int);
         if !seqset.contains(&tb) {
-            errors.push(format!("seq {sid:?}: triggered_by {tb} does not exist"));
+            errors.push(format!("seq {label}: triggered_by {tb} does not exist"));
         } else if let Some(sid) = sid {
             if tb >= sid {
                 errors.push(format!(
-                    "seq {sid}: triggered_by {tb} is not strictly earlier"
+                    "seq {label}: triggered_by {tb} is not strictly earlier"
                 ));
             }
+        } else {
+            errors.push(format!(
+                "seq ?: triggered_by {tb} cannot be ordered (seq_id is not an integer)"
+            ));
         }
     }
     errors

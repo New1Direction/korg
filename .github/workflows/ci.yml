@@ -113,6 +113,9 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Conformance vectors match the generator (no drift, frozen v1.0 tips)
+        run: python3 spec/korg-ledger-v1/tools/generate_vectors.py
+
       - name: Python spec oracle reproduces the frozen vectors
         run: python3 spec/korg-ledger-v1/conformance.py
 

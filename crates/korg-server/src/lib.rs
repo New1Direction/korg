@@ -847,11 +847,17 @@ async fn agent_tool_call_handler(
     use std::collections::BTreeMap;
     use uuid::Uuid;
 
+    // Redaction at persistence (spec/korg-ledger-v1/REDACTION.md): the payload is
+    // redacted BEFORE it enters the journal, so the hash chain only ever covers
+    // redacted bytes. Redacting after append would be indistinguishable from
+    // tampering.
+    let (args, _) = korg_ledger::redact::redact(&req.args);
+    let (result, _) = korg_ledger::redact::redact(&req.result);
     let event = CapabilityEvent::AgentToolCall {
         source_agent: req.source_agent.clone(),
         tool_name: req.tool_name,
-        args: req.args,
-        result: req.result,
+        args,
+        result,
         payload_refs: req.payload_refs,
         success: req.success,
         duration_ms: req.duration_ms,
@@ -859,6 +865,25 @@ async fn agent_tool_call_handler(
     };
 
     let mut resolver = state.capability_resolver.lock().await;
+
+    // Causal-parent contract (spec §9): triggered_by must name an existing,
+    // strictly-earlier seq_id. Persisting a dangling or forward link would write
+    // a journal that every verifier now rejects, so refuse it up front.
+    if let Some(tb) = req.triggered_by {
+        let next_seq = resolver.journal.last_seq_id + 1;
+        let exists = resolver.journal.events.iter().any(|e| e.seq_id == tb);
+        if tb >= next_seq || !exists {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "triggered_by {tb} must reference an existing, strictly-earlier seq_id (next seq_id is {next_seq})"
+                    )
+                })),
+            )
+                .into_response();
+        }
+    }
 
     // ALWAYS use append_with_metadata for external agent events.
     //
@@ -913,7 +938,10 @@ async fn agent_tool_call_handler(
         retry_count: 0,
         tier: EventTier::Telemetry,
         span_id: None,
-        tags: BTreeMap::new(),
+        tags: BTreeMap::from([(
+            korg_ledger::redact::TAG.to_string(),
+            korg_ledger::redact::POLICY.to_string(),
+        )]),
         triggered_by: req.triggered_by, // preserved exactly — None means root
     };
 
@@ -2970,6 +2998,127 @@ mod tests {
 
         // Clean up temp dir
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    fn tool_call_test_state() -> (
+        Arc<AppState>,
+        Arc<TokioMutex<CapabilityResolver>>,
+        std::path::PathBuf,
+    ) {
+        let (broadcaster_tx, _) = tokio::sync::broadcast::channel(16);
+        let (feedback_tx, _) = tokio::sync::mpsc::channel(16);
+        let temp_dir = std::env::temp_dir().join(format!("korg_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let journal = CapabilityJournal::new(
+            temp_dir.join("journal.json"),
+            temp_dir.join("snapshot.json"),
+            10,
+            temp_dir.join("lock.lock"),
+        );
+        let resolver = Arc::new(TokioMutex::new(CapabilityResolver::new(
+            std::collections::HashMap::new(),
+            journal,
+        )));
+        let auth_state = Arc::new(korg_auth::AuthState::new(korg_auth::AuthConfig {
+            base_url: "http://localhost:8080".to_string(),
+            codex_client_id: "mock-codex-client-id".to_string(),
+            codex_client_secret: "mock-codex-client-secret".to_string(),
+            anthropic_client_id: "mock-anthropic-client-id".to_string(),
+            anthropic_client_secret: "mock-anthropic-client-secret".to_string(),
+            token_store_path: temp_dir.join("auth.json"),
+        }));
+        let app_state = Arc::new(AppState {
+            broadcaster: broadcaster_tx,
+            feedback_tx: TokioMutex::new(Some(feedback_tx)),
+            capability_resolver: resolver.clone(),
+            runtime_coordinator: Arc::new(StdMutex::new(None)),
+            auth: auth_state,
+        });
+        (app_state, resolver, temp_dir)
+    }
+
+    fn tool_call(
+        tool: &str,
+        args: serde_json::Value,
+        triggered_by: Option<u64>,
+    ) -> AgentToolCallRequest {
+        AgentToolCallRequest {
+            source_agent: "agent:claude-code@2.1.0".to_string(),
+            tool_name: tool.to_string(),
+            args,
+            result: serde_json::json!({}),
+            payload_refs: vec![],
+            success: true,
+            duration_ms: 1,
+            triggered_by,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agent_tool_call_redacts_before_the_journal_and_tags_the_policy() {
+        let (state, resolver, dir) = tool_call_test_state();
+        let secret = "sk-proj-THISISASECRETVALUE0123456789";
+        let req = tool_call(
+            "Bash",
+            serde_json::json!({"command": format!("export OPENAI_API_KEY={secret}"), "api_key": "k"}),
+            None,
+        );
+        let resp = agent_tool_call_handler(State(state), Json(req))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let r = resolver.lock().await;
+        let ev = r.journal.events.last().unwrap();
+        let line = serde_json::to_string(ev).unwrap();
+        assert!(!line.contains(secret), "secret reached the journal: {line}");
+        assert!(line.contains("export OPENAI_API_KEY=[REDACTED:env_assignment]"));
+        assert!(line.contains("\"api_key\":\"[REDACTED:sensitive_key]\""));
+        assert_eq!(
+            ev.metadata.tags.get("korg.redaction").map(String::as_str),
+            Some("korg-redact@v1")
+        );
+        // the persisted record is clean under the same lint verifiers run
+        let v = serde_json::to_value(ev).unwrap();
+        assert!(korg_ledger::redact::verify_redaction(&[v]).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_agent_tool_call_rejects_dangling_or_forward_triggered_by() {
+        let (state, resolver, dir) = tool_call_test_state();
+        let ok = agent_tool_call_handler(
+            State(state.clone()),
+            Json(tool_call("user_prompt", serde_json::json!({}), None)),
+        )
+        .await
+        .into_response();
+        assert_eq!(ok.status(), axum::http::StatusCode::OK);
+        let root = resolver.lock().await.journal.last_seq_id;
+
+        for bad in [root + 1, root + 50] {
+            let resp = agent_tool_call_handler(
+                State(state.clone()),
+                Json(tool_call("Read", serde_json::json!({}), Some(bad))),
+            )
+            .await
+            .into_response();
+            assert_eq!(resp.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        assert_eq!(
+            resolver.lock().await.journal.last_seq_id,
+            root,
+            "rejected calls must not append"
+        );
+
+        let child = agent_tool_call_handler(
+            State(state),
+            Json(tool_call("Read", serde_json::json!({}), Some(root))),
+        )
+        .await
+        .into_response();
+        assert_eq!(child.status(), axum::http::StatusCode::OK);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

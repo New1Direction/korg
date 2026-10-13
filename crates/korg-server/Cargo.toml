@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 korg-core     = { path = "../korg-core" }
 korg-auth     = { path = "../korg-auth" }
 korg-registry = { path = "../korg-registry" }
+korg-ledger   = { path = "../korg-ledger", features = ["redact"] }
 korg-llm      = { path = "../korg-llm" }
 korg-runtime  = { path = "../korg-runtime" }
 serde         = { workspace = true }

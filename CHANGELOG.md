@@ -16,7 +16,42 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_Nothing yet._
+### korg-ledger@v1 revision 1.1 — the canonical flight-recorder contract
+
+`spec/korg-ledger-v1/` is now **authoritative** for every korg document and
+implementation. No hash rule changed — every v1.0 vector reproduces its frozen
+tip. Upgrade notes: [`spec/korg-ledger-v1/MIGRATION.md`](spec/korg-ledger-v1/MIGRATION.md).
+
+**Fixed — causal links in real journals were never checked.** All three
+verifiers read `triggered_by` only at the top level, but every production writer
+stores it under `metadata.triggered_by`, so forward or dangling links in nested
+journals verified VALID. Rust, Python, and JS now resolve the parent from either
+shape (SPEC §9), reject non-integer and conflicting links, and emit
+byte-identical DAG errors (`seq Some(3)` in Rust is gone). Verdict splits on
+`triggered_by: true` (Python-only) and `1.5` (JS-only) are closed.
+
+**Added — redaction at persistence (`korg-redact@v1`, REDACTION.md).** Secrets
+(sensitive keys, bearer tokens, provider/GitHub/Slack/AWS/Google keys, JWTs, PEM
+private keys, URL credentials, `NAME_TOKEN=…` assignments) are replaced by
+`[REDACTED:<rule>]` markers *before* hashing in `LedgerWriter` (default on),
+`POST /api/agent/tool-call`, and korg-bridge. Python and Rust implementations are
+pinned by shared hand-authored cases and differentially fuzzed.
+`korg-verify --require-redacted` and `python -m korg_ledger lint` flag any
+persisted secret; `python -m korg_ledger rechain-redacted` migrates a leaked
+journal to a new, clean chain.
+
+**Added — import envelopes (`korg-import@v1`, IMPORT.md).** Allowlisted,
+atomic imports for sanitized Okto diagnostics (`okto.diagnostics@v1`) and
+ningen-shikkaku lifecycle metadata (`ningen-shikkaku.lifecycle@v1`), with
+projection-only exporters from Okto session/genome files and `[dazai]` daemon
+logs. Imported events use the new `import:<source>@<version>` actor prefix.
+
+**Changed.** `POST /api/agent/tool-call` answers **422** for a `triggered_by`
+that is not an existing, strictly-earlier `seq_id` (it used to persist it).
+`LedgerWriter` rejects non-`int` `triggered_by`. The duplicate vector set in
+`crates/korg-registry/tests/conformance/` is removed; all harnesses read
+`spec/korg-ledger-v1/`, now with nested, mixed-shape, malformed-link, and
+redaction vectors, generated and drift-checked by `tools/generate_vectors.py`.
 
 ---
 

@@ -1,31 +1,109 @@
 {
   "spec_version": "korg-ledger@v1",
-  "canonicalization": "JSON, keys sorted by code point, separators (',',':'), non-ASCII \\uXXXX-escaped; preimage = event minus entry_hash",
+  "revision": "1.1",
+  "canonicalization": "JSON, keys sorted by code point, separators (',',':'), non-ASCII \\uXXXX-escaped; preimage = event minus entry_hash and event_sig",
   "hmac": "HMAC-SHA256 over the same preimage when a key is present",
+  "causal_parent": "top-level triggered_by (flat) or metadata.triggered_by (nested); null/absent = root; both present must agree; value must be an integer (SPEC.md §9)",
+  "redaction_cases": "redaction/korg-redact-v1.json",
   "vectors": [
     {
       "file": "basic-intact.jsonl",
       "key": null,
       "verify": "intact",
+      "dag": "intact",
       "tip_entry_hash": "7418b9105a664e21078fde881fbd8a5295c49bb384aa62a48d5b544292d910af"
     },
     {
       "file": "hmac-intact.jsonl",
       "key": "korg-conformance-key",
       "verify": "intact",
+      "dag": "intact",
       "tip_entry_hash": "1b371102038082d3fac965fe21ba357129c61f57fcd93f1a0ffa5e6eaa454e78"
+    },
+    {
+      "file": "nonbmp-intact.jsonl",
+      "key": null,
+      "verify": "intact",
+      "dag": "intact",
+      "tip_entry_hash": "045d2d865e89c54340408b309c81d6b0f1367ebf0aa4504f1af66f7f1e4cb590"
     },
     {
       "file": "tampered-content.jsonl",
       "key": null,
       "verify": "tampered",
-      "error_contains": "seq 2"
+      "error_contains": "seq 2",
+      "dag": "intact"
     },
     {
       "file": "tampered-deletion.jsonl",
       "key": null,
       "verify": "tampered",
-      "error_contains": "seq 3"
+      "error_contains": "seq 3",
+      "dag": "broken",
+      "dag_errors": [
+        "seq 3: triggered_by 2 does not exist"
+      ]
+    },
+    {
+      "file": "nested-intact.jsonl",
+      "key": null,
+      "verify": "intact",
+      "dag": "intact",
+      "tip_entry_hash": "d08d86d9a733e3edf24bf7f29658c975afdef0a84c144e4059e3bb96176a5b7b"
+    },
+    {
+      "file": "nested-dag-broken.jsonl",
+      "key": null,
+      "verify": "intact",
+      "dag": "broken",
+      "dag_errors": [
+        "seq 2: triggered_by 3 is not strictly earlier",
+        "seq 3: triggered_by 9 does not exist"
+      ],
+      "tip_entry_hash": "17bc6a0db4e13af116ef69b6a99bedeaf007b74a0a30f111774740d5a4481250"
+    },
+    {
+      "file": "dag-malformed.jsonl",
+      "key": null,
+      "verify": "intact",
+      "dag": "broken",
+      "dag_errors": [
+        "seq 2: triggered_by is not an integer",
+        "seq 3: triggered_by is not an integer",
+        "seq 4: conflicting triggered_by (top-level 2 vs metadata 1)",
+        "seq 5: triggered_by 5 is not strictly earlier",
+        "seq 6: triggered_by is not an integer"
+      ],
+      "tip_entry_hash": "750c832667893fb531a32fddcc95b3611c17637c30228fcd7a14043a4f513dab"
+    },
+    {
+      "file": "mixed-shape-intact.jsonl",
+      "key": null,
+      "verify": "intact",
+      "dag": "intact",
+      "tip_entry_hash": "ea2176907fc8677190b954aef82b40366989613332d26227c698c4e72cd6ee12"
+    },
+    {
+      "file": "redacted-intact.jsonl",
+      "key": null,
+      "verify": "intact",
+      "dag": "intact",
+      "redaction": "clean",
+      "tip_entry_hash": "c605cc63bbc9b56bc368919ab39b32c6830b5dc57238ed27e4696b61627f6623"
+    },
+    {
+      "file": "unredacted-intact.jsonl",
+      "key": null,
+      "verify": "intact",
+      "dag": "intact",
+      "redaction": "unclean",
+      "redaction_errors": [
+        "seq 2: unredacted provider_api_key at /event/args/command",
+        "seq 2: unredacted env_assignment at /event/args/command",
+        "seq 3: unredacted sensitive_key at /event/args/headers/Authorization",
+        "seq 3: unredacted url_credentials at /event/args/url"
+      ],
+      "tip_entry_hash": "2e7c3b3feff9784eabc9c08bf76fa89d95439ad0d17bf700afaf66b59fcee05f"
     }
   ]
 }

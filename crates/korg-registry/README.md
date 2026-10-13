@@ -77,7 +77,7 @@ toggle). State changes go through one of:
 
 This module is the **Rust reference** for the frozen `korg-ledger@v1` spec
 (canonical text in [`spec/korg-ledger-v1`](../../spec/korg-ledger-v1); vendored
-golden vectors under `tests/conformance/`). Each event carries `prev_hash` (the
+golden vectors in the canonical `spec/korg-ledger-v1/vectors/`). Each event carries `prev_hash` (the
 previous event's `entry_hash`, `GENESIS_HASH` for the first) and `entry_hash`
 (SHA-256, or HMAC-SHA256 when `KORG_LEDGER_HMAC_KEY` is set, over the canonical
 preimage). `canonicalize` reproduces Python's

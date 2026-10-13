@@ -791,7 +791,7 @@ def _resource_stats_integrity(_query: dict[str, str]) -> dict:
     ]
 
     # §1.1 actor convention prefixes
-    valid_prefixes = ("agent:", "human:", "korg:", "mcp:")
+    valid_prefixes = ("agent:", "human:", "korg:", "mcp:", "import:")
     actor_counts: dict[str, int] = {}
     violations: list[str] = []
     schema_versions: dict[str, int] = {}

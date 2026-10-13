@@ -16,11 +16,15 @@ sha2 = "0.10"
 hmac = "0.12"
 ed25519-dalek = { version = "2", optional = true }
 hex = { version = "0.4", optional = true }
+regex = { version = "1", optional = true }
 
 [features]
 # Opt-in Ed25519 per-event signing/verification. Keeps the core crate
 # dependency-light (hash-chain only) for downstream consumers who don't sign.
 signing = ["dep:ed25519-dalek", "dep:hex"]
+# Opt-in korg-redact@v1 (redaction at persistence + the cleanliness lint).
+# Producers that persist events and verifiers that lint them enable it.
+redact = ["dep:regex"]
 
 [dev-dependencies]
 proptest = "1"
