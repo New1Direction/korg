@@ -25,6 +25,7 @@ pub mod harness;
 pub mod identity;
 pub mod leader;
 pub mod observation;
+pub mod parallel;
 pub mod permissions;
 pub mod personas;
 pub mod provenance;
