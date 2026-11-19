@@ -1,7 +1,13 @@
 # korg
 
-**A tamper-evident, SHA-256-chained ledger for AI agents.**
-*Every step your agent takes is recorded in a hash chain anyone can verify — edit one event and the chain names it. No trust in the producer, no blockchain.*
+**A tamper-evident ledger for AI agents, with a standalone Rust verifier.**
+Korg records agent events in a SHA-256 hash chain. Edit one event in a recorded session and the verifier reports which entry changed.
+
+[**Try the browser verifier**](https://new1direction.github.io/korg/web/index.html) · [Run the Rust quickstart](#30-second-quickstart)
+
+[![The Korg verifier accepts a recorded session, then flags event 4 after its contents are edited](tamper.gif)](https://new1direction.github.io/korg/web/index.html)
+
+In the browser verifier, select **real session ✓**, then **tampered ✗** to see how the same ledger fails verification after one edit.
 
 [![CI](https://github.com/New1Direction/korg/actions/workflows/ci.yml/badge.svg)](https://github.com/New1Direction/korg/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg?style=flat-square)](#license)
@@ -15,7 +21,7 @@
 
 ## 30-second quickstart
 
-Build the standalone verifier (~10s cold — it compiles only the ledger crates), verify a recorded Claude Code session, then rewrite one event and watch the chain catch it:
+Build the standalone verifier, verify a recorded Claude Code session, then rewrite one event and check the result:
 
 ```bash
 git clone https://github.com/New1Direction/korg && cd korg
@@ -31,10 +37,6 @@ sed -i.bak '4s/return a - b/return a + b/' /tmp/session.jsonl   # rewrite the ag
 #  ✗ journal INVALID — 1 problem(s):
 #      - seq 4: entry_hash mismatch (content was tampered)     (exit 1)
 ```
-
-![korg-verify catching a single rewritten event in an agent ledger](tamper.gif)
-
-No Rust toolchain? Drop the same file into the [in-browser verifier](https://new1direction.github.io/korg/web/index.html) — it runs locally and sends nothing.
 
 ---
 
